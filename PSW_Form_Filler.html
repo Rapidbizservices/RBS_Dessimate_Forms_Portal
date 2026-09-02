@@ -1,4 +1,5 @@
 <!doctype html>
+<meta charset="utf-8">
 <title>PSW Form Filler</title>
 <style>
   :root{
@@ -19,10 +20,13 @@
   .card{ background:#fff; border:1px solid var(--line); border-radius:10px; padding:18px 20px;
     width:100%; max-width:720px; margin-bottom:16px; }
 
-  .step1{ background:#fff7e0; border:1px solid #e8d38a; }
-  .step1 strong{ display:block; margin-bottom:8px; font-size:14px; }
-  .step1 input[type=file]{ font-family:inherit; font-size:13px; }
-  #fileStatus{ display:block; margin-top:6px; font-size:12.5px; color:#2b4ea3; font-weight:600; }
+  #loadStatus{
+    width:100%; max-width:720px; margin-bottom:16px; padding:10px 16px;
+    border-radius:8px; font-size:13px; font-weight:600; text-align:center;
+  }
+  #loadStatus.loading{ background:#fff7e0; border:1px solid #e8d38a; color:#6b5c1e; }
+  #loadStatus.ok{ background:#e9f6ee; border:1px solid #9fd6b6; color:#1c6b41; }
+  #loadStatus.error{ background:#fbe9e9; border:1px solid #e39a9a; color:#9c2b2b; }
 
   h2{ font-size:14px; color:var(--brand); border-bottom:2px solid var(--brand);
     padding-bottom:6px; margin:0 0 12px; }
@@ -69,13 +73,7 @@
   This fills your real, blank PSW PDF form and saves a new copy &mdash; nothing is uploaded anywhere.
 </p>
 
-<div class="card step1">
-  <strong>Step 1 &ndash; Choose your blank PSW form</strong>
-  Select the blank <code>Dessimate_PSW_Fillable_Form.pdf</code> file from this same folder:
-  <br>
-  <input type="file" id="blankFile" accept="application/pdf">
-  <span id="fileStatus">No file chosen yet.</span>
-</div>
+<div id="loadStatus" class="loading">Loading the blank PSW form&hellip;</div>
 
 <form id="pswForm">
 
@@ -328,13 +326,34 @@
     try{ localStorage.removeItem('psw-filler-data'); }catch(e){}
   });
 
-  var blankFile = null;
-  document.getElementById('blankFile').addEventListener('change', function(e){
-    blankFile = e.target.files[0] || null;
-    document.getElementById('fileStatus').textContent = blankFile
-      ? ('Selected: ' + blankFile.name)
-      : 'No file chosen yet.';
-  });
+  // The blank PDF template lives in this same repo/folder, right next to this
+  // HTML file, so it's loaded automatically instead of asking the user to
+  // pick it. Change BLANK_PDF_PATH if you rename the PDF in the repo.
+  var BLANK_PDF_PATH = 'Dessimate_PSW_Fillable_Form.pdf';
+  var blankPdfBytes = null;
+  var loadStatusEl = document.getElementById('loadStatus');
+
+  function loadBlankPdf(){
+    return fetch(BLANK_PDF_PATH, { cache: 'no-store' })
+      .then(function(res){
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.arrayBuffer();
+      })
+      .then(function(buf){
+        blankPdfBytes = buf;
+        loadStatusEl.className = 'ok';
+        loadStatusEl.textContent = 'Blank PSW form loaded - ready to fill in.';
+        setTimeout(function(){ loadStatusEl.style.display = 'none'; }, 2500);
+      })
+      .catch(function(err){
+        console.error(err);
+        blankPdfBytes = null;
+        loadStatusEl.className = 'error';
+        loadStatusEl.textContent = 'Could not load "' + BLANK_PDF_PATH + '" from this folder. ' +
+          'Make sure that file is in the repo next to this page, then reload.';
+      });
+  }
+  loadBlankPdf();
 
   function downloadBlob(bytes, filename){
     var blob = new Blob([bytes], { type: 'application/pdf' });
@@ -349,8 +368,8 @@
     var btn = document.getElementById('createBtn');
     var status = document.getElementById('status');
 
-    if (!blankFile) {
-      alert('Please choose the blank PSW PDF form first (Step 1 above).');
+    if (!blankPdfBytes) {
+      alert('The blank PSW form hasn\'t finished loading yet (or failed to load). Please wait a moment or reload the page, then try again.');
       return;
     }
 
@@ -359,8 +378,7 @@
     status.textContent = '';
 
     try {
-      var arrayBuffer = await blankFile.arrayBuffer();
-      var pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
+      var pdfDoc = await PDFLib.PDFDocument.load(blankPdfBytes);
       var pdfForm = pdfDoc.getForm();
 
       form.querySelectorAll('input[type="text"], textarea').forEach(function(el){
@@ -379,8 +397,12 @@
 
       var pdfBytes = await pdfDoc.save();
 
-      var baseName = blankFile.name.replace(/\.pdf$/i, '');
-      var suggestedName = baseName + '_1.pdf';
+      function safe(v){ return (v || '').toString().trim().replace(/[^a-z0-9-]+/gi, '_').replace(/^_+|_+$/g, ''); }
+      var partNo = safe(form.querySelector('[name="customer_part_number"]').value) ||
+                   safe(form.querySelector('[name="part_name"]').value) || 'form';
+      var today = new Date();
+      var stamp = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+      var suggestedName = 'PSW_' + partNo + '_' + stamp + '.pdf';
 
       if (window.showSaveFilePicker) {
         try {
