@@ -50,12 +50,20 @@
   .pdir-row{ display:flex; align-items:center; gap:14px; padding:13px 18px;
     border-bottom:1px solid var(--line); }
   .pdir-row:last-child{ border-bottom:none; }
-  .pdir-name{ font-weight:700; font-size:14px; flex:1 1 auto; min-width:0;
-    overflow-wrap:break-word; }
-  .pdir-meta{ font-size:12px; color:var(--label); white-space:nowrap; }
-  .pdir-view{ font-size:13px; font-weight:600; color:var(--brand); text-decoration:none;
-    border:1px solid var(--brand); border-radius:6px; padding:6px 14px; white-space:nowrap; }
+  .pdir-main{ flex:1 1 auto; min-width:0; }
+  .pdir-name{ font-weight:700; font-size:14px; overflow-wrap:break-word; }
+  .pdir-name .pill{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
+    border-radius:4px; padding:2px 7px; margin-left:8px; vertical-align:1px; white-space:nowrap; }
+  .pill.pill-done{ background:#e6f4ea; color:#187b46; }
+  .pill.pill-draft{ background:#fdf1de; color:#a06a1c; }
+  .pdir-meta{ font-size:12px; color:var(--label); white-space:nowrap; margin-top:2px; }
+  .pdir-actions{ display:flex; gap:8px; flex:0 0 auto; }
+  .pdir-view, .pdir-modify{ font-size:13px; font-weight:600; text-decoration:none;
+    border-radius:6px; padding:6px 14px; white-space:nowrap; }
+  .pdir-view{ color:var(--brand); border:1px solid var(--brand); }
   .pdir-view:hover{ background:#eef1fa; }
+  .pdir-modify{ color:#fff; background:var(--brand); border:1px solid var(--brand); }
+  .pdir-modify:hover{ background:var(--brand-dark); }
 
   .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
   .state.error{ color:#b23b3b; }
@@ -107,7 +115,8 @@
   // connecting a token raises that limit a lot and is required for a private repo.
   var GH_OWNER = 'Rapidbizservices';
   var GH_REPO = 'RBS_Dessimate_Forms_Portal';
-  var GH_FOLDER = 'pdirs';
+  var GH_PDF_FOLDER = 'pdirs';
+  var GH_DRAFT_FOLDER = 'pdir_drafts';
   var GH_TOKEN_KEY = 'dessimate_gh_token';
 
   function ghToken(){ try{ return localStorage.getItem(GH_TOKEN_KEY) || ''; }catch(e){ return ''; } }
@@ -120,8 +129,8 @@
   }
   function ghApiUrl(path){ return 'https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/' + path; }
 
-  async function ghListPdirs(){
-    var res = await fetch(ghApiUrl('contents/' + GH_FOLDER), { headers: ghHeaders() });
+  async function ghListFolder(folder){
+    var res = await fetch(ghApiUrl('contents/' + folder), { headers: ghHeaders() });
     if (res.status === 404) return [];
     if (!res.ok) {
       var txt = '';
@@ -129,13 +138,12 @@
       throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
     }
     var items = await res.json();
-    if (!Array.isArray(items)) return [];
-    return items.filter(function(it){ return it.type === 'file' && /\.pdf$/i.test(it.name); });
+    return Array.isArray(items) ? items : [];
   }
 
-  async function ghGetLastCommitDate(filename){
+  async function ghGetLastCommitDate(fullPath){
     try {
-      var path = 'commits?path=' + encodeURIComponent(GH_FOLDER + '/' + filename) + '&per_page=1';
+      var path = 'commits?path=' + encodeURIComponent(fullPath) + '&per_page=1';
       var res = await fetch(ghApiUrl(path), { headers: ghHeaders() });
       if (!res.ok) return null;
       var data = await res.json();
@@ -178,6 +186,9 @@
     });
   }
 
+  // Each entry is keyed by its title ("PDIR for Shipment # ..."), which is the
+  // shared base filename between the finished PDF (pdirs/<title>.pdf) and the
+  // resumable draft (pdir_drafts/<title>.json) — so one row can represent both.
   async function loadPdirList(){
     var listEl = document.getElementById('pdirList');
     var emptyEl = document.getElementById('emptyState');
@@ -189,33 +200,61 @@
     loadingEl.style.display = 'block';
     loadingEl.textContent = 'Loading previous PDIRs…';
     try {
-      var files = await ghListPdirs();
-      if (!files.length) {
+      var results = await Promise.all([ghListFolder(GH_PDF_FOLDER), ghListFolder(GH_DRAFT_FOLDER)]);
+      var pdfFiles = results[0].filter(function(it){ return it.type === 'file' && /\.pdf$/i.test(it.name); });
+      var draftFiles = results[1].filter(function(it){ return it.type === 'file' && /\.json$/i.test(it.name); });
+
+      var map = {};
+      pdfFiles.forEach(function(f){
+        var title = f.name.replace(/\.pdf$/i, '');
+        map[title] = map[title] || { title: title };
+        map[title].pdf = f;
+      });
+      draftFiles.forEach(function(f){
+        var title = f.name.replace(/\.json$/i, '');
+        map[title] = map[title] || { title: title };
+        map[title].draft = f;
+      });
+      var entries = Object.keys(map).map(function(k){ return map[k]; });
+
+      if (!entries.length) {
         loadingEl.style.display = 'none';
         emptyEl.style.display = 'block';
         return;
       }
-      var withDates = await Promise.all(files.map(async function(f){
-        return { file: f, date: await ghGetLastCommitDate(f.name) };
+
+      await Promise.all(entries.map(async function(e){
+        if (e.pdf) e.pdfDate = await ghGetLastCommitDate(GH_PDF_FOLDER + '/' + e.pdf.name);
+        if (e.draft) e.draftDate = await ghGetLastCommitDate(GH_DRAFT_FOLDER + '/' + e.draft.name);
       }));
-      withDates.sort(function(a, b){
-        var da = a.date ? new Date(a.date).getTime() : 0;
-        var db = b.date ? new Date(b.date).getTime() : 0;
-        return db - da;
+      entries.forEach(function(e){
+        var pd = e.pdfDate ? new Date(e.pdfDate).getTime() : 0;
+        var dd = e.draftDate ? new Date(e.draftDate).getTime() : 0;
+        e.latest = Math.max(pd, dd);
       });
+      entries.sort(function(a, b){ return b.latest - a.latest; });
+
       loadingEl.style.display = 'none';
-      withDates.forEach(function(item){
-        var f = item.file;
-        var title = f.name.replace(/\.pdf$/i, '');
-        var dateStr = item.date ? new Date(item.date).toLocaleString() : '';
-        var sizeKb = f.size ? Math.round(f.size / 1024) + ' KB' : '';
-        var meta = [dateStr, sizeKb].filter(Boolean).join(' · ');
+      entries.forEach(function(e){
+        var latestDate = e.latest ? new Date(e.latest).toLocaleString() : '';
+        var sizeKb = e.pdf && e.pdf.size ? Math.round(e.pdf.size / 1024) + ' KB' : '';
+        var meta = [latestDate, sizeKb].filter(Boolean).join(' · ');
+        var pill = e.pdf
+          ? '<span class="pill pill-done">Completed</span>'
+          : '<span class="pill pill-draft">Draft</span>';
+        var modifyHref = 'PDIR_Form_Filler.html?shipment=' + encodeURIComponent(e.title);
+
         var row = document.createElement('div');
         row.className = 'pdir-row';
         row.innerHTML =
-          '<div class="pdir-name">' + escapeHtml(title) + '</div>' +
-          '<div class="pdir-meta">' + escapeHtml(meta) + '</div>' +
-          '<a class="pdir-view" href="' + f.download_url + '" target="_blank" rel="noopener">View PDF</a>';
+          '<div class="pdir-main">' +
+            '<div class="pdir-name">' + escapeHtml(e.title) + pill + '</div>' +
+            '<div class="pdir-meta">' + escapeHtml(meta) + '</div>' +
+          '</div>' +
+          '<div class="pdir-actions">' +
+            (e.pdf ? '<a class="pdir-view" href="' + e.pdf.download_url + '" target="_blank" rel="noopener">View PDF</a>' : '') +
+            '<a class="pdir-modify" href="' + modifyHref + '">Modify PDIR</a>' +
+          '</div>';
         listEl.appendChild(row);
       });
     } catch (err) {
