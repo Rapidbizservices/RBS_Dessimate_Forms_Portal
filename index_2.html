@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dessimate PSW Portal</title>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --bg:#eef0f4;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    background:var(--bg);
+    font-family:Arial,Helvetica,sans-serif;
+    color:var(--ink);
+    padding:24px;
+    text-align:center;
+  }
+  .card{
+    background:#fff;
+    border:1px solid #d7d9df;
+    border-radius:14px;
+    padding:40px 44px 36px;
+    max-width:480px;
+    width:100%;
+    box-shadow:0 8px 24px rgba(20,20,30,.08);
+  }
+  .logo{ width:72px; height:auto; margin-bottom:18px; }
+  h1{ font-size:20px; margin:0 0 8px; }
+  p.sub{ font-size:14px; color:var(--label); line-height:1.5; margin:0 0 28px; }
+  .btn{
+    display:inline-block;
+    font-size:16px;
+    font-weight:700;
+    color:#fff;
+    background:var(--brand);
+    border-radius:9px;
+    padding:15px 36px;
+    text-decoration:none;
+    letter-spacing:.01em;
+  }
+  .btn:hover{ background:var(--brand-dark); }
+  footer{ margin-top:22px; font-size:11.5px; color:#9a9ea6; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <img class="logo" src="logo.jpg" alt="Dessimate">
+    <h1>Part Submission Warrant (PSW)</h1>
+    <p class="sub">
+      Fill out and generate a completed PSW form for your parts.
+      Your entries are filled directly into the real PDF form &mdash;
+      nothing is uploaded anywhere.
+    </p>
+    <a class="btn" href="PSW_Form_Filler.html">Create a PSW</a>
+  </div>
+  <footer>Dessimate &middot; Part Submission Warrant Template &middot; Form QF-PSW-01</footer>
+</body>
+</html>
