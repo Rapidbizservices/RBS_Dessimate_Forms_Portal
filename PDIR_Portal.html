@@ -56,14 +56,25 @@
     border-radius:4px; padding:2px 7px; margin-left:8px; vertical-align:1px; white-space:nowrap; }
   .pill.pill-done{ background:#e6f4ea; color:#187b46; }
   .pill.pill-draft{ background:#fdf1de; color:#a06a1c; }
+  .pill.pill-hidden{ background:#f1e6f6; color:#7a3fa0; }
   .pdir-meta{ font-size:12px; color:var(--label); white-space:nowrap; margin-top:2px; }
   .pdir-actions{ display:flex; gap:8px; flex:0 0 auto; }
-  .pdir-view, .pdir-modify{ font-family:inherit; font-size:13px; font-weight:600; text-decoration:none;
+  .pdir-view, .pdir-modify, .pdir-delete, .pdir-restore{
+    font-family:inherit; font-size:13px; font-weight:600; text-decoration:none;
     border-radius:6px; padding:6px 14px; white-space:nowrap; cursor:pointer; }
   .pdir-view{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
   .pdir-view:hover{ background:#eef1fa; }
   .pdir-modify{ color:#fff; background:var(--brand); border:1px solid var(--brand); }
   .pdir-modify:hover{ background:var(--brand-dark); }
+  .pdir-delete{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
+  .pdir-delete:hover{ background:#fbeaea; border-color:#b23b3b; }
+  .pdir-restore{ color:#187b46; background:#fff; border:1px solid #9fd6b6; }
+  .pdir-restore:hover{ background:#e9f6ee; }
+  .pdir-row.is-hidden{ opacity:.6; }
+
+  .hiddenToggle{ display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--label);
+    cursor:pointer; user-select:none; }
+  .hiddenToggle input{ cursor:pointer; }
 
   .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
   .state.error{ color:#b23b3b; }
@@ -121,7 +132,10 @@
 
   <div class="toolbar">
     <h2>Previous PDIRs</h2>
-    <button type="button" id="refreshBtn">Refresh</button>
+    <div style="display:flex; align-items:center; gap:14px;">
+      <label class="hiddenToggle"><input type="checkbox" id="showHiddenToggle"> Show removed PDIRs</label>
+      <button type="button" id="refreshBtn">Refresh</button>
+    </div>
   </div>
 
   <div class="panel">
@@ -167,10 +181,11 @@
 
   function ghToken(){ try{ return localStorage.getItem(GH_TOKEN_KEY) || ''; }catch(e){ return ''; } }
   function ghSetToken(t){ try{ if(t) localStorage.setItem(GH_TOKEN_KEY, t); else localStorage.removeItem(GH_TOKEN_KEY); }catch(e){} }
-  function ghHeaders(){
+  function ghHeaders(extra){
     var h = { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
     var t = ghToken();
     if (t) h['Authorization'] = 'Bearer ' + t;
+    if (extra) Object.keys(extra).forEach(function(k){ h[k] = extra[k]; });
     return h;
   }
   function ghApiUrl(path){ return 'https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/' + path; }
@@ -197,6 +212,91 @@
     } catch(e){}
     return null;
   }
+
+  function ghContentsUrl(fullPath){
+    return ghApiUrl('contents/' + fullPath.split('/').map(encodeURIComponent).join('/'));
+  }
+  function bytesToBase64(bytes){
+    var binary = '', chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+  function base64ToBytes(b64){
+    var bin = atob((b64 || '').replace(/\s+/g, ''));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  async function ghGetSha(fullPath){
+    var res = await fetch(ghContentsUrl(fullPath), { headers: ghHeaders() });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('GitHub error ' + res.status);
+    var data = await res.json();
+    return data.sha;
+  }
+  async function ghGetFileContent(fullPath){
+    var res = await fetch(ghContentsUrl(fullPath), { headers: ghHeaders() });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('GitHub error ' + res.status + ' while loading ' + fullPath + '.');
+    var data = await res.json();
+    return new TextDecoder('utf-8').decode(base64ToBytes(data.content || ''));
+  }
+  async function ghPutFile(fullPath, bytes, commitMessage){
+    var token = ghToken();
+    if (!token) throw new Error('No GitHub token configured.');
+    var sha = await ghGetSha(fullPath);
+    var body = { message: commitMessage || ('Save ' + fullPath), content: bytesToBase64(bytes) };
+    if (sha) body.sha = sha;
+    var res = await fetch(ghContentsUrl(fullPath), {
+      method: 'PUT',
+      headers: ghHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var txt = '';
+      try { txt = (await res.json()).message || ''; } catch(e){}
+      throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+    }
+    return await res.json();
+  }
+  // ---- Soft delete: "Remove from Portal" never touches the actual files in
+  // pdirs/ or pdir_drafts/ — it only adds the title to a small shared list so
+  // everyone's Portal knows to hide it. An admin can always see the real files
+  // in GitHub, or use "Show removed PDIRs" here to restore one. ------------
+  var HIDDEN_FILE = 'pdir_meta/hidden.json';
+
+  async function loadHiddenTitles(){
+    try {
+      var text = await ghGetFileContent(HIDDEN_FILE);
+      if (!text) return [];
+      var data = JSON.parse(text);
+      return Array.isArray(data.hidden) ? data.hidden : [];
+    } catch(e){ console.error(e); return []; }
+  }
+  async function saveHiddenTitles(list){
+    var bytes = new TextEncoder().encode(JSON.stringify({ hidden: list }));
+    await ghPutFile(HIDDEN_FILE, bytes, 'Update PDIR Portal hidden list');
+  }
+  async function setHidden(title, hidden){
+    if (!ghToken()) {
+      alert('Connect GitHub first (top right) — removing or restoring a PDIR needs write access to save that change.');
+      return;
+    }
+    try {
+      var current = await loadHiddenTitles();
+      var next = hidden
+        ? (current.indexOf(title) === -1 ? current.concat([title]) : current)
+        : current.filter(function(t){ return t !== title; });
+      await saveHiddenTitles(next);
+      await loadPdirList();
+    } catch(e) {
+      console.error(e);
+      alert((hidden ? 'Could not remove' : 'Could not restore') + ' this PDIR (' + e.message + ').');
+    }
+  }
+  // -----------------------------------------------------------------------------
 
   function refreshGhStatus(){
     var t = ghToken();
@@ -290,20 +390,84 @@
   // Each entry is keyed by its title ("PDIR for Shipment # ..."), which is the
   // shared base filename between the finished PDF (pdirs/<title>.pdf) and the
   // resumable draft (pdir_drafts/<title>.json) — so one row can represent both.
-  async function loadPdirList(){
+  var lastEntries = [];
+  var showHidden = false;
+
+  function renderList(){
     var listEl = document.getElementById('pdirList');
+    var emptyEl = document.getElementById('emptyState');
+    listEl.innerHTML = '';
+    emptyEl.style.display = 'none';
+
+    var visible = showHidden ? lastEntries : lastEntries.filter(function(e){ return !e.hidden; });
+
+    if (!visible.length) {
+      emptyEl.style.display = 'block';
+      emptyEl.textContent = (lastEntries.length && !showHidden)
+        ? 'Every PDIR is currently removed from view. Check "Show removed PDIRs" above to see and restore them.'
+        : 'No PDIRs yet.';
+      return;
+    }
+
+    visible.forEach(function(e){
+      var latestDate = e.latest ? new Date(e.latest).toLocaleString() : '';
+      var sizeKb = e.pdf && e.pdf.size ? Math.round(e.pdf.size / 1024) + ' KB' : '';
+      var meta = [latestDate, sizeKb].filter(Boolean).join(' · ');
+      var pill = e.pdf
+        ? '<span class="pill pill-done">Completed</span>'
+        : '<span class="pill pill-draft">Draft</span>';
+      if (e.hidden) pill += '<span class="pill pill-hidden">Removed</span>';
+      var modifyHref = 'PDIR_Form_Filler.html?shipment=' + encodeURIComponent(e.title);
+
+      var row = document.createElement('div');
+      row.className = 'pdir-row' + (e.hidden ? ' is-hidden' : '');
+      row.innerHTML =
+        '<div class="pdir-main">' +
+          '<div class="pdir-name">' + escapeHtml(e.title) + pill + '</div>' +
+          '<div class="pdir-meta">' + escapeHtml(meta) + '</div>' +
+        '</div>' +
+        '<div class="pdir-actions">' +
+          (e.pdf ? '<button type="button" class="pdir-view">View PDF</button>' : '') +
+          '<a class="pdir-modify" href="' + modifyHref + '">Modify PDIR</a>' +
+          (e.hidden
+            ? '<button type="button" class="pdir-restore">Restore</button>'
+            : '<button type="button" class="pdir-delete">Delete</button>') +
+        '</div>';
+      if (e.pdf) {
+        row.querySelector('.pdir-view').addEventListener('click', function(){
+          openPdfViewer(e.title, e.pdf.download_url);
+        });
+      }
+      if (e.hidden) {
+        row.querySelector('.pdir-restore').addEventListener('click', function(){
+          setHidden(e.title, false);
+        });
+      } else {
+        row.querySelector('.pdir-delete').addEventListener('click', function(){
+          if (!confirm('Remove "' + e.title + '" from the Portal?\n\n' +
+            'This only hides it here — the PDF and draft files stay in the pdirs / pdir_drafts folders ' +
+            'of your GitHub repo, so an admin can still find them there or restore this from "Show removed PDIRs".')) return;
+          setHidden(e.title, true);
+        });
+      }
+      listEl.appendChild(row);
+    });
+  }
+
+  async function loadPdirList(){
     var emptyEl = document.getElementById('emptyState');
     var errorEl = document.getElementById('errorState');
     var loadingEl = document.getElementById('loadingState');
-    listEl.innerHTML = '';
+    document.getElementById('pdirList').innerHTML = '';
     errorEl.style.display = 'none';
     emptyEl.style.display = 'none';
     loadingEl.style.display = 'block';
     loadingEl.textContent = 'Loading previous PDIRs…';
     try {
-      var results = await Promise.all([ghListFolder(GH_PDF_FOLDER), ghListFolder(GH_DRAFT_FOLDER)]);
+      var results = await Promise.all([ghListFolder(GH_PDF_FOLDER), ghListFolder(GH_DRAFT_FOLDER), loadHiddenTitles()]);
       var pdfFiles = results[0].filter(function(it){ return it.type === 'file' && /\.pdf$/i.test(it.name); });
       var draftFiles = results[1].filter(function(it){ return it.type === 'file' && /\.json$/i.test(it.name); });
+      var hiddenTitles = results[2];
 
       var map = {};
       pdfFiles.forEach(function(f){
@@ -317,10 +481,13 @@
         map[title].draft = f;
       });
       var entries = Object.keys(map).map(function(k){ return map[k]; });
+      entries.forEach(function(e){ e.hidden = hiddenTitles.indexOf(e.title) !== -1; });
 
       if (!entries.length) {
         loadingEl.style.display = 'none';
         emptyEl.style.display = 'block';
+        emptyEl.textContent = 'No PDIRs yet. Click "Create a PDIR" above to make the first one.';
+        lastEntries = [];
         return;
       }
 
@@ -336,33 +503,8 @@
       entries.sort(function(a, b){ return b.latest - a.latest; });
 
       loadingEl.style.display = 'none';
-      entries.forEach(function(e){
-        var latestDate = e.latest ? new Date(e.latest).toLocaleString() : '';
-        var sizeKb = e.pdf && e.pdf.size ? Math.round(e.pdf.size / 1024) + ' KB' : '';
-        var meta = [latestDate, sizeKb].filter(Boolean).join(' · ');
-        var pill = e.pdf
-          ? '<span class="pill pill-done">Completed</span>'
-          : '<span class="pill pill-draft">Draft</span>';
-        var modifyHref = 'PDIR_Form_Filler.html?shipment=' + encodeURIComponent(e.title);
-
-        var row = document.createElement('div');
-        row.className = 'pdir-row';
-        row.innerHTML =
-          '<div class="pdir-main">' +
-            '<div class="pdir-name">' + escapeHtml(e.title) + pill + '</div>' +
-            '<div class="pdir-meta">' + escapeHtml(meta) + '</div>' +
-          '</div>' +
-          '<div class="pdir-actions">' +
-            (e.pdf ? '<button type="button" class="pdir-view">View PDF</button>' : '') +
-            '<a class="pdir-modify" href="' + modifyHref + '">Modify PDIR</a>' +
-          '</div>';
-        if (e.pdf) {
-          row.querySelector('.pdir-view').addEventListener('click', function(){
-            openPdfViewer(e.title, e.pdf.download_url);
-          });
-        }
-        listEl.appendChild(row);
-      });
+      lastEntries = entries;
+      renderList();
     } catch (err) {
       console.error(err);
       loadingEl.style.display = 'none';
@@ -373,6 +515,10 @@
   }
 
   document.getElementById('refreshBtn').addEventListener('click', loadPdirList);
+  document.getElementById('showHiddenToggle').addEventListener('change', function(){
+    showHidden = this.checked;
+    renderList();
+  });
   loadPdirList();
 })();
 </script>
