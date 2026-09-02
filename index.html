@@ -52,6 +52,36 @@
   .btn:hover{ background:var(--brand-dark); }
   .btn-stack{ display:flex; flex-direction:column; gap:12px; align-items:stretch; }
   footer{ margin-top:22px; font-size:11.5px; color:#9a9ea6; }
+
+  .usersBtn{
+    display:inline-block;
+    font-size:13px;
+    font-weight:700;
+    color:var(--brand);
+    background:#fff;
+    border:1px solid #cdd6ee;
+    border-radius:8px;
+    padding:9px 18px;
+    text-decoration:none;
+    cursor:pointer;
+    font-family:inherit;
+    margin-top:16px;
+  }
+  .usersBtn:hover{ background:#eef1fa; }
+
+  .usersOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1000; align-items:center; justify-content:center; padding:20px; }
+  .usersOverlay.open{ display:flex; }
+  .usersCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:320px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .usersCard h2{ font-size:16px; margin:0 0 4px; color:var(--ink); }
+  .usersCard .usersSub{ font-size:12px; color:var(--label); margin:0 0 16px; }
+  .usersList{ list-style:none; margin:0 0 20px; padding:0; }
+  .usersList li{ font-size:14px; padding:9px 0; border-bottom:1px solid #eef0f4; }
+  .usersList li:last-child{ border-bottom:none; }
+  .usersCloseBtn{ width:100%; font-family:inherit; font-size:14px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:10px; cursor:pointer; }
+  .usersCloseBtn:hover{ background:var(--brand-dark); }
 </style>
 </head>
 <body>
@@ -67,7 +97,49 @@
       <a class="btn" href="PDIR_Portal.html">PDIR</a>
       <a class="btn" href="PSW_Form_Filler.html">Create a PSW</a>
     </div>
+    <button type="button" class="usersBtn" id="usersBtn">Users</button>
   </div>
   <footer>Dessimate &middot; Forms Portal &middot; PDIR (QF-PDIR-01) &middot; PSW</footer>
+
+  <div class="usersOverlay" id="usersOverlay">
+    <div class="usersCard">
+      <h2>Staff with access</h2>
+      <p class="usersSub">Everyone who can sign in to the PDIR Portal.</p>
+      <ul class="usersList" id="usersList"></ul>
+      <button type="button" class="usersCloseBtn" id="usersCloseBtn">Close</button>
+    </div>
+  </div>
+
+  <script>
+    // Keep this list in sync with STAFF_USERS whenever someone is added or
+    // removed (see the worker's README, "Adding staff") -- it's just for
+    // display here, this page doesn't talk to the backend.
+    var STAFF_NAMES = ['Amy', 'Roberto', 'Komal'];
+
+    var usersBtn = document.getElementById('usersBtn');
+    var usersOverlay = document.getElementById('usersOverlay');
+    var usersList = document.getElementById('usersList');
+    var usersCloseBtn = document.getElementById('usersCloseBtn');
+
+    function renderUsers(){
+      usersList.innerHTML = '';
+      STAFF_NAMES.forEach(function(name){
+        var li = document.createElement('li');
+        li.textContent = name;
+        usersList.appendChild(li);
+      });
+    }
+
+    usersBtn.addEventListener('click', function(){
+      renderUsers();
+      usersOverlay.classList.add('open');
+    });
+    usersCloseBtn.addEventListener('click', function(){
+      usersOverlay.classList.remove('open');
+    });
+    usersOverlay.addEventListener('click', function(e){
+      if (e.target === usersOverlay) usersOverlay.classList.remove('open');
+    });
+  </script>
 </body>
 </html>
