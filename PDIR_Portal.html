@@ -1,0 +1,233 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>PDIR Portal</title>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:860px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+
+  .createBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; color:#fff; background:#1f9254;
+    border:none; border-radius:8px; padding:12px 22px; cursor:pointer; text-decoration:none;
+    white-space:nowrap; display:inline-block;
+  }
+  .createBtn:hover{ background:#187b46; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
+    font-size:12.5px; margin:10px 0 18px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
+  #refreshBtn{ font-family:inherit; font-size:12.5px; color:var(--brand); background:#fff;
+    border:1px solid var(--line); border-radius:7px; padding:6px 12px; cursor:pointer; }
+  #refreshBtn:hover{ background:#eef1fa; }
+
+  .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+
+  .pdir-row{ display:flex; align-items:center; gap:14px; padding:13px 18px;
+    border-bottom:1px solid var(--line); }
+  .pdir-row:last-child{ border-bottom:none; }
+  .pdir-name{ font-weight:700; font-size:14px; flex:1 1 auto; min-width:0;
+    overflow-wrap:break-word; }
+  .pdir-meta{ font-size:12px; color:var(--label); white-space:nowrap; }
+  .pdir-view{ font-size:13px; font-weight:600; color:var(--brand); text-decoration:none;
+    border:1px solid var(--brand); border-radius:6px; padding:6px 14px; white-space:nowrap; }
+  .pdir-view:hover{ background:#eef1fa; }
+
+  .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
+  .state.error{ color:#b23b3b; }
+  .state a{ color:var(--brand); font-weight:600; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>PDIR Portal</h1>
+        <p class="sub">Previously created Pre-Dispatch Inspection Reports, straight from the repo.</p>
+      </div>
+    </div>
+    <a class="createBtn" href="PDIR_Form_Filler.html">Create a PDIR</a>
+  </div>
+
+  <div class="ghbar">
+    <span id="ghStatus">GitHub: checking&hellip;</span>
+    <button type="button" id="ghConnectBtn">Connect GitHub</button>
+  </div>
+
+  <div class="toolbar">
+    <h2>Previous PDIRs</h2>
+    <button type="button" id="refreshBtn">Refresh</button>
+  </div>
+
+  <div class="panel">
+    <div id="loadingState" class="state">Loading previous PDIRs&hellip;</div>
+    <div id="emptyState" class="state" style="display:none;">
+      No PDIRs yet. Click <strong>Create a PDIR</strong> above to make the first one.
+    </div>
+    <div id="errorState" class="state error" style="display:none;"></div>
+    <div id="pdirList"></div>
+  </div>
+
+  <footer>Dessimate &middot; PDIR Portal &middot; Form QF-PDIR-01</footer>
+</div>
+
+<script>
+(function(){
+  // ---- GitHub (Contents API) ------------------------------------------------
+  // This page is a static file with no server of its own, so listing what's in
+  // the repo means calling GitHub's REST API directly from the browser. Public
+  // repos can be listed without a token (rate-limited to 60 requests/hour);
+  // connecting a token raises that limit a lot and is required for a private repo.
+  var GH_OWNER = 'Rapidbizservices';
+  var GH_REPO = 'RBS_Dessimate_Forms_Portal';
+  var GH_FOLDER = 'pdirs';
+  var GH_TOKEN_KEY = 'dessimate_gh_token';
+
+  function ghToken(){ try{ return localStorage.getItem(GH_TOKEN_KEY) || ''; }catch(e){ return ''; } }
+  function ghSetToken(t){ try{ if(t) localStorage.setItem(GH_TOKEN_KEY, t); else localStorage.removeItem(GH_TOKEN_KEY); }catch(e){} }
+  function ghHeaders(){
+    var h = { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+    var t = ghToken();
+    if (t) h['Authorization'] = 'Bearer ' + t;
+    return h;
+  }
+  function ghApiUrl(path){ return 'https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/' + path; }
+
+  async function ghListPdirs(){
+    var res = await fetch(ghApiUrl('contents/' + GH_FOLDER), { headers: ghHeaders() });
+    if (res.status === 404) return [];
+    if (!res.ok) {
+      var txt = '';
+      try { txt = (await res.json()).message || ''; } catch(e){}
+      throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+    }
+    var items = await res.json();
+    if (!Array.isArray(items)) return [];
+    return items.filter(function(it){ return it.type === 'file' && /\.pdf$/i.test(it.name); });
+  }
+
+  async function ghGetLastCommitDate(filename){
+    try {
+      var path = 'commits?path=' + encodeURIComponent(GH_FOLDER + '/' + filename) + '&per_page=1';
+      var res = await fetch(ghApiUrl(path), { headers: ghHeaders() });
+      if (!res.ok) return null;
+      var data = await res.json();
+      if (data && data[0] && data[0].commit && data[0].commit.committer) return data[0].commit.committer.date;
+    } catch(e){}
+    return null;
+  }
+
+  function refreshGhStatus(){
+    var t = ghToken();
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (t) {
+      statusEl.textContent = 'GitHub: connected';
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Change token';
+    } else {
+      statusEl.textContent = 'GitHub: not connected (read-only, public repo)';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Connect GitHub';
+    }
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    var current = ghToken();
+    var msg = current
+      ? 'Paste a new GitHub personal access token to replace the saved one, or clear the box and press OK to disconnect.\n\nThe token needs "Contents: Read and write" access to ' + GH_OWNER + '/' + GH_REPO + '.'
+      : 'Paste a GitHub personal access token with "Contents: Read and write" access to ' + GH_OWNER + '/' + GH_REPO + '.\n\nCreate one at github.com -> Settings -> Developer settings -> Fine-grained tokens. It is stored only in this browser, never sent anywhere except api.github.com.';
+    var val = window.prompt(msg, current || '');
+    if (val === null) return;
+    ghSetToken(val.trim());
+    refreshGhStatus();
+    loadPdirList();
+  });
+  refreshGhStatus();
+  // -----------------------------------------------------------------------------
+
+  function escapeHtml(s){
+    return (s || '').replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+
+  async function loadPdirList(){
+    var listEl = document.getElementById('pdirList');
+    var emptyEl = document.getElementById('emptyState');
+    var errorEl = document.getElementById('errorState');
+    var loadingEl = document.getElementById('loadingState');
+    listEl.innerHTML = '';
+    errorEl.style.display = 'none';
+    emptyEl.style.display = 'none';
+    loadingEl.style.display = 'block';
+    loadingEl.textContent = 'Loading previous PDIRs…';
+    try {
+      var files = await ghListPdirs();
+      if (!files.length) {
+        loadingEl.style.display = 'none';
+        emptyEl.style.display = 'block';
+        return;
+      }
+      var withDates = await Promise.all(files.map(async function(f){
+        return { file: f, date: await ghGetLastCommitDate(f.name) };
+      }));
+      withDates.sort(function(a, b){
+        var da = a.date ? new Date(a.date).getTime() : 0;
+        var db = b.date ? new Date(b.date).getTime() : 0;
+        return db - da;
+      });
+      loadingEl.style.display = 'none';
+      withDates.forEach(function(item){
+        var f = item.file;
+        var title = f.name.replace(/\.pdf$/i, '');
+        var dateStr = item.date ? new Date(item.date).toLocaleString() : '';
+        var sizeKb = f.size ? Math.round(f.size / 1024) + ' KB' : '';
+        var meta = [dateStr, sizeKb].filter(Boolean).join(' · ');
+        var row = document.createElement('div');
+        row.className = 'pdir-row';
+        row.innerHTML =
+          '<div class="pdir-name">' + escapeHtml(title) + '</div>' +
+          '<div class="pdir-meta">' + escapeHtml(meta) + '</div>' +
+          '<a class="pdir-view" href="' + f.download_url + '" target="_blank" rel="noopener">View PDF</a>';
+        listEl.appendChild(row);
+      });
+    } catch (err) {
+      console.error(err);
+      loadingEl.style.display = 'none';
+      errorEl.style.display = 'block';
+      errorEl.textContent = 'Could not load previous PDIRs (' + err.message + '). ' +
+        'If this repo is private, click "Connect GitHub" above and add a token.';
+    }
+  }
+
+  document.getElementById('refreshBtn').addEventListener('click', loadPdirList);
+  loadPdirList();
+})();
+</script>
