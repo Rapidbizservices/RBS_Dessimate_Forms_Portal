@@ -39,6 +39,23 @@
     border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
   #ghConnectBtn:hover{ background:#e2e8f9; }
 
+  /* Staff login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+
   .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
   .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
   #refreshBtn{ font-family:inherit; font-size:12.5px; color:var(--brand); background:#fff;
@@ -126,8 +143,8 @@
   </div>
 
   <div class="ghbar">
-    <span id="ghStatus">GitHub: checking&hellip;</span>
-    <button type="button" id="ghConnectBtn">Connect GitHub</button>
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
   </div>
 
   <div class="toolbar">
@@ -166,33 +183,70 @@
   </div>
 </div>
 
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Staff Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to view or manage PDIRs.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+    </form>
+  </div>
+</div>
+
 
 <script>
 (function(){
-  // ---- GitHub (Contents API) ------------------------------------------------
+  // ---- Backend (staff login + GitHub proxy) --------------------------------
   // This page is a static file with no server of its own, so listing what's in
-  // the repo means calling GitHub's REST API directly from the browser. Public
-  // repos can be listed without a token (rate-limited to 60 requests/hour);
-  // connecting a token raises that limit a lot and is required for a private repo.
-  var GH_OWNER = 'Rapidbizservices';
-  var GH_REPO = 'RBS_Dessimate_Forms_Portal';
+  // the repo goes through a small backend (a Cloudflare Worker) that holds the
+  // real GitHub token and is never exposed to the browser. Staff sign in here
+  // with a username/password (set up by your admin, not a GitHub account).
+  // EDIT WORKER_BASE_URL below once after you deploy the Worker (see
+  // worker/README.md) — it must match the same value used in
+  // PDIR_Form_Filler.html.
+  var WORKER_BASE_URL = 'https://dessimate-forms-backend.YOUR-SUBDOMAIN.workers.dev';
   var GH_PDF_FOLDER = 'pdirs';
   var GH_DRAFT_FOLDER = 'pdir_drafts';
-  var GH_TOKEN_KEY = 'dessimate_gh_token';
+  var SESSION_KEY = 'dessimate_session';
 
-  function ghToken(){ try{ return localStorage.getItem(GH_TOKEN_KEY) || ''; }catch(e){ return ''; } }
-  function ghSetToken(t){ try{ if(t) localStorage.setItem(GH_TOKEN_KEY, t); else localStorage.removeItem(GH_TOKEN_KEY); }catch(e){} }
-  function ghHeaders(extra){
-    var h = { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
-    var t = ghToken();
-    if (t) h['Authorization'] = 'Bearer ' + t;
-    if (extra) Object.keys(extra).forEach(function(k){ h[k] = extra[k]; });
-    return h;
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
   }
-  function ghApiUrl(path){ return 'https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/' + path; }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  async function apiFetch(path, opts){
+    opts = opts || {};
+    var headers = opts.headers || {};
+    var session = getSession();
+    if (session) headers['Authorization'] = 'Bearer ' + session.token;
+    var res = await fetch(WORKER_BASE_URL + '/' + path, { method: opts.method || 'GET', headers: headers, body: opts.body });
+    if (res.status === 401 && path !== 'login') {
+      clearSession();
+      showAuthOverlay();
+      throw new Error('Your session has expired — please log in again.');
+    }
+    return res;
+  }
+  function workerContentsPath(fullPath){
+    return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
+  }
 
   async function ghListFolder(folder){
-    var res = await fetch(ghApiUrl('contents/' + folder), { headers: ghHeaders() });
+    var res = await apiFetch(workerContentsPath(folder));
     if (res.status === 404) return [];
     if (!res.ok) {
       var txt = '';
@@ -205,8 +259,7 @@
 
   async function ghGetLastCommitDate(fullPath){
     try {
-      var path = 'commits?path=' + encodeURIComponent(fullPath) + '&per_page=1';
-      var res = await fetch(ghApiUrl(path), { headers: ghHeaders() });
+      var res = await apiFetch('commits?path=' + encodeURIComponent(fullPath));
       if (!res.ok) return null;
       var data = await res.json();
       if (data && data[0] && data[0].commit && data[0].commit.committer) return data[0].commit.committer.date;
@@ -214,9 +267,6 @@
     return null;
   }
 
-  function ghContentsUrl(fullPath){
-    return ghApiUrl('contents/' + fullPath.split('/').map(encodeURIComponent).join('/'));
-  }
   function bytesToBase64(bytes){
     var binary = '', chunk = 0x8000;
     for (var i = 0; i < bytes.length; i += chunk) {
@@ -231,28 +281,34 @@
     return bytes;
   }
   async function ghGetSha(fullPath){
-    var res = await fetch(ghContentsUrl(fullPath), { headers: ghHeaders() });
+    var res = await apiFetch(workerContentsPath(fullPath));
     if (res.status === 404) return null;
-    if (!res.ok) throw new Error('GitHub error ' + res.status);
+    if (!res.ok) throw new Error('Server error ' + res.status);
     var data = await res.json();
     return data.sha;
   }
   async function ghGetFileContent(fullPath){
-    var res = await fetch(ghContentsUrl(fullPath), { headers: ghHeaders() });
+    var res = await apiFetch(workerContentsPath(fullPath));
     if (res.status === 404) return null;
-    if (!res.ok) throw new Error('GitHub error ' + res.status + ' while loading ' + fullPath + '.');
+    if (!res.ok) throw new Error('Server error ' + res.status + ' while loading ' + fullPath + '.');
     var data = await res.json();
     return new TextDecoder('utf-8').decode(base64ToBytes(data.content || ''));
   }
+  async function ghGetFileBytes(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status + ' while loading ' + fullPath + '.');
+    var data = await res.json();
+    return base64ToBytes(data.content || '');
+  }
   async function ghPutFile(fullPath, bytes, commitMessage){
-    var token = ghToken();
-    if (!token) throw new Error('No GitHub token configured.');
+    if (!getSession()) throw new Error('Not signed in.');
     var sha = await ghGetSha(fullPath);
     var body = { message: commitMessage || ('Save ' + fullPath), content: bytesToBase64(bytes) };
     if (sha) body.sha = sha;
-    var res = await fetch(ghContentsUrl(fullPath), {
+    var res = await apiFetch(workerContentsPath(fullPath), {
       method: 'PUT',
-      headers: ghHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
     if (!res.ok) {
@@ -281,8 +337,8 @@
     await ghPutFile(HIDDEN_FILE, bytes, 'Update PDIR Portal hidden list');
   }
   async function setHidden(title, hidden){
-    if (!ghToken()) {
-      alert('Connect GitHub first (top right) — removing or restoring a PDIR needs write access to save that change.');
+    if (!getSession()) {
+      showAuthOverlay();
       return;
     }
     try {
@@ -299,30 +355,74 @@
   }
   // -----------------------------------------------------------------------------
 
+  // ---- Staff login wall -----------------------------------------------------
+  var pendingAfterAuth = null;
+
   function refreshGhStatus(){
-    var t = ghToken();
     var statusEl = document.getElementById('ghStatus');
     var btn = document.getElementById('ghConnectBtn');
-    if (t) {
-      statusEl.textContent = 'GitHub: connected';
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Signed in as ' + session.username;
       statusEl.className = 'gh-ok';
-      btn.textContent = 'Change token';
+      btn.textContent = 'Log out';
     } else {
-      statusEl.textContent = 'GitHub: not connected (read-only, public repo)';
+      statusEl.textContent = 'Not signed in';
       statusEl.className = 'gh-off';
-      btn.textContent = 'Connect GitHub';
+      btn.textContent = 'Log out';
     }
   }
-  document.getElementById('ghConnectBtn').addEventListener('click', function(){
-    var current = ghToken();
-    var msg = current
-      ? 'Paste a new GitHub personal access token to replace the saved one, or clear the box and press OK to disconnect.\n\nThe token needs "Contents: Read and write" access to ' + GH_OWNER + '/' + GH_REPO + '.'
-      : 'Paste a GitHub personal access token with "Contents: Read and write" access to ' + GH_OWNER + '/' + GH_REPO + '.\n\nCreate one at github.com -> Settings -> Developer settings -> Fine-grained tokens. It is stored only in this browser, never sent anywhere except api.github.com.';
-    var val = window.prompt(msg, current || '');
-    if (val === null) return;
-    ghSetToken(val.trim());
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
     refreshGhStatus();
-    loadPdirList();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+        document.getElementById('authPassword').value = '';
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
   });
   refreshGhStatus();
   // -----------------------------------------------------------------------------
@@ -382,7 +482,10 @@
     if (e.key === 'Escape' && document.getElementById('viewerOverlay').classList.contains('open')) closePdfViewer();
   });
 
-  async function openPdfViewer(title, url){
+  // Fetches the PDF through the Worker (base64 JSON, same as everything else)
+  // rather than GitHub's public raw download_url, since the repo can now be
+  // private — nobody but a signed-in staff member can reach a PDF.
+  async function openPdfViewer(title, fullPath){
     var overlay = document.getElementById('viewerOverlay');
     var stateEl = document.getElementById('viewerState');
     var frame = document.getElementById('viewerFrame');
@@ -394,9 +497,8 @@
     stateEl.textContent = 'Loading PDF…';
     overlay.classList.add('open');
     try {
-      var res = await fetch(url);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      var bytes = await res.arrayBuffer();
+      var bytes = await ghGetFileBytes(fullPath);
+      if (!bytes) throw new Error('File not found.');
       var blob = new Blob([bytes], { type: 'application/pdf' });
       if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
       viewerObjectUrl = URL.createObjectURL(blob);
@@ -408,7 +510,7 @@
       downloadBtn.style.display = 'inline-block';
     } catch (err) {
       console.error(err);
-      stateEl.innerHTML = 'Could not load the PDF for preview (' + escapeHtml(err.message) + ').<br><a href="' + url + '" target="_blank" rel="noopener">Open it directly instead</a>';
+      stateEl.innerHTML = 'Could not load the PDF for preview (' + escapeHtml(err.message) + ').';
     }
   }
   // -------------------------------------------------------------------------
@@ -461,7 +563,7 @@
         '</div>';
       if (e.pdf) {
         row.querySelector('.pdir-view').addEventListener('click', function(){
-          openPdfViewer(e.title, e.pdf.download_url);
+          openPdfViewer(e.title, GH_PDF_FOLDER + '/' + e.pdf.name);
         });
       }
       if (e.hidden) {
@@ -536,16 +638,15 @@
       console.error(err);
       loadingEl.style.display = 'none';
       errorEl.style.display = 'block';
-      errorEl.textContent = 'Could not load previous PDIRs (' + err.message + '). ' +
-        'If this repo is private, click "Connect GitHub" above and add a token.';
+      errorEl.textContent = 'Could not load previous PDIRs (' + err.message + ').';
     }
   }
 
-  document.getElementById('refreshBtn').addEventListener('click', loadPdirList);
+  document.getElementById('refreshBtn').addEventListener('click', function(){ requireAuthThen(loadPdirList); });
   document.getElementById('showHiddenToggle').addEventListener('change', function(){
     showHidden = this.checked;
     renderList();
   });
-  loadPdirList();
+  requireAuthThen(loadPdirList);
 })();
 </script>
