@@ -111,28 +111,46 @@
   </div>
 
   <script>
-    // Keep this list in sync with STAFF_USERS whenever someone is added or
-    // removed (see the worker's README, "Adding staff") -- it's just for
-    // display here, this page doesn't talk to the backend.
-    var STAFF_NAMES = ['Amy', 'Roberto', 'Komal', 'Claudia'];
+    // Pulled live from the backend's /users route every time the popup is
+    // opened, so this always matches STAFF_USERS -- nothing to keep in sync
+    // by hand here.
+    var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
 
     var usersBtn = document.getElementById('usersBtn');
     var usersOverlay = document.getElementById('usersOverlay');
     var usersList = document.getElementById('usersList');
     var usersCloseBtn = document.getElementById('usersCloseBtn');
 
-    function renderUsers(){
+    function renderUsers(names){
       usersList.innerHTML = '';
-      STAFF_NAMES.forEach(function(name){
+      names.forEach(function(name){
         var li = document.createElement('li');
         li.textContent = name;
         usersList.appendChild(li);
       });
     }
 
-    usersBtn.addEventListener('click', function(){
-      renderUsers();
+    function renderMessage(text){
+      usersList.innerHTML = '';
+      var li = document.createElement('li');
+      li.style.color = '#5b5f66';
+      li.textContent = text;
+      usersList.appendChild(li);
+    }
+
+    usersBtn.addEventListener('click', async function(){
       usersOverlay.classList.add('open');
+      renderMessage('Loading…');
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/users');
+        if (!res.ok) throw new Error('status ' + res.status);
+        var data = await res.json();
+        var names = Array.isArray(data.usernames) ? data.usernames : [];
+        if (names.length) renderUsers(names);
+        else renderMessage('No staff users found.');
+      } catch (err) {
+        renderMessage('Could not load the staff list right now.');
+      }
     });
     usersCloseBtn.addEventListener('click', function(){
       usersOverlay.classList.remove('open');
