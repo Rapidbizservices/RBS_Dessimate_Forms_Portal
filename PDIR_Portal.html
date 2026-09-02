@@ -166,6 +166,7 @@
   </div>
 </div>
 
+
 <script>
 (function(){
   // ---- GitHub (Contents API) ------------------------------------------------
@@ -325,6 +326,31 @@
   });
   refreshGhStatus();
   // -----------------------------------------------------------------------------
+
+  // Title is "PDIR for Shipment # <shipment number>" — pull just the shipment
+  // number part back out so the list can be ordered by it (natural/numeric
+  // order, so "-2" sorts before "-10", not after it like a plain string sort).
+  var SHIPMENT_PREFIX = 'PDIR for Shipment # ';
+  function shipmentKey(title){
+    title = title || '';
+    return title.indexOf(SHIPMENT_PREFIX) === 0 ? title.slice(SHIPMENT_PREFIX.length) : title;
+  }
+  function naturalCompare(a, b){
+    var re = /(\d+)|(\D+)/g;
+    var ax = [], bx = [], m;
+    while ((m = re.exec(a))) ax.push([m[1] ? parseInt(m[1], 10) : Infinity, m[2] || '']);
+    re.lastIndex = 0;
+    while ((m = re.exec(b))) bx.push([m[1] ? parseInt(m[1], 10) : Infinity, m[2] || '']);
+    var len = Math.max(ax.length, bx.length);
+    for (var i = 0; i < len; i++) {
+      var an = ax[i], bn = bx[i];
+      if (!an) return -1;
+      if (!bn) return 1;
+      if (an[0] !== bn[0]) return an[0] - bn[0];
+      if (an[1] !== bn[1]) return an[1] < bn[1] ? -1 : 1;
+    }
+    return 0;
+  }
 
   function escapeHtml(s){
     return (s || '').replace(/[&<>"']/g, function(c){
@@ -500,7 +526,8 @@
         var dd = e.draftDate ? new Date(e.draftDate).getTime() : 0;
         e.latest = Math.max(pd, dd);
       });
-      entries.sort(function(a, b){ return b.latest - a.latest; });
+      // Ordered by shipment number (e.g. -001 before -002), not by recency.
+      entries.sort(function(a, b){ return naturalCompare(shipmentKey(a.title), shipmentKey(b.title)); });
 
       loadingEl.style.display = 'none';
       lastEntries = entries;
