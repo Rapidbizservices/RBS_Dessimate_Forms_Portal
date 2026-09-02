@@ -46,12 +46,9 @@
   table.checklist td.comments input{ width:100%; border:1px solid var(--line); border-radius:4px;
     padding:5px 6px; font-family:inherit; font-size:12.5px; }
 
-  table.ctq{ width:100%; border-collapse:collapse; font-size:12px; margin-top:4px; }
-  table.ctq th{ background:#eef1f7; color:var(--label); font-size:10.5px; text-align:left;
-    padding:5px 6px; border:1px solid var(--line); }
-  table.ctq td{ padding:3px; border:1px solid var(--line); }
-  table.ctq td input{ width:100%; border:none; padding:4px 5px; font-family:inherit; font-size:12px; }
-  table.ctq td input:focus{ outline:1px solid var(--brand); border-radius:3px; }
+  .doc-field input[type=file]{ font-size:11.5px; width:100%; }
+  .docStatus{ display:block; font-size:11.5px; color:var(--label); margin-top:5px; font-weight:400; }
+  .docStatus.ok{ color:#187b46; font-weight:600; }
 
   .photo-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
   .photo-slot{ border:1px dashed var(--line); border-radius:8px; padding:10px; text-align:center; }
@@ -162,23 +159,9 @@
   </div>
 
   <div class="card">
-    <h2>CTQ Dimensional Measurements &mdash; 3 Pieces Sampled</h2>
-    <div class="hint">Record all critical-to-quality dimensions called out on the drawing. Measure 3 pieces per lot; mark each dimension Pass or Fail against tolerance in the Result column.</div>
-    <div style="overflow-x:auto;">
-    <table class="ctq">
-      <thead><tr>
-        <th style="width:8%">Balloon #</th>
-        <th style="width:24%">CTQ Dimension / Feature</th>
-        <th style="width:11%">Nominal</th>
-        <th style="width:11%">Tolerance (&plusmn;)</th>
-        <th style="width:9%">Pc 1</th>
-        <th style="width:9%">Pc 2</th>
-        <th style="width:9%">Pc 3</th>
-        <th style="width:19%">Result</th>
-      </tr></thead>
-      <tbody id="ctqBody"></tbody>
-    </table>
-    </div>
+    <h2>Supporting Documents</h2>
+    <div class="hint">Each file is attached directly into the finished PDF (and kept with the saved draft) &mdash; nothing is uploaded anywhere else.</div>
+    <div class="grid3 row" id="docFieldsRow"></div>
   </div>
 
   <div class="card">
@@ -389,21 +372,52 @@
     singleSelectGroups.push(['chk_' + slug + '_pass', 'chk_' + slug + '_fail']);
   });
 
-  // Build the CTQ Dimensional Measurements rows (8 pieces of data)
-  var ctqBody = document.getElementById('ctqBody');
-  for (var i = 1; i <= 8; i++) {
-    var tr2 = document.createElement('tr');
-    tr2.innerHTML =
-      '<td><input type="text" name="ctq_balloon_' + i + '"></td>' +
-      '<td><input type="text" name="ctq_dim_' + i + '"></td>' +
-      '<td><input type="text" name="ctq_nominal_' + i + '"></td>' +
-      '<td><input type="text" name="ctq_tolerance_' + i + '"></td>' +
-      '<td><input type="text" name="ctq_pc1_' + i + '"></td>' +
-      '<td><input type="text" name="ctq_pc2_' + i + '"></td>' +
-      '<td><input type="text" name="ctq_pc3_' + i + '"></td>' +
-      '<td><input type="text" name="ctq_result_' + i + '"></td>';
-    ctqBody.appendChild(tr2);
+  // Build the three supporting-document upload fields. Each file is read into
+  // memory as soon as it's chosen (docData[key] = {bytes, filename, mimeType})
+  // and attached into the finished PDF as a real embedded-file attachment —
+  // no separate template or backend file is needed for this.
+  var DOC_FIELDS = [
+    ['ctq_report', 'Supplier CTQ Dimensional Inspection Report'],
+    ['invoice', 'Supplier Invoice'],
+    ['mtc_report', 'Supplier MTC Report']
+  ];
+  var docData = {};
+  var docFieldsRow = document.getElementById('docFieldsRow');
+  DOC_FIELDS.forEach(function(item){
+    var key = item[0], label = item[1];
+    var wrap = document.createElement('label');
+    wrap.className = 'field doc-field';
+    wrap.innerHTML =
+      label +
+      '<input type="file" data-doc="' + key + '" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png">' +
+      '<span class="docStatus" data-doc-status="' + key + '">No file attached</span>';
+    docFieldsRow.appendChild(wrap);
+  });
+  function updateDocStatus(key, text, ok){
+    var el = docFieldsRow.querySelector('[data-doc-status="' + key + '"]');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'docStatus' + (ok ? ' ok' : '');
   }
+  docFieldsRow.querySelectorAll('input[type=file][data-doc]').forEach(function(inp){
+    inp.addEventListener('change', function(){
+      var key = this.getAttribute('data-doc');
+      var file = this.files && this.files[0];
+      if (!file) { docData[key] = null; updateDocStatus(key, 'No file attached', false); return; }
+      var inputEl = this;
+      file.arrayBuffer().then(function(buf){
+        docData[key] = { bytes: new Uint8Array(buf), filename: file.name, mimeType: file.type || 'application/octet-stream' };
+        updateDocStatus(key, 'Attached: ' + file.name + ' (' + Math.max(1, Math.round(file.size / 1024)) + ' KB)', true);
+        scheduleAutosave();
+      }).catch(function(e){
+        console.error(e);
+        docData[key] = null;
+        inputEl.value = '';
+        updateDocStatus(key, 'No file attached', false);
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      });
+    });
+  });
 
   // Build the 9 photo upload slots. Each photo is normalized to a JPEG the
   // moment it's chosen (photoData[p] = {bytes, width, height}) so both the
@@ -494,6 +508,9 @@
     form.reset();
     photoData = {};
     photoGrid.querySelectorAll('.preview').forEach(function(img){ img.style.display = 'none'; img.src = ''; });
+    docData = {};
+    DOC_FIELDS.forEach(function(item){ updateDocStatus(item[0], 'No file attached', false); });
+    docFieldsRow.querySelectorAll('input[type=file][data-doc]').forEach(function(inp){ inp.value = ''; });
     currentDraftTitle = null;
     updateDraftStatus('', '');
     try{ localStorage.removeItem('pdir-filler-data'); }catch(e){}
@@ -753,26 +770,23 @@
     });
     drawTable([220, 50, 50, 212], ['Inspection Item', 'Pass', 'Fail', 'Comments'], checklistRows);
 
-    sectionTitle('CTQ Dimensional Measurements - 3 Pieces Sampled');
-    var instr = 'Record all critical-to-quality dimensions called out on the drawing. Measure 3 pieces per lot; mark each dimension Pass or Fail against tolerance.';
-    var instrLines = wrapText(instr, font, 8.5, CONTENT_W);
-    ensureSpace(instrLines.length * 10 + 4);
-    instrLines.forEach(function(ln){ page.drawText(ln, { x: MARGIN, y: cursorY, size: 8, font: font, color: LABEL }); cursorY -= 10; });
-    cursorY -= 2;
-    var ctqRows = [];
-    for (var ci = 1; ci <= 8; ci++) {
-      ctqRows.push([
-        { type: 'text', value: data['ctq_balloon_' + ci] || '' },
-        { type: 'text', value: data['ctq_dim_' + ci] || '' },
-        { type: 'text', value: data['ctq_nominal_' + ci] || '' },
-        { type: 'text', value: data['ctq_tolerance_' + ci] || '' },
-        { type: 'text', value: data['ctq_pc1_' + ci] || '' },
-        { type: 'text', value: data['ctq_pc2_' + ci] || '' },
-        { type: 'text', value: data['ctq_pc3_' + ci] || '' },
-        { type: 'text', value: data['ctq_result_' + ci] || '' }
-      ]);
-    }
-    drawTable([42, 140, 60, 60, 55, 55, 55, 65], ['Balloon #', 'CTQ Dimension / Feature', 'Nominal', 'Tolerance (±)', 'Pc 1', 'Pc 2', 'Pc 3', 'Result'], ctqRows);
+    sectionTitle('Supporting Documents');
+    var docInstr = 'The following supplier documents were submitted with this shipment and are attached to this PDF as file attachments (visible in a PDF reader\'s attachments/paperclip panel).';
+    var docInstrLines = wrapText(docInstr, font, 8.5, CONTENT_W);
+    ensureSpace(docInstrLines.length * 10 + 4);
+    docInstrLines.forEach(function(ln){ page.drawText(ln, { x: MARGIN, y: cursorY, size: 8, font: font, color: LABEL }); cursorY -= 10; });
+    cursorY -= 4;
+    DOC_FIELDS.forEach(function(item){
+      var key = item[0], label = item[1];
+      var entry = docData[key];
+      ensureSpace(16);
+      page.drawText(label + ':', { x: MARGIN, y: cursorY, size: 9.5, font: fontBold, color: INK });
+      var labelW = fontBold.widthOfTextAtSize(label + ':', 9.5);
+      var statusText = entry ? entry.filename : 'Not provided';
+      page.drawText(statusText, { x: MARGIN + labelW + 6, y: cursorY, size: 9.5, font: font, color: entry ? INK : LABEL });
+      cursorY -= 16;
+    });
+    cursorY -= 6;
 
     newPage();
     sectionTitle('Part Pictures (minimum 3 photos per part)');
@@ -810,6 +824,19 @@
 
     sectionTitle('Sign-Off');
     signoffGrid();
+
+    // Attach the supporting documents as real embedded files inside the PDF
+    // (not drawn onto a page) so the originals travel with the report.
+    for (var di = 0; di < DOC_FIELDS.length; di++) {
+      var dKey = DOC_FIELDS[di][0], dLabel = DOC_FIELDS[di][1];
+      var dEntry = docData[dKey];
+      if (dEntry && dEntry.bytes) {
+        await pdfDoc.attach(dEntry.bytes, dEntry.filename, {
+          mimeType: dEntry.mimeType || 'application/octet-stream',
+          description: dLabel
+        });
+      }
+    }
 
     return await pdfDoc.save();
   }
@@ -851,7 +878,13 @@
       var pd = photoData[p];
       if (pd) photos[p] = { base64: bytesToBase64(pd.bytes), width: pd.width, height: pd.height };
     }
-    return { fields: fields, photos: photos, savedAt: new Date().toISOString() };
+    var docs = {};
+    DOC_FIELDS.forEach(function(item){
+      var key = item[0];
+      var dd = docData[key];
+      if (dd) docs[key] = { base64: bytesToBase64(dd.bytes), filename: dd.filename, mimeType: dd.mimeType };
+    });
+    return { fields: fields, photos: photos, docs: docs, savedAt: new Date().toISOString() };
   }
 
   function applyFieldsToForm(fields){
@@ -874,6 +907,20 @@
         clearPhotoPreview(p);
       }
     }
+  }
+
+  function applyDocsToForm(docs){
+    docData = {};
+    DOC_FIELDS.forEach(function(item){
+      var key = item[0];
+      var entry = docs && docs[key];
+      if (entry && entry.base64) {
+        docData[key] = { bytes: base64ToBytes(entry.base64), filename: entry.filename, mimeType: entry.mimeType };
+        updateDocStatus(key, 'Attached: ' + entry.filename, true);
+      } else {
+        updateDocStatus(key, 'No file attached', false);
+      }
+    });
   }
 
   async function saveDraftNow(){
@@ -924,6 +971,7 @@
           var payload = JSON.parse(text);
           applyFieldsToForm(payload.fields);
           applyPhotosToForm(payload.photos);
+          applyDocsToForm(payload.docs);
           currentDraftTitle = shipmentParam;
           updateDraftStatus('Loaded saved draft' + (payload.savedAt ? ' (last saved ' + new Date(payload.savedAt).toLocaleString() + ')' : '') + '.', 'ok');
         } else {
