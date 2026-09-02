@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dessimate PSW Portal</title>
+<title>Dessimate Forms Portal</title>
 <style>
   :root{
     --brand:#2b4ea3;
@@ -50,20 +50,24 @@
     letter-spacing:.01em;
   }
   .btn:hover{ background:var(--brand-dark); }
+  .btn-stack{ display:flex; flex-direction:column; gap:12px; align-items:stretch; }
   footer{ margin-top:22px; font-size:11.5px; color:#9a9ea6; }
 </style>
 </head>
 <body>
   <div class="card">
     <img class="logo" src="logo.jpg" alt="Dessimate">
-    <h1>Part Submission Warrant (PSW)</h1>
+    <h1>Dessimate Forms Portal</h1>
     <p class="sub">
-      Fill out and generate a completed PSW form for your parts.
-      Your entries are filled directly into the real PDF form &mdash;
+      Fill out and generate completed forms for your parts.
+      Your entries are filled directly into the real PDF &mdash;
       nothing is uploaded anywhere.
     </p>
-    <a class="btn" href="PSW_Form_Filler.html">Create a PSW</a>
+    <div class="btn-stack">
+      <a class="btn" href="PDIR_Form_Filler.html">Create a PDIR</a>
+      <a class="btn" href="PSW_Form_Filler.html">Create a PSW</a>
+    </div>
   </div>
-  <footer>Dessimate &middot; Part Submission Warrant Template &middot; Form QF-PSW-01</footer>
+  <footer>Dessimate &middot; Forms Portal &middot; PDIR (QF-PDIR-01) &middot; PSW</footer>
 </body>
 </html>
