@@ -58,9 +58,9 @@
   .pill.pill-draft{ background:#fdf1de; color:#a06a1c; }
   .pdir-meta{ font-size:12px; color:var(--label); white-space:nowrap; margin-top:2px; }
   .pdir-actions{ display:flex; gap:8px; flex:0 0 auto; }
-  .pdir-view, .pdir-modify{ font-size:13px; font-weight:600; text-decoration:none;
-    border-radius:6px; padding:6px 14px; white-space:nowrap; }
-  .pdir-view{ color:var(--brand); border:1px solid var(--brand); }
+  .pdir-view, .pdir-modify{ font-family:inherit; font-size:13px; font-weight:600; text-decoration:none;
+    border-radius:6px; padding:6px 14px; white-space:nowrap; cursor:pointer; }
+  .pdir-view{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
   .pdir-view:hover{ background:#eef1fa; }
   .pdir-modify{ color:#fff; background:var(--brand); border:1px solid var(--brand); }
   .pdir-modify:hover{ background:var(--brand-dark); }
@@ -70,6 +70,36 @@
   .state a{ color:var(--brand); font-weight:600; }
 
   footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+
+  /* In-page PDF viewer */
+  .viewerOverlay{
+    display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1000; padding:22px; align-items:center; justify-content:center;
+  }
+  .viewerOverlay.open{ display:flex; }
+  .viewerPanel{
+    background:#fff; border-radius:10px; width:100%; max-width:980px; height:100%;
+    display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .viewerBar{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:12px 16px; border-bottom:1px solid var(--line); }
+  .viewerTitle{ font-size:14px; font-weight:700; overflow-wrap:anywhere; }
+  .viewerBtns{ display:flex; gap:8px; flex:0 0 auto; }
+  .viewerBtns a, .viewerBtns button{
+    font-family:inherit; font-size:13px; font-weight:600; text-decoration:none; cursor:pointer;
+    border-radius:6px; padding:7px 14px; white-space:nowrap;
+  }
+  #viewerDownload{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  #viewerDownload:hover{ background:#eef1fa; }
+  #viewerClose{ color:#fff; background:#5b5f66; border:1px solid #5b5f66; }
+  #viewerClose:hover{ background:#3f4248; }
+  .viewerBody{ flex:1 1 auto; position:relative; background:#525659; }
+  .viewerBody iframe{ position:absolute; inset:0; width:100%; height:100%; border:0; }
+  .viewerBody .viewerState{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:13.5px; text-align:center; padding:20px; flex-direction:column; gap:10px;
+  }
+  .viewerBody .viewerState a{ color:#bcd2ff; }
 </style>
 
 <div class="wrap">
@@ -104,6 +134,22 @@
   </div>
 
   <footer>Dessimate &middot; PDIR Portal &middot; Form QF-PDIR-01</footer>
+</div>
+
+<div id="viewerOverlay" class="viewerOverlay">
+  <div class="viewerPanel">
+    <div class="viewerBar">
+      <div class="viewerTitle" id="viewerTitle">PDF</div>
+      <div class="viewerBtns">
+        <a id="viewerDownload" href="#" style="display:none;">Download</a>
+        <button type="button" id="viewerClose">Close</button>
+      </div>
+    </div>
+    <div class="viewerBody">
+      <div id="viewerState" class="viewerState">Loading PDF&hellip;</div>
+      <iframe id="viewerFrame" title="PDF preview" style="display:none;"></iframe>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -186,6 +232,61 @@
     });
   }
 
+  // ---- In-page PDF viewer -----------------------------------------------
+  // GitHub's raw file host serves PDFs as application/octet-stream, which
+  // makes a plain link download instead of preview. Fetching the bytes
+  // ourselves and handing them to the iframe as a Blob with an explicit
+  // application/pdf type makes the browser's own PDF viewer render it
+  // inline instead — the person can still use that viewer's own download
+  // button (or the one in the bar above it) if they want to save the file.
+  var viewerObjectUrl = null;
+
+  function closePdfViewer(){
+    document.getElementById('viewerOverlay').classList.remove('open');
+    document.getElementById('viewerFrame').src = 'about:blank';
+    document.getElementById('viewerFrame').style.display = 'none';
+    document.getElementById('viewerDownload').style.display = 'none';
+    if (viewerObjectUrl) { URL.revokeObjectURL(viewerObjectUrl); viewerObjectUrl = null; }
+  }
+  document.getElementById('viewerClose').addEventListener('click', closePdfViewer);
+  document.getElementById('viewerOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'viewerOverlay') closePdfViewer();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && document.getElementById('viewerOverlay').classList.contains('open')) closePdfViewer();
+  });
+
+  async function openPdfViewer(title, url){
+    var overlay = document.getElementById('viewerOverlay');
+    var stateEl = document.getElementById('viewerState');
+    var frame = document.getElementById('viewerFrame');
+    var downloadBtn = document.getElementById('viewerDownload');
+    document.getElementById('viewerTitle').textContent = title;
+    frame.style.display = 'none';
+    downloadBtn.style.display = 'none';
+    stateEl.style.display = 'flex';
+    stateEl.textContent = 'Loading PDF…';
+    overlay.classList.add('open');
+    try {
+      var res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var bytes = await res.arrayBuffer();
+      var blob = new Blob([bytes], { type: 'application/pdf' });
+      if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
+      viewerObjectUrl = URL.createObjectURL(blob);
+      frame.src = viewerObjectUrl;
+      frame.style.display = 'block';
+      stateEl.style.display = 'none';
+      downloadBtn.href = viewerObjectUrl;
+      downloadBtn.download = title + '.pdf';
+      downloadBtn.style.display = 'inline-block';
+    } catch (err) {
+      console.error(err);
+      stateEl.innerHTML = 'Could not load the PDF for preview (' + escapeHtml(err.message) + ').<br><a href="' + url + '" target="_blank" rel="noopener">Open it directly instead</a>';
+    }
+  }
+  // -------------------------------------------------------------------------
+
   // Each entry is keyed by its title ("PDIR for Shipment # ..."), which is the
   // shared base filename between the finished PDF (pdirs/<title>.pdf) and the
   // resumable draft (pdir_drafts/<title>.json) — so one row can represent both.
@@ -252,9 +353,14 @@
             '<div class="pdir-meta">' + escapeHtml(meta) + '</div>' +
           '</div>' +
           '<div class="pdir-actions">' +
-            (e.pdf ? '<a class="pdir-view" href="' + e.pdf.download_url + '" target="_blank" rel="noopener">View PDF</a>' : '') +
+            (e.pdf ? '<button type="button" class="pdir-view">View PDF</button>' : '') +
             '<a class="pdir-modify" href="' + modifyHref + '">Modify PDIR</a>' +
           '</div>';
+        if (e.pdf) {
+          row.querySelector('.pdir-view').addEventListener('click', function(){
+            openPdfViewer(e.title, e.pdf.download_url);
+          });
+        }
         listEl.appendChild(row);
       });
     } catch (err) {
