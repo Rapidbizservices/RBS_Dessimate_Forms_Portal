@@ -82,5 +82,19 @@
       "selfAssessment": null
     },
     "genericDocs": []
+  },
+  {
+    "id": "031baad0-fcf5-4d76-8c35-5755a80b86a3",
+    "name": "Johnson Gauge",
+    "relationship": "Supplier",
+    "address": "",
+    "phone": "",
+    "website": "",
+    "docs": {
+      "companyPresentation": null,
+      "nda": null,
+      "selfAssessment": null
+    },
+    "genericDocs": []
   }
 ]
