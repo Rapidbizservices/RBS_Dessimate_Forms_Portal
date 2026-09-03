@@ -68,5 +68,19 @@
       "selfAssessment": null
     },
     "genericDocs": []
+  },
+  {
+    "id": "7d933583-b296-4774-8c12-1a4685431a6a",
+    "name": "GN Altech",
+    "relationship": "Supplier",
+    "address": "",
+    "phone": "",
+    "website": "",
+    "docs": {
+      "companyPresentation": null,
+      "nda": null,
+      "selfAssessment": null
+    },
+    "genericDocs": []
   }
 ]
