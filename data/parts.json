@@ -66,5 +66,20 @@
       "Manoj Industries"
     ],
     "drawing": null
+  },
+  {
+    "id": "5276914c-3eed-474a-9c41-de834b61a728",
+    "partNumber": "012374-001",
+    "customerPartNumber": "",
+    "name": "",
+    "revision": "",
+    "status": "Active",
+    "drawingNumber": "",
+    "uom": "",
+    "category": "",
+    "notes": "",
+    "customer": "",
+    "suppliers": [],
+    "drawing": null
   }
 ]
