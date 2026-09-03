@@ -70,16 +70,18 @@
   {
     "id": "5276914c-3eed-474a-9c41-de834b61a728",
     "partNumber": "012374-001",
-    "customerPartNumber": "",
-    "name": "",
-    "revision": "",
+    "customerPartNumber": "012374-001",
+    "name": "Ring Retainer",
+    "revision": "012374-001",
     "status": "Active",
     "drawingNumber": "",
     "uom": "",
     "category": "",
     "notes": "",
     "customer": "",
-    "suppliers": [],
+    "suppliers": [
+      "Manoj Industries"
+    ],
     "drawing": null
   }
 ]
