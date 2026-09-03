@@ -51,7 +51,10 @@
   }
   .btn:hover{ background:var(--brand-dark); }
   .btn-stack{ display:flex; flex-direction:column; gap:12px; align-items:stretch; }
+  button.btn{ font-family:inherit; border:none; cursor:pointer; width:100%; }
   footer{ margin-top:22px; font-size:11.5px; color:#9a9ea6; }
+
+  .subPanel{ display:flex; flex-direction:column; gap:12px; align-items:stretch; margin-top:12px; }
 
   .usersBtn{
     display:inline-block;
@@ -66,8 +69,24 @@
     margin-top:16px;
   }
   .usersBtn:hover{ background:#eef1fa; }
-  .linkRow{ display:flex; gap:10px; justify-content:center; margin-top:16px; }
+  .linkRow{ display:flex; gap:10px; justify-content:center; margin-top:10px; }
   .linkRow .usersBtn{ margin-top:0; }
+
+  .adminBtn{
+    display:none;
+    font-family:inherit;
+    font-size:13px;
+    font-weight:700;
+    color:#7a3fa0;
+    background:#fff;
+    border:1px solid #ddc7ec;
+    border-radius:8px;
+    padding:9px 18px;
+    cursor:pointer;
+    margin-top:16px;
+  }
+  .adminBtn:hover{ background:#f6effa; }
+  .adminBtn.visible{ display:inline-block; }
 </style>
 </head>
 <body>
@@ -81,13 +100,65 @@
     </p>
     <div class="btn-stack">
       <a class="btn" href="PDIR_Portal.html">PDIR</a>
+      <button type="button" class="btn" id="apqpBtn">APQP &#9662;</button>
+    </div>
+    <div class="subPanel" id="apqpPanel" style="display:none;">
       <a class="btn" href="PSW_Form_Filler.html">Create a PSW</a>
     </div>
-    <div class="linkRow">
+    <button type="button" class="adminBtn" id="adminBtn">Admin &#9662;</button>
+    <div class="linkRow" id="adminPanel" style="display:none;">
       <a class="usersBtn" href="PDIR_Users.html">Users</a>
       <a class="usersBtn" href="PDIR_Organizations.html">Organizations</a>
     </div>
   </div>
   <footer>Dessimate &middot; Forms Portal &middot; PDIR (QF-PDIR-01) &middot; PSW</footer>
+
+  <script>
+    // APQP groups the PSW form underneath it. Visible to everyone - just a
+    // way to keep the home screen tidy, not an access restriction.
+    (function(){
+      var apqpBtn = document.getElementById('apqpBtn');
+      var apqpPanel = document.getElementById('apqpPanel');
+      apqpBtn.addEventListener('click', function(){
+        var open = apqpPanel.style.display !== 'none';
+        apqpPanel.style.display = open ? 'none' : 'flex';
+        apqpBtn.innerHTML = open ? 'APQP &#9662;' : 'APQP &#9652;';
+      });
+    })();
+
+    // The Users and Organizations links manage staff logins and supplier/
+    // customer records, so they're tucked behind this Admin button and only
+    // shown to Roberto and Amy. This is a convenience for keeping the home
+    // screen simple, not the real access control - both pages still require
+    // signing in with a staff username/password no matter how you get to
+    // them, exactly like before.
+    (function(){
+      var SESSION_KEY = 'dessimate_session';
+      var ADMIN_USERNAMES = ['roberto', 'amy'];
+
+      function getSession(){
+        try{
+          var raw = localStorage.getItem(SESSION_KEY);
+          if (!raw) return null;
+          var s = JSON.parse(raw);
+          if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+          return s;
+        }catch(e){ return null; }
+      }
+
+      var session = getSession();
+      var isAdmin = !!(session && session.username && ADMIN_USERNAMES.indexOf(session.username.toLowerCase()) !== -1);
+      if (!isAdmin) return; // leave the button hidden entirely for everyone else
+
+      var adminBtn = document.getElementById('adminBtn');
+      var adminPanel = document.getElementById('adminPanel');
+      adminBtn.classList.add('visible');
+      adminBtn.addEventListener('click', function(){
+        var open = adminPanel.style.display !== 'none';
+        adminPanel.style.display = open ? 'none' : 'flex';
+        adminBtn.innerHTML = open ? 'Admin &#9662;' : 'Admin &#9652;';
+      });
+    })();
+  </script>
 </body>
 </html>
