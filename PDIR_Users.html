@@ -76,6 +76,7 @@
   table.userTable tr.inactive{ opacity:.55; }
   .userName{ font-weight:700; }
   .userName .noLogin{ font-weight:400; color:var(--label); font-style:italic; }
+  .userName .loginTag{ font-weight:400; color:var(--label); font-size:12px; }
   .pill{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
     border-radius:4px; padding:2px 8px; white-space:nowrap; display:inline-block; }
   .pill-active{ background:#e6f4ea; color:#187b46; }
@@ -200,6 +201,9 @@
     <h2 id="modalTitle">Add User</h2>
     <p class="modalSub" id="modalSub">Fill in what you know — most fields are optional.</p>
     <form id="userForm">
+      <label>Full Name
+        <input type="text" id="f_name" placeholder="e.g. Jane Smith">
+      </label>
       <label>Relationship with Dessimate
         <select id="f_relationship" required>
           <option value="Dessimate Team member">Dessimate Team member</option>
@@ -425,15 +429,16 @@
     tableEl.style.display = 'table';
 
     var sorted = lastUsers.slice().sort(function(a, b){
-      var an = (a.username || a.organization || '').toLowerCase();
-      var bn = (b.username || b.organization || '').toLowerCase();
+      var an = (a.name || a.username || a.organization || '').toLowerCase();
+      var bn = (b.name || b.username || b.organization || '').toLowerCase();
       return an.localeCompare(bn);
     });
 
     bodyEl.innerHTML = sorted.map(function(u){
-      var nameHtml = u.username
-        ? escapeHtml(u.username)
-        : '<span class="noLogin">' + escapeHtml(u.organization || '(no name)') + '</span>';
+      var displayName = u.name || u.username || u.organization || '(no name)';
+      var nameHtml = escapeHtml(displayName) +
+        (u.username ? ' <span class="loginTag">(' + escapeHtml(u.username) + ')</span>' : '');
+      if (!u.name && !u.username) nameHtml = '<span class="noLogin">' + escapeHtml(displayName) + '</span>';
       var statusPills = '';
       if (u.migrated === false) statusPills += '<span class="pill pill-legacy">Not migrated</span> ';
       statusPills += u.active
@@ -587,6 +592,7 @@
     document.getElementById('modalSub').textContent = u.migrated === false
       ? 'This login isn\'t in the new list yet — saving will add it.'
       : 'Update this person\'s details.';
+    document.getElementById('f_name').value = u.name || '';
     document.getElementById('f_relationship').value = u.relationship || 'Dessimate Team member';
     document.getElementById('f_organization_text').value = u.organization || '';
     document.getElementById('f_role').value = u.role || '';
@@ -619,6 +625,7 @@
     var saveBtn = document.getElementById('modalSaveBtn');
     errEl.textContent = '';
 
+    var name = document.getElementById('f_name').value.trim();
     var relationship = document.getElementById('f_relationship').value;
     var giveLogin = document.getElementById('f_giveLogin').checked;
     var username = document.getElementById('f_username').value.trim();
@@ -635,9 +642,13 @@
       errEl.textContent = 'Enter a username, or turn off "Give this person a login".';
       return;
     }
+    if ((relationship === 'Supplier' || relationship === 'Customer') && !name) {
+      errEl.textContent = 'Enter this person\'s name — the Organization field only records who they work for.';
+      return;
+    }
 
     var body = {
-      relationship: relationship,
+      name: name, relationship: relationship,
       organization: organization, role: role, email: email, phone: phone, active: active,
       username: (relationship === 'Dessimate Team member' && giveLogin) ? username : ''
     };
