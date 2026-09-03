@@ -153,6 +153,7 @@
     "role": "Supply Chain Manager",
     "email": "",
     "phone": "",
-    "active": true
+    "active": true,
+    "name": "Matt Griswold"
   }
 ]
