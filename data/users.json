@@ -10,5 +10,17 @@
     "username": null,
     "salt": null,
     "hash": null
+  },
+  {
+    "id": "b000e85d-36bf-412e-aa31-d7f9da91b2af",
+    "organization": "GMT",
+    "relationship": "Supplier",
+    "role": "",
+    "email": "",
+    "phone": "",
+    "active": true,
+    "username": null,
+    "salt": null,
+    "hash": null
   }
 ]
