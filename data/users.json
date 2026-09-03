@@ -89,15 +89,16 @@
   },
   {
     "id": "6d39f56f-6ce1-4e5c-a79d-b69429093efa",
-    "username": "Dhiraj",
-    "salt": "ad8001ebf3c607bd068cf111725448b3",
-    "hash": "bd02ea23d9de1a4de048f825878dd7109a950a67cba658ad4fc14f86b41f7cef",
-    "organization": "",
-    "relationship": "Dessimate Team member",
-    "role": "",
+    "username": null,
+    "salt": null,
+    "hash": null,
+    "organization": "GMT",
+    "relationship": "Supplier",
+    "role": "Delivery Manager",
     "email": "",
     "phone": "",
-    "active": true
+    "active": true,
+    "name": "Dhiraj Patil"
   },
   {
     "id": "4c1e0065-cc53-4a0a-ace3-4e1e18b53d8c",
