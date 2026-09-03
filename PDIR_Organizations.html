@@ -1,0 +1,874 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Organizations — Dessimate Forms Portal</title>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:1040px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+
+  .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .homeBtn, .addBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
+    border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
+  }
+  .homeBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .homeBtn:hover{ background:#eef1fa; }
+  .addBtn{ color:#fff; background:#1f9254; }
+  .addBtn:hover{ background:#187b46; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
+    font-size:12.5px; margin:10px 0 18px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  /* Staff login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
+
+  .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; overflow-x:auto; }
+  table.orgTable{ width:100%; border-collapse:collapse; font-size:13px; min-width:900px; }
+  table.orgTable th{ background:#eef1f7; color:var(--label); font-size:11px; text-transform:uppercase;
+    letter-spacing:.02em; text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.orgTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  table.orgTable tr:last-child td{ border-bottom:none; }
+  .orgName{ font-weight:700; }
+  .relBadge{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
+    border-radius:4px; padding:2px 8px; white-space:nowrap; display:inline-block; }
+  .relBadge.Supplier{ background:#e6eefc; color:var(--brand); }
+  .relBadge.Customer{ background:#f1e6f6; color:#7a3fa0; }
+  .docSummary{ font-size:12px; color:var(--label); }
+  .docSummary .have{ color:#187b46; font-weight:600; }
+  .rowActions{ display:flex; gap:8px; white-space:nowrap; }
+  .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:6px 12px; white-space:nowrap; }
+  .editBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .editBtn:hover{ background:#eef1fa; }
+  .deleteBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
+  .deleteBtn:hover{ background:#fbeaea; border-color:#b23b3b; }
+
+  .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
+  .state.error{ color:#b23b3b; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+
+  /* Add/Edit organization modal */
+  .modalOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1500; align-items:center; justify-content:center; padding:20px; }
+  .modalOverlay.open{ display:flex; }
+  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:560px;
+    max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .modalCard h2{ font-size:17px; margin:0 0 4px; color:var(--ink); }
+  .modalCard .modalSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .modalCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .modalCard input, .modalCard select{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .modalGrid{ display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+
+  .modalSection{ margin:18px 0 4px; }
+  .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
+
+  .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    padding:9px 0; border-bottom:1px solid #eef0f4; font-size:12.5px; }
+  .docRow:last-child{ border-bottom:none; }
+  .docRow .docLabel{ font-weight:700; color:var(--ink); flex:0 0 150px; }
+  .docRow .docMain{ flex:1 1 auto; min-width:0; }
+  .docRow .docStatus{ display:block; color:var(--label); margin-bottom:4px; }
+  .docRow .docStatus.ok{ color:#187b46; font-weight:600; }
+  .docRow input[type=file]{ font-size:11.5px; margin-top:2px; }
+  .docLinks{ display:flex; gap:10px; margin-top:4px; }
+  .docLinks button, .docLinks a{ font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
+  .docLinks button:hover, .docLinks a:hover{ text-decoration:underline; }
+  .docLinks .removeLink{ color:#b23b3b; }
+
+  .genericList{ list-style:none; margin:0 0 10px; padding:0; }
+  .genericList li{ display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:8px 0; border-bottom:1px solid #eef0f4; font-size:12.5px; }
+  .genericList li:last-child{ border-bottom:none; }
+  .genericList .genName{ flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+  .genericList .genPending{ color:#a06a1c; font-style:italic; font-weight:600; }
+  .addFileBtn{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand); background:#fff;
+    border:1px solid var(--line); border-radius:7px; padding:7px 14px; cursor:pointer; }
+  .addFileBtn:hover{ background:#eef1fa; }
+
+  .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
+  .modalBtns{ display:flex; gap:10px; margin-top:10px; }
+  .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
+    padding:11px; cursor:pointer; }
+  .saveBtn{ color:#fff; background:var(--brand); border:none; }
+  .saveBtn:hover{ background:var(--brand-dark); }
+  .saveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .cancelBtn:hover{ background:#f4f5f8; }
+
+  /* In-page document viewer */
+  .viewerOverlay{
+    display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:2200; padding:22px; align-items:center; justify-content:center;
+  }
+  .viewerOverlay.open{ display:flex; }
+  .viewerPanel{
+    background:#fff; border-radius:10px; width:100%; max-width:980px; height:100%;
+    display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .viewerBar{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:12px 16px; border-bottom:1px solid var(--line); }
+  .viewerTitle{ font-size:14px; font-weight:700; overflow-wrap:anywhere; }
+  .viewerBtns{ display:flex; gap:8px; flex:0 0 auto; }
+  .viewerBtns a, .viewerBtns button{
+    font-family:inherit; font-size:13px; font-weight:600; text-decoration:none; cursor:pointer;
+    border-radius:6px; padding:7px 14px; white-space:nowrap;
+  }
+  #docViewerDownload{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  #docViewerDownload:hover{ background:#eef1fa; }
+  #docViewerClose{ color:#fff; background:#5b5f66; border:1px solid #5b5f66; }
+  #docViewerClose:hover{ background:#3f4248; }
+  .viewerBody{ flex:1 1 auto; position:relative; background:#525659; }
+  .viewerBody iframe, .viewerBody img{ position:absolute; inset:0; width:100%; height:100%; border:0; object-fit:contain; background:#525659; }
+  .viewerBody .viewerState{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:13.5px; text-align:center; padding:20px; flex-direction:column; gap:10px;
+  }
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>Organizations</h1>
+        <p class="sub">Suppliers and Customers Dessimate works with, and their documents.</p>
+      </div>
+    </div>
+    <div class="headerBtns">
+      <a class="homeBtn" href="index.html">Home</a>
+      <a class="homeBtn" href="PDIR_Portal.html">PDIR Portal</a>
+      <a class="homeBtn" href="PDIR_Users.html">Users</a>
+      <button type="button" class="addBtn" id="addOrgBtn">Add Organization</button>
+    </div>
+  </div>
+
+  <div class="ghbar">
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
+  </div>
+
+  <div class="toolbar">
+    <h2>Directory</h2>
+  </div>
+
+  <div class="panel">
+    <div id="loadingState" class="state">Loading&hellip;</div>
+    <div id="errorState" class="state error" style="display:none;"></div>
+    <div id="emptyState" class="state" style="display:none;">No organizations yet. Click <strong>Add Organization</strong> above to add the first one.</div>
+    <table class="orgTable" id="orgTable" style="display:none;">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Relationship</th>
+          <th>Address</th>
+          <th>Phone</th>
+          <th>Website</th>
+          <th>Documents</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="orgTableBody"></tbody>
+    </table>
+  </div>
+
+  <footer>Dessimate &middot; Forms Portal &middot; Organizations</footer>
+</div>
+
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Staff Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to manage organizations.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+    </form>
+  </div>
+</div>
+
+<div class="modalOverlay" id="orgModalOverlay">
+  <div class="modalCard">
+    <h2 id="modalTitle">Add Organization</h2>
+    <p class="modalSub" id="modalSub">Fill in what you know — most fields are optional.</p>
+    <form id="orgForm">
+      <div class="modalGrid">
+        <label>Organization Name
+          <input type="text" id="f_name" required>
+        </label>
+        <label>Relationship with Dessimate
+          <select id="f_relationship" required>
+            <option value="Supplier">Supplier</option>
+            <option value="Customer">Customer</option>
+          </select>
+        </label>
+      </div>
+      <label>Address
+        <input type="text" id="f_address">
+      </label>
+      <div class="modalGrid">
+        <label>Phone
+          <input type="text" id="f_phone">
+        </label>
+        <label>Website
+          <input type="text" id="f_website" placeholder="https://">
+        </label>
+      </div>
+
+      <div class="modalSection">
+        <h3>Documents</h3>
+        <div class="docRow" data-doc-row="companyPresentation">
+          <div class="docLabel">Company Presentation</div>
+          <div class="docMain">
+            <span class="docStatus" data-doc-status="companyPresentation">No file attached</span>
+            <input type="file" data-doc-input="companyPresentation">
+            <div class="docLinks" data-doc-links="companyPresentation"></div>
+          </div>
+        </div>
+        <div class="docRow" data-doc-row="nda">
+          <div class="docLabel">NDA</div>
+          <div class="docMain">
+            <span class="docStatus" data-doc-status="nda">No file attached</span>
+            <input type="file" data-doc-input="nda">
+            <div class="docLinks" data-doc-links="nda"></div>
+          </div>
+        </div>
+        <div class="docRow" data-doc-row="selfAssessment">
+          <div class="docLabel">Self-Assessment</div>
+          <div class="docMain">
+            <span class="docStatus" data-doc-status="selfAssessment">No file attached</span>
+            <input type="file" data-doc-input="selfAssessment">
+            <div class="docLinks" data-doc-links="selfAssessment"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modalSection">
+        <h3>Additional Documents</h3>
+        <ul class="genericList" id="genericList"></ul>
+        <input type="file" id="genericFileInput" style="display:none;">
+        <button type="button" class="addFileBtn" id="addGenericBtn">+ Add File</button>
+      </div>
+
+      <div class="modalError" id="modalError"></div>
+      <div class="modalBtns">
+        <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="docViewerOverlay" class="viewerOverlay">
+  <div class="viewerPanel">
+    <div class="viewerBar">
+      <div class="viewerTitle" id="docViewerTitle">Document</div>
+      <div class="viewerBtns">
+        <a id="docViewerDownload" href="#" style="display:none;">Download</a>
+        <button type="button" id="docViewerClose">Close</button>
+      </div>
+    </div>
+    <div class="viewerBody">
+      <div id="docViewerState" class="viewerState">Loading&hellip;</div>
+      <iframe id="docViewerFrame" title="Document preview" style="display:none;"></iframe>
+      <img id="docViewerImg" alt="Document preview" style="display:none;">
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ---- Backend (staff login + GitHub proxy) --------------------------------
+  var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
+  var ORG_DOC_FOLDER = 'org_docs';
+
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  async function apiFetch(path, opts){
+    opts = opts || {};
+    var headers = opts.headers || {};
+    var session = getSession();
+    if (session) headers['Authorization'] = 'Bearer ' + session.token;
+    var res = await fetch(WORKER_BASE_URL + '/' + path, { method: opts.method || 'GET', headers: headers, body: opts.body });
+    if (res.status === 401 && path !== 'login') {
+      clearSession();
+      showAuthOverlay();
+      throw new Error('Your session has expired — please log in again.');
+    }
+    return res;
+  }
+  function workerContentsPath(fullPath){
+    return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
+  }
+
+  function bytesToBase64(bytes){
+    var binary = '', chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+  function base64ToBytes(b64){
+    var bin = atob((b64 || '').replace(/\s+/g, ''));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  function docFileExt(filename){
+    var m = /\.[a-zA-Z0-9]+$/.exec(filename || '');
+    return m ? m[0] : '';
+  }
+  async function ghGetSha(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status);
+    var data = await res.json();
+    return data.sha;
+  }
+  async function ghGetFileBytes(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status + ' while loading ' + fullPath + '.');
+    var data = await res.json();
+    return base64ToBytes(data.content || '');
+  }
+  async function ghPutFile(fullPath, bytes, commitMessage){
+    var sha = await ghGetSha(fullPath);
+    var body = { message: commitMessage || ('Update ' + fullPath), content: bytesToBase64(bytes) };
+    if (sha) body.sha = sha;
+    var res = await apiFetch(workerContentsPath(fullPath), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+      throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+    }
+    return await res.json();
+  }
+  function buildNamedDocPath(orgId, key, filename){
+    return ORG_DOC_FOLDER + '/' + orgId + '/' + key + docFileExt(filename);
+  }
+  function buildGenericDocPath(orgId, genId, filename){
+    return ORG_DOC_FOLDER + '/' + orgId + '/generic/' + genId + '-' + (filename || 'file').replace(/\//g, '_');
+  }
+  function readFileAsBytes(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onerror = function(){ reject(new Error('Could not read "' + file.name + '".')); };
+      reader.onload = function(){ resolve(new Uint8Array(reader.result)); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Staff login wall -----------------------------------------------------
+  var pendingAfterAuth = null;
+
+  function refreshGhStatus(){
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Signed in as ' + session.username;
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Log out';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Log out';
+    }
+  }
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
+    refreshGhStatus();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+        document.getElementById('authPassword').value = '';
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  refreshGhStatus();
+  // -----------------------------------------------------------------------------
+
+  // ---- In-page document viewer -----------------------------------------------
+  // Accepts either { filename, mimeType, bytes } (already in memory - a just
+  // -chosen file) or { filename, mimeType, path } (needs fetching first).
+  var docViewerObjectUrl = null;
+  function isInlineViewable(mimeType, filename){
+    var ext = docFileExt(filename).toLowerCase();
+    if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
+    if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    return null;
+  }
+  function closeDocViewer(){
+    document.getElementById('docViewerOverlay').classList.remove('open');
+    document.getElementById('docViewerFrame').src = 'about:blank';
+    document.getElementById('docViewerFrame').style.display = 'none';
+    document.getElementById('docViewerImg').src = '';
+    document.getElementById('docViewerImg').style.display = 'none';
+    document.getElementById('docViewerDownload').style.display = 'none';
+    if (docViewerObjectUrl) { URL.revokeObjectURL(docViewerObjectUrl); docViewerObjectUrl = null; }
+  }
+  document.getElementById('docViewerClose').addEventListener('click', closeDocViewer);
+  document.getElementById('docViewerOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'docViewerOverlay') closeDocViewer();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
+  });
+  async function openDocViewer(source){
+    var overlay = document.getElementById('docViewerOverlay');
+    var stateEl = document.getElementById('docViewerState');
+    var frame = document.getElementById('docViewerFrame');
+    var img = document.getElementById('docViewerImg');
+    var downloadBtn = document.getElementById('docViewerDownload');
+    document.getElementById('docViewerTitle').textContent = source.filename || 'Document';
+    frame.style.display = 'none'; img.style.display = 'none'; downloadBtn.style.display = 'none';
+    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var bytes = source.bytes;
+      if (!bytes) {
+        bytes = await ghGetFileBytes(source.path);
+        if (!bytes) throw new Error('File not found.');
+      }
+      var kind = isInlineViewable(source.mimeType, source.filename);
+      if (!kind) {
+        stateEl.textContent = "This file type can't be previewed here — use Download instead.";
+        return;
+      }
+      var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : 'image/jpeg') });
+      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+      docViewerObjectUrl = URL.createObjectURL(blob);
+      if (kind === 'pdf') { frame.src = docViewerObjectUrl; frame.style.display = 'block'; }
+      else { img.src = docViewerObjectUrl; img.style.display = 'block'; }
+      stateEl.style.display = 'none';
+      downloadBtn.href = docViewerObjectUrl;
+      downloadBtn.download = source.filename || 'file';
+      downloadBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
+    }
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Directory table --------------------------------------------------------
+  var lastOrgs = [];
+  var DOC_KEYS = [['companyPresentation', 'Presentation'], ['nda', 'NDA'], ['selfAssessment', 'Self-Assessment']];
+
+  function escapeHtml(s){
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function linkify(url){
+    if (!url) return '';
+    var href = /^https?:\/\//i.test(url) ? url : ('https://' + url);
+    return '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener">' + escapeHtml(url) + '</a>';
+  }
+
+  async function loadOrgs(){
+    var loadingEl = document.getElementById('loadingState');
+    var errorEl = document.getElementById('errorState');
+    var emptyEl = document.getElementById('emptyState');
+    var tableEl = document.getElementById('orgTable');
+    loadingEl.style.display = 'block'; errorEl.style.display = 'none'; emptyEl.style.display = 'none'; tableEl.style.display = 'none';
+    try {
+      var res = await apiFetch('organizations');
+      if (!res.ok) {
+        var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+        throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+      }
+      var data = await res.json();
+      lastOrgs = Array.isArray(data.organizations) ? data.organizations : [];
+      loadingEl.style.display = 'none';
+      renderTable();
+    } catch (err) {
+      console.error(err);
+      loadingEl.style.display = 'none';
+      errorEl.style.display = 'block';
+      errorEl.textContent = 'Could not load organizations (' + err.message + ').';
+    }
+  }
+
+  function renderTable(){
+    var tableEl = document.getElementById('orgTable');
+    var bodyEl = document.getElementById('orgTableBody');
+    var emptyEl = document.getElementById('emptyState');
+    if (!lastOrgs.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
+    emptyEl.style.display = 'none'; tableEl.style.display = 'table';
+
+    var sorted = lastOrgs.slice().sort(function(a, b){ return (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()); });
+
+    bodyEl.innerHTML = sorted.map(function(o){
+      var docBits = DOC_KEYS.map(function(kv){
+        var have = o.docs && o.docs[kv[0]];
+        return '<span class="' + (have ? 'have' : '') + '">' + kv[1] + (have ? ' ✓' : ' —') + '</span>';
+      }).join(' · ');
+      var genCount = (o.genericDocs || []).length;
+      var docsHtml = '<div class="docSummary">' + docBits + (genCount ? ' · ' + genCount + ' more' : '') + '</div>';
+
+      return '<tr>' +
+        '<td class="orgName">' + escapeHtml(o.name) + '</td>' +
+        '<td><span class="relBadge ' + escapeHtml(o.relationship) + '">' + escapeHtml(o.relationship) + '</span></td>' +
+        '<td>' + escapeHtml(o.address) + '</td>' +
+        '<td>' + escapeHtml(o.phone) + '</td>' +
+        '<td>' + linkify(o.website) + '</td>' +
+        '<td>' + docsHtml + '</td>' +
+        '<td><div class="rowActions">' +
+          '<button type="button" class="editBtn" data-edit="' + escapeHtml(o.id) + '">Edit</button>' +
+          '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(o.id) + '">Delete</button>' +
+        '</div></td>' +
+        '</tr>';
+    }).join('');
+
+    bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
+      btn.addEventListener('click', function(){ openEditModal(this.getAttribute('data-edit')); });
+    });
+    bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
+      btn.addEventListener('click', function(){ deleteOrg(this.getAttribute('data-delete')); });
+    });
+  }
+
+  async function deleteOrg(id){
+    var org = lastOrgs.find(function(o){ return o.id === id; });
+    if (!confirm('Remove ' + (org ? org.name : 'this organization') + '? This can\'t be undone (its uploaded files stay in the repo, just unlinked).')) return;
+    requireAuthThen(async function(){
+      try {
+        var res = await apiFetch('organizations/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!res.ok) { var d = {}; try { d = await res.json(); } catch(e){} throw new Error(d.message || ('HTTP ' + res.status)); }
+        await loadOrgs();
+      } catch (err) {
+        alert('Could not delete this organization (' + (err && err.message ? err.message : err) + ').');
+      }
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Add / Edit modal --------------------------------------------------------
+  var editingId = null;
+  var namedDocState = {}; // key -> { existing: {path,filename,mimeType,size}|null, pending: {bytes,filename,mimeType}|null, removed: bool }
+  var genericState = []; // { kind:'existing', id, path, filename, mimeType, size } | { kind:'pending', localId, bytes, filename, mimeType }
+
+  function resetDocState(org){
+    namedDocState = {};
+    DOC_KEYS.forEach(function(kv){
+      var key = kv[0];
+      namedDocState[key] = { existing: (org && org.docs && org.docs[key]) || null, pending: null, removed: false };
+    });
+    genericState = (org && org.genericDocs || []).map(function(d){
+      return { kind: 'existing', id: d.id, path: d.path, filename: d.filename, mimeType: d.mimeType, size: d.size };
+    });
+  }
+
+  function renderNamedDocRow(key){
+    var statusEl = document.querySelector('[data-doc-status="' + key + '"]');
+    var linksEl = document.querySelector('[data-doc-links="' + key + '"]');
+    var state = namedDocState[key];
+    var links = '';
+    if (state.pending) {
+      statusEl.textContent = 'Selected: ' + state.pending.filename + ' (will be uploaded on Save)';
+      statusEl.className = 'docStatus ok';
+      links = '<button type="button" data-doc-preview-pending="' + key + '">Preview</button>';
+    } else if (state.existing && !state.removed) {
+      statusEl.textContent = 'Attached: ' + state.existing.filename;
+      statusEl.className = 'docStatus ok';
+      links = '<button type="button" data-doc-view="' + key + '">View</button>' +
+        '<span class="removeLink" style="cursor:pointer;" data-doc-remove="' + key + '">Remove</span>';
+    } else {
+      statusEl.textContent = 'No file attached';
+      statusEl.className = 'docStatus';
+    }
+    linksEl.innerHTML = links;
+    var previewBtn = linksEl.querySelector('[data-doc-preview-pending]');
+    if (previewBtn) previewBtn.addEventListener('click', function(){
+      openDocViewer({ filename: state.pending.filename, mimeType: state.pending.mimeType, bytes: state.pending.bytes });
+    });
+    var viewBtn = linksEl.querySelector('[data-doc-view]');
+    if (viewBtn) viewBtn.addEventListener('click', function(){
+      openDocViewer({ filename: state.existing.filename, mimeType: state.existing.mimeType, path: state.existing.path });
+    });
+    var removeLink = linksEl.querySelector('[data-doc-remove]');
+    if (removeLink) removeLink.addEventListener('click', function(){
+      state.removed = true;
+      renderNamedDocRow(key);
+    });
+  }
+
+  function renderGenericList(){
+    var listEl = document.getElementById('genericList');
+    if (!genericState.length) { listEl.innerHTML = '<li style="color:var(--label); font-style:italic;">No additional documents.</li>'; return; }
+    listEl.innerHTML = genericState.map(function(item, idx){
+      var name = item.filename + (item.kind === 'pending' ? '' : '');
+      var pendingTag = item.kind === 'pending' ? '<span class="genPending">(pending upload)</span> ' : '';
+      return '<li>' +
+        '<span class="genName">' + pendingTag + escapeHtml(name) + '</span>' +
+        '<span class="docLinks">' +
+          '<button type="button" data-gen-view="' + idx + '">View</button>' +
+          '<span class="removeLink" style="cursor:pointer;" data-gen-remove="' + idx + '">Remove</span>' +
+        '</span>' +
+      '</li>';
+    }).join('');
+    listEl.querySelectorAll('[data-gen-view]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var item = genericState[parseInt(this.getAttribute('data-gen-view'), 10)];
+        if (item.kind === 'pending') openDocViewer({ filename: item.filename, mimeType: item.mimeType, bytes: item.bytes });
+        else openDocViewer({ filename: item.filename, mimeType: item.mimeType, path: item.path });
+      });
+    });
+    listEl.querySelectorAll('[data-gen-remove]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        genericState.splice(parseInt(this.getAttribute('data-gen-remove'), 10), 1);
+        renderGenericList();
+      });
+    });
+  }
+
+  DOC_KEYS.forEach(function(kv){
+    var key = kv[0];
+    document.querySelector('[data-doc-input="' + key + '"]').addEventListener('change', async function(){
+      var file = this.files && this.files[0];
+      this.value = '';
+      if (!file) return;
+      try {
+        var bytes = await readFileAsBytes(file);
+        namedDocState[key].pending = { bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' };
+        namedDocState[key].removed = false;
+        renderNamedDocRow(key);
+      } catch (e) {
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      }
+    });
+  });
+
+  document.getElementById('addGenericBtn').addEventListener('click', function(){
+    document.getElementById('genericFileInput').click();
+  });
+  document.getElementById('genericFileInput').addEventListener('change', async function(){
+    var file = this.files && this.files[0];
+    this.value = '';
+    if (!file) return;
+    try {
+      var bytes = await readFileAsBytes(file);
+      genericState.push({ kind: 'pending', localId: 'g' + Date.now() + Math.random().toString(16).slice(2), bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' });
+      renderGenericList();
+    } catch (e) {
+      alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+    }
+  });
+
+  function resetForm(){
+    document.getElementById('orgForm').reset();
+    document.getElementById('modalError').textContent = '';
+    resetDocState(null);
+    DOC_KEYS.forEach(function(kv){ renderNamedDocRow(kv[0]); });
+    renderGenericList();
+  }
+
+  function openAddModal(){
+    editingId = null;
+    resetForm();
+    document.getElementById('modalTitle').textContent = 'Add Organization';
+    document.getElementById('modalSub').textContent = 'Fill in what you know — most fields are optional.';
+    document.getElementById('orgModalOverlay').classList.add('open');
+  }
+  function openEditModal(id){
+    var o = lastOrgs.find(function(x){ return x.id === id; });
+    if (!o) return;
+    editingId = id;
+    document.getElementById('orgForm').reset();
+    document.getElementById('modalError').textContent = '';
+    resetDocState(o);
+    DOC_KEYS.forEach(function(kv){ renderNamedDocRow(kv[0]); });
+    renderGenericList();
+    document.getElementById('modalTitle').textContent = 'Edit Organization';
+    document.getElementById('modalSub').textContent = 'Update this organization\'s details.';
+    document.getElementById('f_name').value = o.name || '';
+    document.getElementById('f_relationship').value = o.relationship || 'Supplier';
+    document.getElementById('f_address').value = o.address || '';
+    document.getElementById('f_phone').value = o.phone || '';
+    document.getElementById('f_website').value = o.website || '';
+    document.getElementById('orgModalOverlay').classList.add('open');
+  }
+  function closeModal(){ document.getElementById('orgModalOverlay').classList.remove('open'); }
+  document.getElementById('addOrgBtn').addEventListener('click', function(){ requireAuthThen(openAddModal); });
+  document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('orgModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'orgModalOverlay') closeModal();
+  });
+
+  document.getElementById('orgForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
+
+    var baseFields = {
+      name: document.getElementById('f_name').value.trim(),
+      relationship: document.getElementById('f_relationship').value,
+      address: document.getElementById('f_address').value.trim(),
+      phone: document.getElementById('f_phone').value.trim(),
+      website: document.getElementById('f_website').value.trim()
+    };
+    if (!baseFields.name) { errEl.textContent = 'Organization name is required.'; return; }
+
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      var orgId = editingId;
+      if (!orgId) {
+        var createRes = await apiFetch('organizations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
+        var createData = {}; try { createData = await createRes.json(); } catch(e){}
+        if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+        orgId = createData.id;
+      }
+
+      var docsPayload = {};
+      for (var i = 0; i < DOC_KEYS.length; i++) {
+        var key = DOC_KEYS[i][0];
+        var state = namedDocState[key];
+        if (state.pending) {
+          var path = buildNamedDocPath(orgId, key, state.pending.filename);
+          await ghPutFile(path, state.pending.bytes, 'Upload ' + key + ' for organization ' + baseFields.name);
+          docsPayload[key] = { path: path, filename: state.pending.filename, mimeType: state.pending.mimeType, size: state.pending.bytes.length };
+        } else if (state.removed) {
+          docsPayload[key] = null;
+        } else {
+          docsPayload[key] = state.existing;
+        }
+      }
+
+      var genericPayload = [];
+      for (var j = 0; j < genericState.length; j++) {
+        var item = genericState[j];
+        if (item.kind === 'existing') {
+          genericPayload.push({ id: item.id, path: item.path, filename: item.filename, mimeType: item.mimeType, size: item.size });
+        } else {
+          var genPath = buildGenericDocPath(orgId, item.localId, item.filename);
+          await ghPutFile(genPath, item.bytes, 'Upload additional document for organization ' + baseFields.name);
+          genericPayload.push({ id: item.localId, path: genPath, filename: item.filename, mimeType: item.mimeType, size: item.bytes.length });
+        }
+      }
+
+      var putRes = await apiFetch('organizations/' + encodeURIComponent(orgId), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({}, baseFields, { docs: docsPayload, genericDocs: genericPayload }))
+      });
+      var putData = {}; try { putData = await putRes.json(); } catch(e){}
+      if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
+
+      closeModal();
+      await loadOrgs();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not save this organization.';
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+  // -----------------------------------------------------------------------------
+
+  requireAuthThen(loadOrgs);
+})();
+
+</script>

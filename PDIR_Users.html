@@ -136,6 +136,7 @@
     <div class="headerBtns">
       <a class="homeBtn" href="index.html">Home</a>
       <a class="homeBtn" href="PDIR_Portal.html">PDIR Portal</a>
+      <a class="homeBtn" href="PDIR_Organizations.html">Organizations</a>
       <button type="button" class="addBtn" id="addUserBtn">Add User</button>
     </div>
   </div>
@@ -224,7 +225,8 @@
 
       <div class="modalGrid">
         <label>Organization
-          <input type="text" id="f_organization">
+          <select id="f_organization_select" style="display:none;"></select>
+          <input type="text" id="f_organization_text" placeholder="e.g. Dessimate">
         </label>
         <label>Role
           <input type="text" id="f_role">
@@ -504,6 +506,44 @@
   // ---- Add / Edit modal --------------------------------------------------------
   var editingId = null; // null = adding a new user
 
+  // ---- Organization dropdown (sourced from the Organizations page) ----------
+  var lastOrgs = [];
+  async function loadOrgsForDropdown(){
+    try {
+      var res = await apiFetch('organizations');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      lastOrgs = Array.isArray(data.organizations) ? data.organizations : [];
+    } catch (e) {
+      console.error('Could not load organizations for the dropdown', e);
+      lastOrgs = [];
+    }
+  }
+  // Supplier/Customer contacts pick their employer from the Organizations list;
+  // Dessimate Team members use free text (there's no "Dessimate" entry in that list).
+  function updateOrganizationFieldMode(presetValue){
+    var rel = document.getElementById('f_relationship').value;
+    var selectEl = document.getElementById('f_organization_select');
+    var textEl = document.getElementById('f_organization_text');
+    if (rel === 'Supplier' || rel === 'Customer') {
+      var currentValue = presetValue != null ? presetValue : '';
+      var matching = lastOrgs.filter(function(o){ return o.relationship === rel; });
+      var html = '<option value="">— Select ' + rel + ' —</option>' + matching.map(function(o){
+        var sel = (o.name === currentValue) ? ' selected' : '';
+        return '<option value="' + escapeHtml(o.name) + '"' + sel + '>' + escapeHtml(o.name) + '</option>';
+      }).join('');
+      if (currentValue && !matching.some(function(o){ return o.name === currentValue; })) {
+        html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Organizations list)</option>';
+      }
+      selectEl.innerHTML = html;
+      selectEl.style.display = 'block';
+      textEl.style.display = 'none';
+    } else {
+      selectEl.style.display = 'none';
+      textEl.style.display = 'block';
+    }
+  }
+
   function updateLoginBlockVisibility(){
     var rel = document.getElementById('f_relationship').value;
     var loginBlock = document.getElementById('loginBlock');
@@ -514,7 +554,10 @@
     if (!isTeam) giveLogin.checked = false;
     loginFields.style.display = giveLogin.checked ? 'block' : 'none';
   }
-  document.getElementById('f_relationship').addEventListener('change', updateLoginBlockVisibility);
+  document.getElementById('f_relationship').addEventListener('change', function(){
+    updateLoginBlockVisibility();
+    updateOrganizationFieldMode('');
+  });
   document.getElementById('f_giveLogin').addEventListener('change', updateLoginBlockVisibility);
 
   function resetForm(){
@@ -523,6 +566,7 @@
     document.getElementById('f_giveLogin').checked = false;
     document.getElementById('modalError').textContent = '';
     updateLoginBlockVisibility();
+    updateOrganizationFieldMode('');
   }
 
   function openAddModal(){
@@ -532,6 +576,7 @@
     document.getElementById('modalSub').textContent = 'Fill in what you know — most fields are optional.';
     document.getElementById('passwordLabel').firstChild.textContent = 'Password ';
     document.getElementById('userModalOverlay').classList.add('open');
+    loadOrgsForDropdown().then(function(){ updateOrganizationFieldMode(''); });
   }
   function openEditModal(id){
     var u = lastUsers.find(function(x){ return x.id === id; });
@@ -543,7 +588,7 @@
       ? 'This login isn\'t in the new list yet — saving will add it.'
       : 'Update this person\'s details.';
     document.getElementById('f_relationship').value = u.relationship || 'Dessimate Team member';
-    document.getElementById('f_organization').value = u.organization || '';
+    document.getElementById('f_organization_text').value = u.organization || '';
     document.getElementById('f_role').value = u.role || '';
     document.getElementById('f_email').value = u.email || '';
     document.getElementById('f_phone').value = u.phone || '';
@@ -555,6 +600,7 @@
       : 'Password ';
     updateLoginBlockVisibility();
     document.getElementById('userModalOverlay').classList.add('open');
+    loadOrgsForDropdown().then(function(){ updateOrganizationFieldMode(u.organization || ''); });
   }
   function closeModal(){
     document.getElementById('userModalOverlay').classList.remove('open');
@@ -577,7 +623,9 @@
     var giveLogin = document.getElementById('f_giveLogin').checked;
     var username = document.getElementById('f_username').value.trim();
     var password = document.getElementById('f_password').value;
-    var organization = document.getElementById('f_organization').value.trim();
+    var organization = (relationship === 'Supplier' || relationship === 'Customer')
+      ? document.getElementById('f_organization_select').value.trim()
+      : document.getElementById('f_organization_text').value.trim();
     var role = document.getElementById('f_role').value.trim();
     var email = document.getElementById('f_email').value.trim();
     var phone = document.getElementById('f_phone').value.trim();
