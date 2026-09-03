@@ -1,17 +1,5 @@
 [
   {
-    "id": "9fcd2716-2414-475f-bf2c-29ee380392da",
-    "username": null,
-    "salt": null,
-    "hash": null,
-    "organization": "Detronics",
-    "relationship": "Customer",
-    "role": "",
-    "email": "",
-    "phone": "",
-    "active": true
-  },
-  {
     "id": "32a631c1-6e6b-4aee-8382-b877927b1dc5",
     "organization": "",
     "relationship": "Dessimate Team member",
