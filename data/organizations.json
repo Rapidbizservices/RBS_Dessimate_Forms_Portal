@@ -96,5 +96,19 @@
       "selfAssessment": null
     },
     "genericDocs": []
+  },
+  {
+    "id": "c78dcd9e-1c15-4c72-8c88-adba945784cf",
+    "name": "AFI Painting",
+    "relationship": "Supplier",
+    "address": "",
+    "phone": "",
+    "website": "",
+    "docs": {
+      "companyPresentation": null,
+      "nda": null,
+      "selfAssessment": null
+    },
+    "genericDocs": []
   }
 ]
