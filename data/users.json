@@ -34,5 +34,17 @@
     "username": null,
     "salt": null,
     "hash": null
+  },
+  {
+    "id": "9fcd2716-2414-475f-bf2c-29ee380392da",
+    "username": null,
+    "salt": null,
+    "hash": null,
+    "organization": "Detronics",
+    "relationship": "Customer",
+    "role": "",
+    "email": "",
+    "phone": "",
+    "active": true
   }
 ]
