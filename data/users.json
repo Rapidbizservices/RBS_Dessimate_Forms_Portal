@@ -147,5 +147,18 @@
     "phone": "",
     "active": true,
     "name": "Matt Griswold"
+  },
+  {
+    "id": "66872e35-209a-473d-bd70-5096daad76b0",
+    "name": "",
+    "username": "Vineet",
+    "salt": "d1665308e2a82c4a3b6692be5dcad9ef",
+    "hash": "90e959fc1f14d961b791dfbc9a125f36d91ad2305654b20488e1996cfecce1b8",
+    "organization": "",
+    "relationship": "Dessimate Team member",
+    "role": "",
+    "email": "",
+    "phone": "",
+    "active": true
   }
 ]
