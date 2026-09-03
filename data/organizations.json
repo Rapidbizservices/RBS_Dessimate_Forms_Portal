@@ -8,9 +8,23 @@
     "website": "",
     "docs": {
       "companyPresentation": null,
-      "nda": null,
+      "nda": {
+        "id": null,
+        "path": "org_docs/cdd319e3-a092-49a9-ac19-292dcc24b034/nda.pdf",
+        "filename": "Dessimate NDA (1).pdf",
+        "mimeType": "application/pdf",
+        "size": 1543929
+      },
       "selfAssessment": null
     },
-    "genericDocs": []
+    "genericDocs": [
+      {
+        "id": "g17884580851650af939121aa018",
+        "path": "org_docs/cdd319e3-a092-49a9-ac19-292dcc24b034/generic/g17884580851650af939121aa018-Dessimate - Non Compete - Updated (1).pdf",
+        "filename": "Dessimate - Non Compete - Updated (1).pdf",
+        "mimeType": "application/pdf",
+        "size": 1863864
+      }
+    ]
   }
 ]
