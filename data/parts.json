@@ -32,5 +32,22 @@
       "GMT"
     ],
     "drawing": null
+  },
+  {
+    "id": "4aad07a5-1d34-4bfa-87d7-06a2a644033e",
+    "partNumber": "010068-001",
+    "customerPartNumber": "010068-001",
+    "name": "Bulk Head",
+    "revision": "N",
+    "status": "Active",
+    "drawingNumber": "010068-001",
+    "uom": "",
+    "category": "",
+    "notes": "",
+    "customer": "Detronics",
+    "suppliers": [
+      "Manoj Industries"
+    ],
+    "drawing": null
   }
 ]
