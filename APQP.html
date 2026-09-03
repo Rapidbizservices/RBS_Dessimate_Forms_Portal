@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APQP</title>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:560px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:24px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+  .homeBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; color:var(--brand); background:#fff;
+    border:1px solid var(--brand); border-radius:8px; padding:11px 20px; cursor:pointer; text-decoration:none;
+    white-space:nowrap; display:inline-block;
+  }
+  .homeBtn:hover{ background:#eef1fa; }
+
+  .stageList{ display:flex; flex-direction:column; gap:10px; }
+  .stageBtn{
+    display:flex; align-items:center; gap:12px;
+    font-family:inherit; font-size:15px; font-weight:700; text-decoration:none;
+    border-radius:10px; padding:15px 20px; text-align:left; width:100%; border:1px solid var(--line);
+  }
+  .stageNum{
+    flex:0 0 auto; width:26px; height:26px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:12.5px; font-weight:700;
+  }
+
+  .stageBtn.active{ color:#fff; background:var(--brand); border-color:var(--brand); cursor:pointer; }
+  .stageBtn.active .stageNum{ background:rgba(255,255,255,.22); color:#fff; }
+  .stageBtn.active:hover{ background:var(--brand-dark); }
+
+  .stageBtn.placeholder{
+    color:#9a9ea6; background:#fff; cursor:default;
+  }
+  .stageBtn.placeholder .stageNum{ background:#eef0f4; color:#9a9ea6; }
+  .stageBtn.placeholder .comingSoon{ margin-left:auto; font-size:11px; font-weight:700; text-transform:uppercase;
+    letter-spacing:.03em; color:#b7bac0; white-space:nowrap; }
+
+  footer{ margin-top:28px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div class="header-left">
+        <img src="logo.jpg" alt="Dessimate">
+        <div>
+          <h1>APQP</h1>
+          <p class="sub">Advanced Product Quality Planning &mdash; select a stage.</p>
+        </div>
+      </div>
+      <a class="homeBtn" href="index.html">Home</a>
+    </div>
+
+    <div class="stageList">
+      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">1</span> Design Record <span class="comingSoon">Coming soon</span></button>
+      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">2</span> Control Plan <span class="comingSoon">Coming soon</span></button>
+      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">3</span> Dim Results <span class="comingSoon">Coming soon</span></button>
+      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">4</span> M/P Tests <span class="comingSoon">Coming soon</span></button>
+      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">5</span> IPS <span class="comingSoon">Coming soon</span></button>
+      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">6</span> Sample Product <span class="comingSoon">Coming soon</span></button>
+      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">7</span> Master Sample <span class="comingSoon">Coming soon</span></button>
+      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">8</span> Other <span class="comingSoon">Coming soon</span></button>
+      <a class="stageBtn active" href="PSW_Form_Filler.html"><span class="stageNum">9</span> PSW</a>
+    </div>
+
+    <footer>Dessimate &middot; Forms Portal &middot; APQP</footer>
+  </div>
+</body>
+</html>
