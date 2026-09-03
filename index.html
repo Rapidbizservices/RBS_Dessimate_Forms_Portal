@@ -3,13 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dessimate Forms Portal</title>
+<title>DSCM &mdash; Dessimate Supply Chain Management System</title>
 <style>
   :root{
     --brand:#2b4ea3;
     --brand-dark:#1c3877;
     --ink:#1c1c1e;
     --label:#5b5f66;
+    --line:#dde0e6;
     --bg:#eef0f4;
   }
   *{box-sizing:border-box;}
@@ -37,7 +38,7 @@
   }
   .logo{ width:72px; height:auto; margin-bottom:18px; }
   h1{ font-size:20px; margin:0 0 8px; }
-  p.sub{ font-size:14px; color:var(--label); line-height:1.5; margin:0 0 28px; }
+  p.sub{ font-size:14px; color:var(--label); line-height:1.5; margin:0 0 20px; }
   .btn{
     display:inline-block;
     font-size:16px;
@@ -84,17 +85,46 @@
   }
   .adminBtn:hover{ background:#f6effa; }
   .adminBtn.visible{ display:inline-block; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:center; gap:8px;
+    font-size:12.5px; margin:0 0 18px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  /* Staff login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
 </style>
 </head>
 <body>
   <div class="card">
     <img class="logo" src="logo.jpg" alt="Dessimate">
-    <h1>Dessimate Forms Portal</h1>
+    <h1>Dessimate Supply Chain Management System (DSCM)</h1>
     <p class="sub">
       Fill out and generate completed forms for your parts.
       Your entries are filled directly into the real PDF &mdash;
       nothing is uploaded anywhere.
     </p>
+    <div class="ghbar">
+      <span id="ghStatus">Checking sign-in&hellip;</span>
+      <button type="button" id="ghConnectBtn">Log out</button>
+    </div>
     <div class="btn-stack">
       <a class="btn" href="PDIR_Portal.html">PDIR</a>
       <a class="btn" href="APQP.html">APQP</a>
@@ -105,42 +135,133 @@
       <a class="usersBtn" href="PDIR_Organizations.html">Organizations</a>
     </div>
   </div>
-  <footer>Dessimate &middot; Forms Portal &middot; PDIR (QF-PDIR-01) &middot; APQP</footer>
+  <footer>Dessimate &middot; DSCM &middot; PDIR (QF-PDIR-01) &middot; APQP</footer>
+
+  <div class="authOverlay" id="authOverlay">
+    <div class="authCard">
+      <h2>Staff Sign-In</h2>
+      <p class="authSub">Sign in with the username and password you were given to use the DSCM system.</p>
+      <form id="authForm">
+        <label>Username
+          <input type="text" id="authUsername" autocomplete="username" autofocus>
+        </label>
+        <label>Password
+          <input type="password" id="authPassword" autocomplete="current-password">
+        </label>
+        <button type="submit" id="authSubmitBtn">Log In</button>
+        <div class="authError" id="authError"></div>
+      </form>
+    </div>
+  </div>
 
   <script>
+    // ---- Backend (staff login) --------------------------------------------
+    // Same Worker used by every other page in this system - see
+    // worker/README.md. EDIT WORKER_BASE_URL below once after you deploy the
+    // Worker; it must match the value used in every other HTML file.
+    var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
+    var SESSION_KEY = 'dessimate_session';
+    var ADMIN_USERNAMES = ['roberto', 'amy'];
+
+    function getSession(){
+      try{
+        var raw = localStorage.getItem(SESSION_KEY);
+        if (!raw) return null;
+        var s = JSON.parse(raw);
+        if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+        return s;
+      }catch(e){ return null; }
+    }
+    function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+    function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+    var pendingAfterAuth = null;
+
+    function refreshGhStatus(){
+      var statusEl = document.getElementById('ghStatus');
+      var btn = document.getElementById('ghConnectBtn');
+      if (!statusEl || !btn) return;
+      var session = getSession();
+      if (session) {
+        statusEl.textContent = 'Signed in as ' + session.username;
+        statusEl.className = 'gh-ok';
+        btn.textContent = 'Log out';
+      } else {
+        statusEl.textContent = 'Not signed in';
+        statusEl.className = 'gh-off';
+        btn.textContent = 'Log out';
+      }
+    }
+    function showAuthOverlay(){
+      var overlay = document.getElementById('authOverlay');
+      if (overlay) overlay.classList.add('open');
+      refreshGhStatus();
+    }
+    function hideAuthOverlay(){
+      var overlay = document.getElementById('authOverlay');
+      if (overlay) overlay.classList.remove('open');
+      refreshGhStatus();
+    }
+    function requireAuthThen(fn){
+      if (getSession()) { hideAuthOverlay(); fn(); }
+      else { pendingAfterAuth = fn; showAuthOverlay(); }
+    }
+
+    var authForm = document.getElementById('authForm');
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+        document.getElementById('authPassword').value = '';
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+    document.getElementById('ghConnectBtn').addEventListener('click', function(){
+      clearSession();
+      showAuthOverlay();
+    });
+    // -----------------------------------------------------------------------
+
     // The Users and Organizations links manage staff logins and supplier/
     // customer records, so they're tucked behind this Admin button and only
-    // shown to Roberto and Amy. This is a convenience for keeping the home
-    // screen simple, not the real access control - both pages still require
-    // signing in with a staff username/password no matter how you get to
-    // them, exactly like before.
-    (function(){
-      var SESSION_KEY = 'dessimate_session';
-      var ADMIN_USERNAMES = ['roberto', 'amy'];
-
-      function getSession(){
-        try{
-          var raw = localStorage.getItem(SESSION_KEY);
-          if (!raw) return null;
-          var s = JSON.parse(raw);
-          if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
-          return s;
-        }catch(e){ return null; }
-      }
-
+    // shown to Roberto and Amy. Everyone else who signs in sees the same
+    // Home screen minus this button.
+    function updateAdminVisibility(){
       var session = getSession();
       var isAdmin = !!(session && session.username && ADMIN_USERNAMES.indexOf(session.username.toLowerCase()) !== -1);
-      if (!isAdmin) return; // leave the button hidden entirely for everyone else
-
       var adminBtn = document.getElementById('adminBtn');
+      adminBtn.classList.toggle('visible', isAdmin);
+      if (!isAdmin) document.getElementById('adminPanel').style.display = 'none';
+    }
+    document.getElementById('adminBtn').addEventListener('click', function(){
       var adminPanel = document.getElementById('adminPanel');
-      adminBtn.classList.add('visible');
-      adminBtn.addEventListener('click', function(){
-        var open = adminPanel.style.display !== 'none';
-        adminPanel.style.display = open ? 'none' : 'flex';
-        adminBtn.innerHTML = open ? 'Admin &#9662;' : 'Admin &#9652;';
-      });
-    })();
+      var open = adminPanel.style.display !== 'none';
+      adminPanel.style.display = open ? 'none' : 'flex';
+      this.innerHTML = open ? 'Admin &#9662;' : 'Admin &#9652;';
+    });
+
+    requireAuthThen(updateAdminVisibility);
   </script>
 </body>
 </html>
