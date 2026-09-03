@@ -1,0 +1,16 @@
+[
+  {
+    "id": "cdd319e3-a092-49a9-ac19-292dcc24b034",
+    "name": "GMT",
+    "relationship": "Supplier",
+    "address": "",
+    "phone": "",
+    "website": "",
+    "docs": {
+      "companyPresentation": null,
+      "nda": null,
+      "selfAssessment": null
+    },
+    "genericDocs": []
+  }
+]
