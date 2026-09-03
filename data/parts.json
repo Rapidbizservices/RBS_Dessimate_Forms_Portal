@@ -113,7 +113,9 @@
     "category": "",
     "notes": "",
     "customer": "",
-    "suppliers": [],
+    "suppliers": [
+      "Manoj Industries"
+    ],
     "drawing": null
   },
   {
