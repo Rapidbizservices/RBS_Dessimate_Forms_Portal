@@ -113,5 +113,20 @@
     "customer": "",
     "suppliers": [],
     "drawing": null
+  },
+  {
+    "id": "be2c5dc9-5bb7-4c78-be4d-f1eef2e28d8e",
+    "partNumber": "010068-004",
+    "customerPartNumber": "",
+    "name": "",
+    "revision": "",
+    "status": "Active",
+    "drawingNumber": "",
+    "uom": "",
+    "category": "",
+    "notes": "",
+    "customer": "",
+    "suppliers": [],
+    "drawing": null
   }
 ]
