@@ -58,7 +58,8 @@
     "role": "",
     "email": "",
     "phone": "",
-    "active": true
+    "active": true,
+    "name": "Roberto Marin"
   },
   {
     "id": "69c677d6-9996-4e36-8991-94d4cbaadbb7",
