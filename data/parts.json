@@ -15,5 +15,22 @@
       "GMT"
     ],
     "drawing": null
+  },
+  {
+    "id": "f3938a9c-e933-4367-aecf-184029d704d8",
+    "partNumber": "010066-002",
+    "customerPartNumber": "010066-002",
+    "name": "Main Body",
+    "revision": "N",
+    "status": "Active",
+    "drawingNumber": "010066-002",
+    "uom": "",
+    "category": "",
+    "notes": "",
+    "customer": "Detronics",
+    "suppliers": [
+      "GMT"
+    ],
+    "drawing": null
   }
 ]
