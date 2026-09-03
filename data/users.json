@@ -46,5 +46,17 @@
     "email": "",
     "phone": "",
     "active": true
+  },
+  {
+    "id": "32a631c1-6e6b-4aee-8382-b877927b1dc5",
+    "organization": "",
+    "relationship": "Dessimate Team member",
+    "role": "",
+    "email": "",
+    "phone": "",
+    "active": true,
+    "username": "Amy",
+    "salt": "05bb362dddc3cca7983e63b56ecedfd5",
+    "hash": "a0d656a5e860f23d9ca41c8a50bf7aa239049aea150b3f1e4aa39cb49852bb8f"
   }
 ]
