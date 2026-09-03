@@ -40,5 +40,19 @@
       "selfAssessment": null
     },
     "genericDocs": []
+  },
+  {
+    "id": "202929ac-a3fc-4d03-83f2-872595527b9d",
+    "name": "Manoj Industries",
+    "relationship": "Supplier",
+    "address": "",
+    "phone": "",
+    "website": "",
+    "docs": {
+      "companyPresentation": null,
+      "nda": null,
+      "selfAssessment": null
+    },
+    "genericDocs": []
   }
 ]
