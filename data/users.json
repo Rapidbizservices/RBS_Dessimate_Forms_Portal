@@ -142,5 +142,17 @@
     "email": "",
     "phone": "",
     "active": true
+  },
+  {
+    "id": "4c1e0065-cc53-4a0a-ace3-4e1e18b53d8c",
+    "username": null,
+    "salt": null,
+    "hash": null,
+    "organization": "Detronics",
+    "relationship": "Customer",
+    "role": "Supply Chain Manager",
+    "email": "",
+    "phone": "",
+    "active": true
   }
 ]
