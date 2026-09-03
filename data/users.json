@@ -1,17 +1,5 @@
 [
   {
-    "id": "b000e85d-36bf-412e-aa31-d7f9da91b2af",
-    "organization": "GMT",
-    "relationship": "Supplier",
-    "role": "",
-    "email": "",
-    "phone": "",
-    "active": true,
-    "username": null,
-    "salt": null,
-    "hash": null
-  },
-  {
     "id": "6e931f7c-78a1-402a-aa06-2cd20bf294d3",
     "organization": "GMT",
     "relationship": "Supplier",
