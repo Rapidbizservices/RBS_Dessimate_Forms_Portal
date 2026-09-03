@@ -54,5 +54,19 @@
       "selfAssessment": null
     },
     "genericDocs": []
+  },
+  {
+    "id": "3d8e2660-f27e-4e5c-886b-111ea9be877e",
+    "name": "JM Aluminum",
+    "relationship": "Supplier",
+    "address": "",
+    "phone": "",
+    "website": "",
+    "docs": {
+      "companyPresentation": null,
+      "nda": null,
+      "selfAssessment": null
+    },
+    "genericDocs": []
   }
 ]
