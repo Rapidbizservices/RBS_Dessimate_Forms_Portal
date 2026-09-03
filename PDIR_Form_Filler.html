@@ -216,7 +216,11 @@
     </label>
     <div class="grid2 row">
       <label class="field">Shipment Number (Dessimate to provide) <input type="text" name="shipment_number"></label>
-      <label class="field">Part Number <input type="text" name="part_number"></label>
+      <label class="field">Part Number
+        <select name="part_number" id="f_pdir_part_select">
+          <option value="">— Select Part Number —</option>
+        </select>
+      </label>
     </div>
     <div class="grid2 row">
       <label class="field">Part Description <input type="text" name="part_description"></label>
@@ -392,6 +396,54 @@
     } catch (e) {
       console.error('Could not load suppliers for the dropdown', e);
     }
+  }
+
+  // Populates the "Part Number" dropdown from the Parts master list (the
+  // Admin > Parts page). Selecting a part auto-fills Part Description from
+  // that part's record; the field stays a normal text input afterward so it
+  // can still be edited by hand. Same load-before-values-are-applied
+  // ordering requirement as loadOrgOptions above.
+  var partsByNumber = {};
+  function escapeHtmlLite(s){
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  async function loadPartOptions(){
+    var selectEl = document.getElementById('f_pdir_part_select');
+    if (!selectEl) return;
+    try {
+      var res = await apiFetch('parts');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      var parts = (Array.isArray(data.parts) ? data.parts : [])
+        .sort(function(a, b){ return (a.partNumber || '').toLowerCase().localeCompare((b.partNumber || '').toLowerCase()); });
+      partsByNumber = {};
+      parts.forEach(function(p){ partsByNumber[p.partNumber] = p; });
+      var html = '<option value="">— Select Part Number —</option>' + parts.map(function(p){
+        return '<option value="' + escapeHtmlLite(p.partNumber) + '">' + escapeHtmlLite(p.partNumber) + '</option>';
+      }).join('');
+      selectEl.innerHTML = html;
+    } catch (e) {
+      console.error('Could not load parts for the dropdown', e);
+    }
+  }
+  function ensurePartSelectHasValue(value){
+    var selectEl = document.getElementById('f_pdir_part_select');
+    if (!selectEl || !value) return;
+    var has = Array.prototype.some.call(selectEl.options, function(o){ return o.value === value; });
+    if (!has) {
+      var opt = document.createElement('option');
+      opt.value = value; opt.textContent = value + ' (not in Parts list)';
+      selectEl.appendChild(opt);
+    }
+    selectEl.value = value;
+  }
+  var partSelectEl = document.getElementById('f_pdir_part_select');
+  if (partSelectEl) {
+    partSelectEl.addEventListener('change', function(){
+      var descEl = form.querySelector('[name="part_description"]');
+      var part = partsByNumber[this.value];
+      if (descEl && part) descEl.value = part.name || '';
+    });
   }
 
   function bytesToBase64(bytes){
@@ -856,6 +908,7 @@
         else el.value = data[k];
       });
       if (data.organization_name) ensureOrgSelectHasValue(data.organization_name);
+      if (data.part_number) ensurePartSelectHasValue(data.part_number);
     }catch(e){}
   }
   form.addEventListener('input', function(){ save(); scheduleAutosave(); });
@@ -1280,6 +1333,7 @@
       else el.value = fields[k];
     });
     if (fields && fields.organization_name) ensureOrgSelectHasValue(fields.organization_name);
+    if (fields && fields.part_number) ensurePartSelectHasValue(fields.part_number);
   }
 
   function applyPhotosToForm(photos){
@@ -1354,6 +1408,7 @@
   // whatever this browser last had in progress.
   async function initForm(){
     await loadOrgOptions();
+    await loadPartOptions();
     var params = new URLSearchParams(window.location.search);
     var shipmentParam = params.get('shipment');
     if (shipmentParam) {
