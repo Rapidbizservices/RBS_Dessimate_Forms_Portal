@@ -49,5 +49,22 @@
       "Manoj Industries"
     ],
     "drawing": null
+  },
+  {
+    "id": "03a3f329-6a61-47f5-8c10-db29e9569dc5",
+    "partNumber": "010055-001",
+    "customerPartNumber": "010055-001",
+    "name": "Cover",
+    "revision": "N",
+    "status": "Active",
+    "drawingNumber": "010055-001",
+    "uom": "",
+    "category": "",
+    "notes": "",
+    "customer": "",
+    "suppliers": [
+      "Manoj Industries"
+    ],
+    "drawing": null
   }
 ]
