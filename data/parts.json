@@ -132,16 +132,18 @@
   {
     "id": "e0a4b1a2-f42b-4df7-80cd-8ceb43554c22",
     "partNumber": "007359-001",
-    "customerPartNumber": "",
-    "name": "",
-    "revision": "",
+    "customerPartNumber": "007359-001",
+    "name": "Heat Sink",
+    "revision": "N",
     "status": "Active",
-    "drawingNumber": "",
+    "drawingNumber": "007359-001",
     "uom": "",
     "category": "",
     "notes": "",
     "customer": "",
-    "suppliers": [],
+    "suppliers": [
+      "JM Aluminum"
+    ],
     "drawing": null
   }
 ]
