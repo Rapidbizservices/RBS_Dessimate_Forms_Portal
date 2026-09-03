@@ -96,7 +96,8 @@
     "role": "",
     "email": "",
     "phone": "",
-    "active": true
+    "active": true,
+    "name": "Vineet Kumbhojkar"
   },
   {
     "id": "e9013ce1-3d68-44b6-adef-87ffb43165e2",
