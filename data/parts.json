@@ -1,0 +1,19 @@
+[
+  {
+    "id": "23a5fae1-6a67-42b2-8f12-7a85e0b43ec8",
+    "partNumber": "007157-001",
+    "customerPartNumber": "007157-001",
+    "name": "Flanged Head",
+    "revision": "N",
+    "status": "Active",
+    "drawingNumber": "007157-001",
+    "uom": "",
+    "category": "",
+    "notes": "",
+    "customer": "Detronics",
+    "suppliers": [
+      "GMT"
+    ],
+    "drawing": null
+  }
+]
