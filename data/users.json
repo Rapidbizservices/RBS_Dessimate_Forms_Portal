@@ -57,7 +57,8 @@
     "active": true,
     "username": "Amy",
     "salt": "05bb362dddc3cca7983e63b56ecedfd5",
-    "hash": "a0d656a5e860f23d9ca41c8a50bf7aa239049aea150b3f1e4aa39cb49852bb8f"
+    "hash": "a0d656a5e860f23d9ca41c8a50bf7aa239049aea150b3f1e4aa39cb49852bb8f",
+    "name": "Amy D."
   },
   {
     "id": "6351c443-1a50-4f50-a387-e03c8faa3403",
