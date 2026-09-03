@@ -1,0 +1,14 @@
+[
+  {
+    "id": "4ae1c807-14ef-4daa-8471-5916a5529391",
+    "organization": "GMT",
+    "relationship": "Supplier",
+    "role": "",
+    "email": "",
+    "phone": "",
+    "active": true,
+    "username": null,
+    "salt": null,
+    "hash": null
+  }
+]
