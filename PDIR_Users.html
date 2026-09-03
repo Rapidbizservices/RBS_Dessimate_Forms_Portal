@@ -1,0 +1,626 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Users — Dessimate Forms Portal</title>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:980px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+
+  .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .homeBtn, .addBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
+    border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
+  }
+  .homeBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .homeBtn:hover{ background:#eef1fa; }
+  .addBtn{ color:#fff; background:#1f9254; }
+  .addBtn:hover{ background:#187b46; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
+    font-size:12.5px; margin:10px 0 18px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  /* Staff login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; flex-wrap:wrap; gap:10px; }
+  .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
+  .importBar{ font-size:12.5px; color:var(--label); display:flex; align-items:center; gap:10px; }
+  #importBtn{ font-family:inherit; font-size:12.5px; color:var(--brand); background:#fff;
+    border:1px solid var(--line); border-radius:7px; padding:6px 12px; cursor:pointer; }
+  #importBtn:hover{ background:#eef1fa; }
+  #importBtn:disabled{ color:#999; cursor:wait; }
+
+  .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; overflow-x:auto; }
+  table.userTable{ width:100%; border-collapse:collapse; font-size:13px; min-width:820px; }
+  table.userTable th{ background:#eef1f7; color:var(--label); font-size:11px; text-transform:uppercase;
+    letter-spacing:.02em; text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.userTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  table.userTable tr:last-child td{ border-bottom:none; }
+  table.userTable tr.inactive{ opacity:.55; }
+  .userName{ font-weight:700; }
+  .userName .noLogin{ font-weight:400; color:var(--label); font-style:italic; }
+  .pill{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
+    border-radius:4px; padding:2px 8px; white-space:nowrap; display:inline-block; }
+  .pill-active{ background:#e6f4ea; color:#187b46; }
+  .pill-inactive{ background:#f1e6e6; color:#a03b3b; }
+  .pill-legacy{ background:#fdf1de; color:#a06a1c; }
+  .relBadge{ font-size:11.5px; color:var(--label); }
+  .rowActions{ display:flex; gap:8px; white-space:nowrap; }
+  .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:6px 12px; white-space:nowrap; }
+  .editBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .editBtn:hover{ background:#eef1fa; }
+  .deleteBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
+  .deleteBtn:hover{ background:#fbeaea; border-color:#b23b3b; }
+  .legacyNote{ font-size:11.5px; color:#a06a1c; font-style:italic; }
+
+  .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
+  .state.error{ color:#b23b3b; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+
+  /* Add/Edit user modal */
+  .modalOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1500; align-items:center; justify-content:center; padding:20px; }
+  .modalOverlay.open{ display:flex; }
+  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:460px;
+    max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .modalCard h2{ font-size:17px; margin:0 0 4px; color:var(--ink); }
+  .modalCard .modalSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .modalCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .modalCard input, .modalCard select{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .modalGrid{ display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+  .loginBlock{ background:#f7f8fb; border:1px solid var(--line); border-radius:8px; padding:12px 14px 2px; margin:2px 0 14px; }
+  .loginBlock .checkboxRow{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink); font-weight:600; margin-bottom:10px; }
+  .loginBlock .checkboxRow input{ width:auto; margin:0; }
+  .activeRow{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink); font-weight:600; margin-bottom:16px; }
+  .activeRow input{ width:auto; margin:0; }
+  .modalBtns{ display:flex; gap:10px; }
+  .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
+    padding:11px; cursor:pointer; }
+  .saveBtn{ color:#fff; background:var(--brand); border:none; }
+  .saveBtn:hover{ background:var(--brand-dark); }
+  .saveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .cancelBtn:hover{ background:#f4f5f8; }
+  .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:2px 0 12px; }
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>Users</h1>
+        <p class="sub">Everyone with access or a working relationship with Dessimate — staff, suppliers, and customers.</p>
+      </div>
+    </div>
+    <div class="headerBtns">
+      <a class="homeBtn" href="index.html">Home</a>
+      <a class="homeBtn" href="PDIR_Portal.html">PDIR Portal</a>
+      <button type="button" class="addBtn" id="addUserBtn">Add User</button>
+    </div>
+  </div>
+
+  <div class="ghbar">
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
+  </div>
+
+  <div class="toolbar">
+    <h2>Directory</h2>
+    <div class="importBar" id="importBar" style="display:none;">
+      <span id="importMsg"></span>
+      <button type="button" id="importBtn">Import existing logins</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div id="loadingState" class="state">Loading&hellip;</div>
+    <div id="errorState" class="state error" style="display:none;"></div>
+    <div id="emptyState" class="state" style="display:none;">No users yet. Click <strong>Add User</strong> above to add the first one.</div>
+    <table class="userTable" id="userTable" style="display:none;">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Organization</th>
+          <th>Relationship</th>
+          <th>Role</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="userTableBody"></tbody>
+    </table>
+  </div>
+
+  <footer>Dessimate &middot; Forms Portal &middot; Users</footer>
+</div>
+
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Staff Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to manage users.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+    </form>
+  </div>
+</div>
+
+<div class="modalOverlay" id="userModalOverlay">
+  <div class="modalCard">
+    <h2 id="modalTitle">Add User</h2>
+    <p class="modalSub" id="modalSub">Fill in what you know — most fields are optional.</p>
+    <form id="userForm">
+      <label>Relationship with Dessimate
+        <select id="f_relationship" required>
+          <option value="Dessimate Team member">Dessimate Team member</option>
+          <option value="Supplier">Supplier</option>
+          <option value="Customer">Customer</option>
+        </select>
+      </label>
+
+      <div class="loginBlock" id="loginBlock">
+        <div class="checkboxRow">
+          <input type="checkbox" id="f_giveLogin">
+          <label style="margin:0;" for="f_giveLogin">Give this person a login to the Portal</label>
+        </div>
+        <div id="loginFields">
+          <label>Username
+            <input type="text" id="f_username" autocomplete="off">
+          </label>
+          <label id="passwordLabel">Password
+            <input type="password" id="f_password" autocomplete="new-password">
+          </label>
+        </div>
+      </div>
+
+      <div class="modalGrid">
+        <label>Organization
+          <input type="text" id="f_organization">
+        </label>
+        <label>Role
+          <input type="text" id="f_role">
+        </label>
+      </div>
+      <div class="modalGrid">
+        <label>Email
+          <input type="email" id="f_email">
+        </label>
+        <label>Phone
+          <input type="text" id="f_phone">
+        </label>
+      </div>
+
+      <div class="activeRow">
+        <input type="checkbox" id="f_active" checked>
+        <label style="margin:0;" for="f_active">Active</label>
+      </div>
+
+      <div class="modalError" id="modalError"></div>
+      <div class="modalBtns">
+        <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ---- Backend (staff login + GitHub proxy) --------------------------------
+  // Same Worker as the rest of the Portal — see pdir_portal_part2.js for the
+  // fuller explanation. EDIT WORKER_BASE_URL below to match the other pages
+  // if you ever redeploy the Worker under a different URL.
+  var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
+
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  async function apiFetch(path, opts){
+    opts = opts || {};
+    var headers = opts.headers || {};
+    var session = getSession();
+    if (session) headers['Authorization'] = 'Bearer ' + session.token;
+    var res = await fetch(WORKER_BASE_URL + '/' + path, { method: opts.method || 'GET', headers: headers, body: opts.body });
+    if (res.status === 401 && path !== 'login') {
+      clearSession();
+      showAuthOverlay();
+      throw new Error('Your session has expired — please log in again.');
+    }
+    return res;
+  }
+
+  // ---- Staff login wall -----------------------------------------------------
+  var pendingAfterAuth = null;
+
+  function refreshGhStatus(){
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Signed in as ' + session.username;
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Log out';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Log out';
+    }
+  }
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
+    refreshGhStatus();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+        document.getElementById('authPassword').value = '';
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  refreshGhStatus();
+  // -----------------------------------------------------------------------------
+
+  // ---- Directory table --------------------------------------------------------
+  var lastUsers = [];
+
+  function escapeHtml(s){
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+
+  async function loadUsers(){
+    var loadingEl = document.getElementById('loadingState');
+    var errorEl = document.getElementById('errorState');
+    var emptyEl = document.getElementById('emptyState');
+    var tableEl = document.getElementById('userTable');
+    loadingEl.style.display = 'block';
+    errorEl.style.display = 'none';
+    emptyEl.style.display = 'none';
+    tableEl.style.display = 'none';
+    try {
+      var res = await apiFetch('admin/users');
+      if (!res.ok) {
+        var txt = '';
+        try { txt = (await res.json()).message || ''; } catch(e){}
+        throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+      }
+      var data = await res.json();
+      lastUsers = Array.isArray(data.users) ? data.users : [];
+      loadingEl.style.display = 'none';
+      renderImportBar();
+      renderTable();
+    } catch (err) {
+      console.error(err);
+      loadingEl.style.display = 'none';
+      errorEl.style.display = 'block';
+      errorEl.textContent = 'Could not load the user directory (' + err.message + ').';
+    }
+  }
+
+  function renderImportBar(){
+    var bar = document.getElementById('importBar');
+    var msg = document.getElementById('importMsg');
+    var legacyCount = lastUsers.filter(function(u){ return u.migrated === false; }).length;
+    if (legacyCount > 0) {
+      bar.style.display = 'flex';
+      msg.textContent = legacyCount + ' login' + (legacyCount === 1 ? '' : 's') + ' not yet in this list.';
+    } else {
+      bar.style.display = 'none';
+    }
+  }
+
+  function renderTable(){
+    var tableEl = document.getElementById('userTable');
+    var bodyEl = document.getElementById('userTableBody');
+    var emptyEl = document.getElementById('emptyState');
+    if (!lastUsers.length) {
+      emptyEl.style.display = 'block';
+      tableEl.style.display = 'none';
+      return;
+    }
+    emptyEl.style.display = 'none';
+    tableEl.style.display = 'table';
+
+    var sorted = lastUsers.slice().sort(function(a, b){
+      var an = (a.username || a.organization || '').toLowerCase();
+      var bn = (b.username || b.organization || '').toLowerCase();
+      return an.localeCompare(bn);
+    });
+
+    bodyEl.innerHTML = sorted.map(function(u){
+      var nameHtml = u.username
+        ? escapeHtml(u.username)
+        : '<span class="noLogin">' + escapeHtml(u.organization || '(no name)') + '</span>';
+      var statusPills = '';
+      if (u.migrated === false) statusPills += '<span class="pill pill-legacy">Not migrated</span> ';
+      statusPills += u.active
+        ? '<span class="pill pill-active">Active</span>'
+        : '<span class="pill pill-inactive">Inactive</span>';
+
+      var actions = '<button type="button" class="editBtn" data-edit="' + escapeHtml(u.id) + '">Edit</button>';
+      if (u.migrated !== false) {
+        actions += ' <button type="button" class="deleteBtn" data-delete="' + escapeHtml(u.id) + '">Delete</button>';
+      }
+
+      return '<tr class="' + (u.active ? '' : 'inactive') + '">' +
+        '<td class="userName">' + nameHtml + '</td>' +
+        '<td>' + escapeHtml(u.organization) + '</td>' +
+        '<td class="relBadge">' + escapeHtml(u.relationship) + '</td>' +
+        '<td>' + escapeHtml(u.role) + '</td>' +
+        '<td>' + escapeHtml(u.email) + '</td>' +
+        '<td>' + escapeHtml(u.phone) + '</td>' +
+        '<td>' + statusPills + '</td>' +
+        '<td><div class="rowActions">' + actions + '</div></td>' +
+        '</tr>';
+    }).join('');
+
+    bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
+      btn.addEventListener('click', function(){ openEditModal(this.getAttribute('data-edit')); });
+    });
+    bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
+      btn.addEventListener('click', function(){ deleteUser(this.getAttribute('data-delete')); });
+    });
+  }
+
+  document.getElementById('importBtn').addEventListener('click', function(){
+    requireAuthThen(async function(){
+      var btn = document.getElementById('importBtn');
+      btn.disabled = true; btn.textContent = 'Importing…';
+      try {
+        var res = await apiFetch('admin/import-legacy', { method: 'POST' });
+        if (!res.ok) {
+          var d = {}; try { d = await res.json(); } catch(e){}
+          throw new Error(d.message || ('HTTP ' + res.status));
+        }
+        await loadUsers();
+      } catch (err) {
+        alert('Could not import existing logins (' + (err && err.message ? err.message : err) + ').');
+      } finally {
+        btn.disabled = false; btn.textContent = 'Import existing logins';
+      }
+    });
+  });
+
+  async function deleteUser(id){
+    var user = lastUsers.find(function(u){ return u.id === id; });
+    var label = (user && (user.username || user.organization)) || 'this entry';
+    if (!confirm('Remove ' + label + ' from the user directory? This can\'t be undone.')) return;
+    requireAuthThen(async function(){
+      try {
+        var res = await apiFetch('admin/users/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!res.ok) {
+          var d = {}; try { d = await res.json(); } catch(e){}
+          throw new Error(d.message || ('HTTP ' + res.status));
+        }
+        await loadUsers();
+      } catch (err) {
+        alert('Could not delete this entry (' + (err && err.message ? err.message : err) + ').');
+      }
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Add / Edit modal --------------------------------------------------------
+  var editingId = null; // null = adding a new user
+
+  function updateLoginBlockVisibility(){
+    var rel = document.getElementById('f_relationship').value;
+    var loginBlock = document.getElementById('loginBlock');
+    var giveLogin = document.getElementById('f_giveLogin');
+    var loginFields = document.getElementById('loginFields');
+    var isTeam = rel === 'Dessimate Team member';
+    loginBlock.style.display = isTeam ? 'block' : 'none';
+    if (!isTeam) giveLogin.checked = false;
+    loginFields.style.display = giveLogin.checked ? 'block' : 'none';
+  }
+  document.getElementById('f_relationship').addEventListener('change', updateLoginBlockVisibility);
+  document.getElementById('f_giveLogin').addEventListener('change', updateLoginBlockVisibility);
+
+  function resetForm(){
+    document.getElementById('userForm').reset();
+    document.getElementById('f_active').checked = true;
+    document.getElementById('f_giveLogin').checked = false;
+    document.getElementById('modalError').textContent = '';
+    updateLoginBlockVisibility();
+  }
+
+  function openAddModal(){
+    editingId = null;
+    resetForm();
+    document.getElementById('modalTitle').textContent = 'Add User';
+    document.getElementById('modalSub').textContent = 'Fill in what you know — most fields are optional.';
+    document.getElementById('passwordLabel').firstChild.textContent = 'Password ';
+    document.getElementById('userModalOverlay').classList.add('open');
+  }
+  function openEditModal(id){
+    var u = lastUsers.find(function(x){ return x.id === id; });
+    if (!u) return;
+    editingId = id;
+    resetForm();
+    document.getElementById('modalTitle').textContent = 'Edit User';
+    document.getElementById('modalSub').textContent = u.migrated === false
+      ? 'This login isn\'t in the new list yet — saving will add it.'
+      : 'Update this person\'s details.';
+    document.getElementById('f_relationship').value = u.relationship || 'Dessimate Team member';
+    document.getElementById('f_organization').value = u.organization || '';
+    document.getElementById('f_role').value = u.role || '';
+    document.getElementById('f_email').value = u.email || '';
+    document.getElementById('f_phone').value = u.phone || '';
+    document.getElementById('f_active').checked = !!u.active;
+    document.getElementById('f_giveLogin').checked = !!u.hasLogin;
+    document.getElementById('f_username').value = u.username || '';
+    document.getElementById('passwordLabel').firstChild.textContent = u.hasLogin
+      ? 'New password (leave blank to keep the current one) '
+      : 'Password ';
+    updateLoginBlockVisibility();
+    document.getElementById('userModalOverlay').classList.add('open');
+  }
+  function closeModal(){
+    document.getElementById('userModalOverlay').classList.remove('open');
+  }
+  document.getElementById('addUserBtn').addEventListener('click', function(){
+    requireAuthThen(openAddModal);
+  });
+  document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('userModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'userModalOverlay') closeModal();
+  });
+
+  document.getElementById('userForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
+
+    var relationship = document.getElementById('f_relationship').value;
+    var giveLogin = document.getElementById('f_giveLogin').checked;
+    var username = document.getElementById('f_username').value.trim();
+    var password = document.getElementById('f_password').value;
+    var organization = document.getElementById('f_organization').value.trim();
+    var role = document.getElementById('f_role').value.trim();
+    var email = document.getElementById('f_email').value.trim();
+    var phone = document.getElementById('f_phone').value.trim();
+    var active = document.getElementById('f_active').checked;
+
+    if (relationship === 'Dessimate Team member' && giveLogin && !username) {
+      errEl.textContent = 'Enter a username, or turn off "Give this person a login".';
+      return;
+    }
+
+    var body = {
+      relationship: relationship,
+      organization: organization, role: role, email: email, phone: phone, active: active,
+      username: (relationship === 'Dessimate Team member' && giveLogin) ? username : ''
+    };
+    if (password) body.password = password;
+
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      var res;
+      if (editingId) {
+        res = await apiFetch('admin/users/' + encodeURIComponent(editingId), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+      } else {
+        res = await apiFetch('admin/users', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+      }
+      var data = {};
+      try { data = await res.json(); } catch(e){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      closeModal();
+      await loadUsers();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not save this user.';
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+  // -----------------------------------------------------------------------------
+
+  requireAuthThen(loadUsers);
+})();
+
+</script>

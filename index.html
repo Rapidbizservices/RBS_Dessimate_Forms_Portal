@@ -63,25 +63,9 @@
     border-radius:8px;
     padding:9px 18px;
     text-decoration:none;
-    cursor:pointer;
-    font-family:inherit;
     margin-top:16px;
   }
   .usersBtn:hover{ background:#eef1fa; }
-
-  .usersOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
-    z-index:1000; align-items:center; justify-content:center; padding:20px; }
-  .usersOverlay.open{ display:flex; }
-  .usersCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:320px;
-    box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
-  .usersCard h2{ font-size:16px; margin:0 0 4px; color:var(--ink); }
-  .usersCard .usersSub{ font-size:12px; color:var(--label); margin:0 0 16px; }
-  .usersList{ list-style:none; margin:0 0 20px; padding:0; }
-  .usersList li{ font-size:14px; padding:9px 0; border-bottom:1px solid #eef0f4; }
-  .usersList li:last-child{ border-bottom:none; }
-  .usersCloseBtn{ width:100%; font-family:inherit; font-size:14px; font-weight:700; color:#fff;
-    background:var(--brand); border:none; border-radius:8px; padding:10px; cursor:pointer; }
-  .usersCloseBtn:hover{ background:var(--brand-dark); }
 </style>
 </head>
 <body>
@@ -97,67 +81,8 @@
       <a class="btn" href="PDIR_Portal.html">PDIR</a>
       <a class="btn" href="PSW_Form_Filler.html">Create a PSW</a>
     </div>
-    <button type="button" class="usersBtn" id="usersBtn">Users</button>
+    <a class="usersBtn" href="PDIR_Users.html">Users</a>
   </div>
   <footer>Dessimate &middot; Forms Portal &middot; PDIR (QF-PDIR-01) &middot; PSW</footer>
-
-  <div class="usersOverlay" id="usersOverlay">
-    <div class="usersCard">
-      <h2>Staff with access</h2>
-      <p class="usersSub">Everyone who can sign in to the PDIR Portal.</p>
-      <ul class="usersList" id="usersList"></ul>
-      <button type="button" class="usersCloseBtn" id="usersCloseBtn">Close</button>
-    </div>
-  </div>
-
-  <script>
-    // Pulled live from the backend's /users route every time the popup is
-    // opened, so this always matches STAFF_USERS -- nothing to keep in sync
-    // by hand here.
-    var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
-
-    var usersBtn = document.getElementById('usersBtn');
-    var usersOverlay = document.getElementById('usersOverlay');
-    var usersList = document.getElementById('usersList');
-    var usersCloseBtn = document.getElementById('usersCloseBtn');
-
-    function renderUsers(names){
-      usersList.innerHTML = '';
-      names.forEach(function(name){
-        var li = document.createElement('li');
-        li.textContent = name;
-        usersList.appendChild(li);
-      });
-    }
-
-    function renderMessage(text){
-      usersList.innerHTML = '';
-      var li = document.createElement('li');
-      li.style.color = '#5b5f66';
-      li.textContent = text;
-      usersList.appendChild(li);
-    }
-
-    usersBtn.addEventListener('click', async function(){
-      usersOverlay.classList.add('open');
-      renderMessage('Loading…');
-      try {
-        var res = await fetch(WORKER_BASE_URL + '/users');
-        if (!res.ok) throw new Error('status ' + res.status);
-        var data = await res.json();
-        var names = Array.isArray(data.usernames) ? data.usernames : [];
-        if (names.length) renderUsers(names);
-        else renderMessage('No staff users found.');
-      } catch (err) {
-        renderMessage('Could not load the staff list right now.');
-      }
-    });
-    usersCloseBtn.addEventListener('click', function(){
-      usersOverlay.classList.remove('open');
-    });
-    usersOverlay.addEventListener('click', function(e){
-      if (e.target === usersOverlay) usersOverlay.classList.remove('open');
-    });
-  </script>
 </body>
 </html>
