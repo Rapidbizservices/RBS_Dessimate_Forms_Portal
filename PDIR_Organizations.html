@@ -73,6 +73,7 @@
     border-radius:4px; padding:2px 8px; white-space:nowrap; display:inline-block; }
   .relBadge.Supplier{ background:#e6eefc; color:var(--brand); }
   .relBadge.Customer{ background:#f1e6f6; color:#7a3fa0; }
+  .relBadge.Self{ background:#e6f6ec; color:#1f9254; }
   .docSummary{ font-size:12px; color:var(--label); }
   .docSummary .have{ color:#187b46; font-weight:600; }
   .rowActions{ display:flex; gap:8px; white-space:nowrap; }
@@ -117,6 +118,17 @@
     background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
   .docLinks button:hover, .docLinks a:hover{ text-decoration:underline; }
   .docLinks .removeLink{ color:#b23b3b; }
+
+  .selfSection{ display:none; }
+  .selfSection.show{ display:block; }
+  .addrRow{ display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid #eef0f4; }
+  .addrRow:last-child{ border-bottom:none; }
+  .addrRow input{ margin-top:0; }
+  .addrRow .addrLabel{ flex:0 0 190px; }
+  .addrRow .addrValue{ flex:1 1 auto; }
+  .addrRow .addrRemove{ flex:0 0 auto; font-family:inherit; font-size:12px; font-weight:600; color:#b23b3b;
+    background:#fff; border:1px solid #e3b3b3; border-radius:6px; padding:8px 10px; cursor:pointer; margin-top:5px; }
+  .addrRow .addrRemove:hover{ background:#fbeaea; }
 
   .genericList{ list-style:none; margin:0 0 10px; padding:0; }
   .genericList li{ display:flex; align-items:center; justify-content:space-between; gap:10px;
@@ -248,6 +260,7 @@
           <select id="f_relationship" required>
             <option value="Supplier">Supplier</option>
             <option value="Customer">Customer</option>
+            <option value="Self">Self (Dessimate)</option>
           </select>
         </label>
       </div>
@@ -261,6 +274,34 @@
         <label>Website
           <input type="text" id="f_website" placeholder="https://">
         </label>
+      </div>
+
+      <div class="modalSection">
+        <h3>Logo</h3>
+        <p class="modalSub" style="margin:-6px 0 10px;">Shown on this organization's login screen (Supplier/Customer portals) once those launch. PNG, JPG, or PDF.</p>
+        <div class="docRow" data-doc-row="logo">
+          <div class="docLabel">Logo</div>
+          <div class="docMain">
+            <span class="docStatus" data-doc-status="logo">No file attached</span>
+            <input type="file" data-doc-input="logo" accept=".png,.jpg,.jpeg,.pdf,image/png,image/jpeg,application/pdf">
+            <div class="docLinks" data-doc-links="logo"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modalSection selfSection" id="selfSection">
+        <h3>Self Organization Details</h3>
+        <p class="modalSub" style="margin:-6px 0 10px;">Dessimate's own record — addresses and the emails used on generated Dessimate POs and Invoices.</p>
+        <div class="modalGrid">
+          <label>Sales Email <span style="font-weight:400;">(shown on Invoices)</span>
+            <input type="email" id="f_salesEmail" placeholder="sales@dessimate.com">
+          </label>
+          <label>Purchasing Email <span style="font-weight:400;">(shown on POs)</span>
+            <input type="email" id="f_purchasingEmail" placeholder="purchasing@dessimate.com">
+          </label>
+        </div>
+        <div id="addressList"></div>
+        <button type="button" class="addFileBtn" id="addAddressBtn">+ Add Address</button>
       </div>
 
       <div class="modalSection">
@@ -325,7 +366,6 @@
 </div>
 
 <script>
-
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
   var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
@@ -430,7 +470,7 @@
     if (!statusEl || !btn) return;
     var session = getSession();
     if (session) {
-      statusEl.textContent = 'Signed in as ' + session.username;
+      statusEl.textContent = 'Welcome, ' + session.username;
       statusEl.className = 'gh-ok';
       btn.textContent = 'Log out';
     } else {
@@ -653,6 +693,8 @@
   var editingId = null;
   var namedDocState = {}; // key -> { existing: {path,filename,mimeType,size}|null, pending: {bytes,filename,mimeType}|null, removed: bool }
   var genericState = []; // { kind:'existing', id, path, filename, mimeType, size } | { kind:'pending', localId, bytes, filename, mimeType }
+  var logoState = { existing: null, pending: null, removed: false };
+  var addressState = []; // { label, address }
 
   function resetDocState(org){
     namedDocState = {};
@@ -663,7 +705,95 @@
     genericState = (org && org.genericDocs || []).map(function(d){
       return { kind: 'existing', id: d.id, path: d.path, filename: d.filename, mimeType: d.mimeType, size: d.size };
     });
+    logoState = { existing: (org && org.logo) || null, pending: null, removed: false };
+    addressState = (org && Array.isArray(org.addresses) ? org.addresses : []).map(function(a){
+      return { label: a.label || '', address: a.address || '' };
+    });
   }
+
+  function renderLogoRow(){
+    var statusEl = document.querySelector('[data-doc-status="logo"]');
+    var linksEl = document.querySelector('[data-doc-links="logo"]');
+    var links = '';
+    if (logoState.pending) {
+      statusEl.textContent = 'Selected: ' + logoState.pending.filename + ' (will be uploaded on Save)';
+      statusEl.className = 'docStatus ok';
+      links = '<button type="button" id="logoPreviewPendingBtn">Preview</button>';
+    } else if (logoState.existing && !logoState.removed) {
+      statusEl.textContent = 'Attached: ' + logoState.existing.filename;
+      statusEl.className = 'docStatus ok';
+      links = '<button type="button" id="logoViewBtn">View</button>' +
+        '<span class="removeLink" style="cursor:pointer;" id="logoRemoveLink">Remove</span>';
+    } else {
+      statusEl.textContent = 'No file attached';
+      statusEl.className = 'docStatus';
+    }
+    linksEl.innerHTML = links;
+    var previewBtn = document.getElementById('logoPreviewPendingBtn');
+    if (previewBtn) previewBtn.addEventListener('click', function(){
+      openDocViewer({ filename: logoState.pending.filename, mimeType: logoState.pending.mimeType, bytes: logoState.pending.bytes });
+    });
+    var viewBtn = document.getElementById('logoViewBtn');
+    if (viewBtn) viewBtn.addEventListener('click', function(){
+      openDocViewer({ filename: logoState.existing.filename, mimeType: logoState.existing.mimeType, path: logoState.existing.path });
+    });
+    var removeLink = document.getElementById('logoRemoveLink');
+    if (removeLink) removeLink.addEventListener('click', function(){
+      logoState.removed = true;
+      renderLogoRow();
+    });
+  }
+  document.querySelector('[data-doc-input="logo"]').addEventListener('change', async function(){
+    var file = this.files && this.files[0];
+    this.value = '';
+    if (!file) return;
+    try {
+      var bytes = await readFileAsBytes(file);
+      logoState.pending = { bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' };
+      logoState.removed = false;
+      renderLogoRow();
+    } catch (e) {
+      alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+    }
+  });
+
+  function renderAddressList(){
+    var listEl = document.getElementById('addressList');
+    if (!addressState.length) { listEl.innerHTML = ''; return; }
+    listEl.innerHTML = addressState.map(function(a, idx){
+      return '<div class="addrRow">' +
+        '<label class="addrLabel">Label' +
+          '<input type="text" data-addr-label="' + idx + '" value="' + escapeHtml(a.label) + '" placeholder="e.g. Delaware (Registered)">' +
+        '</label>' +
+        '<label class="addrValue">Address' +
+          '<input type="text" data-addr-value="' + idx + '" value="' + escapeHtml(a.address) + '" placeholder="Street, city, state, zip">' +
+        '</label>' +
+        '<button type="button" class="addrRemove" data-addr-remove="' + idx + '">Remove</button>' +
+      '</div>';
+    }).join('');
+    listEl.querySelectorAll('[data-addr-label]').forEach(function(inp){
+      inp.addEventListener('input', function(){ addressState[parseInt(this.getAttribute('data-addr-label'), 10)].label = this.value; });
+    });
+    listEl.querySelectorAll('[data-addr-value]').forEach(function(inp){
+      inp.addEventListener('input', function(){ addressState[parseInt(this.getAttribute('data-addr-value'), 10)].address = this.value; });
+    });
+    listEl.querySelectorAll('[data-addr-remove]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        addressState.splice(parseInt(this.getAttribute('data-addr-remove'), 10), 1);
+        renderAddressList();
+      });
+    });
+  }
+  document.getElementById('addAddressBtn').addEventListener('click', function(){
+    addressState.push({ label: '', address: '' });
+    renderAddressList();
+  });
+
+  function updateSelfSectionVisibility(){
+    var isSelf = document.getElementById('f_relationship').value === 'Self';
+    document.getElementById('selfSection').classList.toggle('show', isSelf);
+  }
+  document.getElementById('f_relationship').addEventListener('change', updateSelfSectionVisibility);
 
   function renderNamedDocRow(key){
     var statusEl = document.querySelector('[data-doc-status="' + key + '"]');
@@ -767,6 +897,9 @@
     resetDocState(null);
     DOC_KEYS.forEach(function(kv){ renderNamedDocRow(kv[0]); });
     renderGenericList();
+    renderLogoRow();
+    renderAddressList();
+    updateSelfSectionVisibility();
   }
 
   function openAddModal(){
@@ -785,6 +918,8 @@
     resetDocState(o);
     DOC_KEYS.forEach(function(kv){ renderNamedDocRow(kv[0]); });
     renderGenericList();
+    renderLogoRow();
+    renderAddressList();
     document.getElementById('modalTitle').textContent = 'Edit Organization';
     document.getElementById('modalSub').textContent = 'Update this organization\'s details.';
     document.getElementById('f_name').value = o.name || '';
@@ -792,6 +927,9 @@
     document.getElementById('f_address').value = o.address || '';
     document.getElementById('f_phone').value = o.phone || '';
     document.getElementById('f_website').value = o.website || '';
+    document.getElementById('f_salesEmail').value = o.salesEmail || '';
+    document.getElementById('f_purchasingEmail').value = o.purchasingEmail || '';
+    updateSelfSectionVisibility();
     document.getElementById('orgModalOverlay').classList.add('open');
   }
   function closeModal(){ document.getElementById('orgModalOverlay').classList.remove('open'); }
@@ -812,7 +950,10 @@
       relationship: document.getElementById('f_relationship').value,
       address: document.getElementById('f_address').value.trim(),
       phone: document.getElementById('f_phone').value.trim(),
-      website: document.getElementById('f_website').value.trim()
+      website: document.getElementById('f_website').value.trim(),
+      salesEmail: document.getElementById('f_salesEmail').value.trim(),
+      purchasingEmail: document.getElementById('f_purchasingEmail').value.trim(),
+      addresses: addressState.filter(function(a){ return a.label.trim() || a.address.trim(); })
     };
     if (!baseFields.name) { errEl.textContent = 'Organization name is required.'; return; }
 
@@ -853,9 +994,20 @@
         }
       }
 
+      var logoPayload;
+      if (logoState.pending) {
+        var logoPath = buildNamedDocPath(orgId, 'logo', logoState.pending.filename);
+        await ghPutFile(logoPath, logoState.pending.bytes, 'Upload logo for organization ' + baseFields.name);
+        logoPayload = { path: logoPath, filename: logoState.pending.filename, mimeType: logoState.pending.mimeType, size: logoState.pending.bytes.length };
+      } else if (logoState.removed) {
+        logoPayload = null;
+      } else {
+        logoPayload = logoState.existing;
+      }
+
       var putRes = await apiFetch('organizations/' + encodeURIComponent(orgId), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({}, baseFields, { docs: docsPayload, genericDocs: genericPayload }))
+        body: JSON.stringify(Object.assign({}, baseFields, { docs: docsPayload, genericDocs: genericPayload, logo: logoPayload }))
       });
       var putData = {}; try { putData = await putRes.json(); } catch(e){}
       if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
@@ -872,5 +1024,4 @@
 
   requireAuthThen(loadOrgs);
 })();
-
 </script>

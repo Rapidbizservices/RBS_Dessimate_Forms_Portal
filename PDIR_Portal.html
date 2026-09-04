@@ -215,7 +215,6 @@
 </div>
 
 <script>
-
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
   // This page is a static file with no server of its own, so listing what's in
@@ -378,7 +377,7 @@
     if (!statusEl || !btn) return;
     var session = getSession();
     if (session) {
-      statusEl.textContent = 'Signed in as ' + session.username;
+      statusEl.textContent = 'Welcome, ' + session.username;
       statusEl.className = 'gh-ok';
       btn.textContent = 'Log out';
     } else {
@@ -663,5 +662,4 @@
   });
   requireAuthThen(loadPdirList);
 })();
-
 </script>

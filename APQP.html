@@ -161,7 +161,7 @@
       if (!statusEl || !btn) return;
       var session = getSession();
       if (session) {
-        statusEl.textContent = 'Signed in as ' + session.username;
+        statusEl.textContent = 'Welcome, ' + session.username;
         statusEl.className = 'gh-ok';
         btn.textContent = 'Log out';
       } else {

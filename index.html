@@ -128,12 +128,12 @@
     <div class="btn-stack">
       <a class="btn" href="PDIR_Portal.html">PDIR</a>
       <a class="btn" href="APQP.html">APQP</a>
+      <a class="btn" href="PDIR_Parts.html">Parts</a>
     </div>
     <button type="button" class="adminBtn" id="adminBtn">Admin &#9662;</button>
     <div class="linkRow" id="adminPanel" style="display:none;">
       <a class="usersBtn" href="PDIR_Users.html">Users</a>
       <a class="usersBtn" href="PDIR_Organizations.html">Organizations</a>
-      <a class="usersBtn" href="PDIR_Parts.html">Parts</a>
     </div>
   </div>
   <footer>Dessimate &middot; DSCM &middot; PDIR (QF-PDIR-01) &middot; APQP</footer>
@@ -162,7 +162,6 @@
     // Worker; it must match the value used in every other HTML file.
     var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
     var SESSION_KEY = 'dessimate_session';
-    var ADMIN_USERNAMES = ['roberto', 'amy'];
 
     function getSession(){
       try{
@@ -184,7 +183,7 @@
       if (!statusEl || !btn) return;
       var session = getSession();
       if (session) {
-        statusEl.textContent = 'Signed in as ' + session.username;
+        statusEl.textContent = 'Welcome, ' + session.username;
         statusEl.className = 'gh-ok';
         btn.textContent = 'Log out';
       } else {
@@ -245,12 +244,25 @@
     // -----------------------------------------------------------------------
 
     // The Users and Organizations links manage staff logins and supplier/
-    // customer records, so they're tucked behind this Admin button and only
-    // shown to Roberto and Amy. Everyone else who signs in sees the same
-    // Home screen minus this button.
-    function updateAdminVisibility(){
+    // customer records - personal contact info and login credentials - so
+    // they're tucked behind this Admin button and only shown to signed-in
+    // Super Admins. This is enforced for real on the backend (GET/POST/PUT/
+    // DELETE on those routes require accessLevel super_admin); hiding the
+    // button is just so everyone else doesn't see a dead end. Resolved via
+    // /me instead of a hardcoded username list, so access follows whatever's
+    // set on each person's Users record (see the Users page).
+    async function updateAdminVisibility(){
       var session = getSession();
-      var isAdmin = !!(session && session.username && ADMIN_USERNAMES.indexOf(session.username.toLowerCase()) !== -1);
+      var isAdmin = false;
+      if (session) {
+        try {
+          var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+          if (res.ok) {
+            var data = await res.json();
+            isAdmin = data.accessLevel === 'super_admin';
+          }
+        } catch (e) { console.error('Could not resolve access level', e); }
+      }
       var adminBtn = document.getElementById('adminBtn');
       adminBtn.classList.toggle('visible', isAdmin);
       if (!isAdmin) document.getElementById('adminPanel').style.display = 'none';
