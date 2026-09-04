@@ -82,6 +82,8 @@
   .pill-active{ background:#e6f4ea; color:#187b46; }
   .pill-inactive{ background:#f1e6e6; color:#a03b3b; }
   .pill-legacy{ background:#fdf1de; color:#a06a1c; }
+  .pill-demo{ background:#e6eefc; color:var(--brand); }
+  .pill-accesslevel{ background:#f1e6f6; color:#7a3fa0; }
   .relBadge{ font-size:11.5px; color:var(--label); }
   .rowActions{ display:flex; gap:8px; white-space:nowrap; }
   .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
@@ -123,6 +125,15 @@
   .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
   .cancelBtn:hover{ background:#f4f5f8; }
   .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:2px 0 12px; }
+
+  .accessLevelBlock{ display:none; }
+  .accessLevelBlock.show{ display:block; }
+  .stampBlock{ margin:2px 0 14px; }
+  .stampBlock .docStatus{ display:block; font-size:12px; color:var(--label); margin-bottom:4px; }
+  .stampBlock .docStatus.ok{ color:#187b46; font-weight:600; }
+  .stampBlock input[type=file]{ font-size:11.5px; }
+  .demoRow{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink); font-weight:600; margin-bottom:16px; }
+  .demoRow input{ width:auto; margin:0; }
 </style>
 
 <div class="wrap">
@@ -166,6 +177,7 @@
           <th>Name</th>
           <th>Organization</th>
           <th>Relationship</th>
+          <th>Access</th>
           <th>Role</th>
           <th>Email</th>
           <th>Phone</th>
@@ -228,6 +240,23 @@
         </div>
       </div>
 
+      <div class="accessLevelBlock" id="accessLevelBlock">
+        <label>Access Level
+          <select id="f_accessLevel">
+            <option value="team_member">Team Member — Dessimate PO, Supplier Invoice, PDIR, Parts, APQP</option>
+            <option value="admin">Admin — also Customer PO and Dessimate Invoice</option>
+            <option value="super_admin">Super Admin — also Users and Organizations</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="stampBlock">
+        <label style="margin-bottom:6px;">Approver Stamp <span style="font-weight:400;">(used on generated Dessimate POs, if this person approves them)</span></label>
+        <span class="docStatus" id="stampStatus">No file attached</span>
+        <input type="file" id="f_stampImage" accept=".png,.jpg,.jpeg,.pdf,image/png,image/jpeg,application/pdf">
+        <div id="stampLinks"></div>
+      </div>
+
       <div class="modalGrid">
         <label>Organization
           <select id="f_organization_select" style="display:none;"></select>
@@ -250,6 +279,10 @@
         <input type="checkbox" id="f_active" checked>
         <label style="margin:0;" for="f_active">Active</label>
       </div>
+      <div class="demoRow">
+        <input type="checkbox" id="f_isDemo">
+        <label style="margin:0;" for="f_isDemo">Demo account (for team demos)</label>
+      </div>
 
       <div class="modalError" id="modalError"></div>
       <div class="modalBtns">
@@ -261,7 +294,6 @@
 </div>
 
 <script>
-
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
   // Same Worker as the rest of the Portal — see pdir_portal_part2.js for the
@@ -296,6 +328,79 @@
     return res;
   }
 
+  // ---- File upload helpers (for the Approver Stamp field) -------------------
+  // Same pattern as Organizations' document uploads: bytes go through the
+  // normal /contents proxy first, then the resulting {path,filename,mimeType,
+  // size} pointer is sent to /admin/users as the stampImage field.
+  function bytesToBase64(bytes){
+    var binary = '', chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+  function base64ToBytes(b64){
+    var bin = atob((b64 || '').replace(/\s+/g, ''));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  function docFileExt(filename){
+    var m = /\.[a-zA-Z0-9]+$/.exec(filename || '');
+    return m ? m[0] : '';
+  }
+  function workerContentsPath(fullPath){
+    return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
+  }
+  async function ghGetSha(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status);
+    var data = await res.json();
+    return data.sha;
+  }
+  async function ghGetFileBytes(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status + ' while loading ' + fullPath + '.');
+    var data = await res.json();
+    return base64ToBytes(data.content || '');
+  }
+  async function ghPutFile(fullPath, bytes, commitMessage){
+    var sha = await ghGetSha(fullPath);
+    var body = { message: commitMessage || ('Update ' + fullPath), content: bytesToBase64(bytes) };
+    if (sha) body.sha = sha;
+    var res = await apiFetch(workerContentsPath(fullPath), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+      throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+    }
+    return await res.json();
+  }
+  function readFileAsBytes(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onerror = function(){ reject(new Error('Could not read "' + file.name + '".')); };
+      reader.onload = function(){ resolve(new Uint8Array(reader.result)); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  var stampObjectUrl = null;
+  function openStampPreview(bytesOrPath, filename, mimeType){
+    return Promise.resolve(bytesOrPath.bytes ? bytesOrPath.bytes : ghGetFileBytes(bytesOrPath.path)).then(function(bytes){
+      if (!bytes) throw new Error('File not found.');
+      var blob = new Blob([bytes], { type: mimeType || 'application/octet-stream' });
+      if (stampObjectUrl) URL.revokeObjectURL(stampObjectUrl);
+      stampObjectUrl = URL.createObjectURL(blob);
+      window.open(stampObjectUrl, '_blank');
+    }).catch(function(e){
+      alert('Could not open this file (' + (e && e.message ? e.message : e) + ').');
+    });
+  }
+  // -----------------------------------------------------------------------------
+
   // ---- Staff login wall -----------------------------------------------------
   var pendingAfterAuth = null;
 
@@ -305,7 +410,7 @@
     if (!statusEl || !btn) return;
     var session = getSession();
     if (session) {
-      statusEl.textContent = 'Signed in as ' + session.username;
+      statusEl.textContent = 'Welcome, ' + session.username;
       statusEl.className = 'gh-ok';
       btn.textContent = 'Log out';
     } else {
@@ -370,6 +475,11 @@
 
   // ---- Directory table --------------------------------------------------------
   var lastUsers = [];
+  var ACCESS_LEVEL_LABELS = {
+    super_admin: 'Super Admin', admin: 'Admin', team_member: 'Team Member',
+    supplier: 'Supplier', customer: 'Customer'
+  };
+  var USER_DOC_FOLDER = 'user_docs';
 
   function escapeHtml(s){
     return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
@@ -443,9 +553,14 @@
       if (!u.name && !u.username) nameHtml = '<span class="noLogin">' + escapeHtml(displayName) + '</span>';
       var statusPills = '';
       if (u.migrated === false) statusPills += '<span class="pill pill-legacy">Not migrated</span> ';
+      if (u.isDemo) statusPills += '<span class="pill pill-demo">Demo</span> ';
       statusPills += u.active
         ? '<span class="pill pill-active">Active</span>'
         : '<span class="pill pill-inactive">Inactive</span>';
+
+      var accessHtml = u.accessLevel
+        ? '<span class="pill pill-accesslevel">' + escapeHtml(ACCESS_LEVEL_LABELS[u.accessLevel] || u.accessLevel) + '</span>'
+        : '<span style="color:var(--label); font-style:italic;">default</span>';
 
       var actions = '<button type="button" class="editBtn" data-edit="' + escapeHtml(u.id) + '">Edit</button>';
       if (u.migrated !== false) {
@@ -456,6 +571,7 @@
         '<td class="userName">' + nameHtml + '</td>' +
         '<td>' + escapeHtml(u.organization) + '</td>' +
         '<td class="relBadge">' + escapeHtml(u.relationship) + '</td>' +
+        '<td>' + accessHtml + '</td>' +
         '<td>' + escapeHtml(u.role) + '</td>' +
         '<td>' + escapeHtml(u.email) + '</td>' +
         '<td>' + escapeHtml(u.phone) + '</td>' +
@@ -561,18 +677,83 @@
     if (!isTeam) giveLogin.checked = false;
     loginFields.style.display = giveLogin.checked ? 'block' : 'none';
   }
+  // Access Level only applies to Dessimate Team members (super_admin/admin/
+  // team_member) - a Supplier/Customer contact's access level is implicit
+  // from their relationship (supplier/customer), enforced server-side.
+  function updateAccessLevelVisibility(){
+    var rel = document.getElementById('f_relationship').value;
+    document.getElementById('accessLevelBlock').classList.toggle('show', rel === 'Dessimate Team member');
+  }
   document.getElementById('f_relationship').addEventListener('change', function(){
     updateLoginBlockVisibility();
+    updateAccessLevelVisibility();
     updateOrganizationFieldMode('');
   });
   document.getElementById('f_giveLogin').addEventListener('change', updateLoginBlockVisibility);
 
+  // ---- Approver Stamp upload --------------------------------------------------
+  var stampState = { existing: null, pending: null, removed: false };
+  function renderStampRow(){
+    var statusEl = document.getElementById('stampStatus');
+    var linksEl = document.getElementById('stampLinks');
+    var links = '';
+    if (stampState.pending) {
+      statusEl.textContent = 'Selected: ' + stampState.pending.filename + ' (will be uploaded on Save)';
+      statusEl.className = 'docStatus ok';
+      links = '<button type="button" id="stampPreviewPendingBtn">Preview</button>';
+    } else if (stampState.existing && !stampState.removed) {
+      statusEl.textContent = 'Attached: ' + stampState.existing.filename;
+      statusEl.className = 'docStatus ok';
+      links = '<button type="button" id="stampViewBtn">View</button> ' +
+        '<span style="cursor:pointer; color:#b23b3b; font-weight:600;" id="stampRemoveLink">Remove</span>';
+    } else {
+      statusEl.textContent = 'No file attached';
+      statusEl.className = 'docStatus';
+    }
+    linksEl.innerHTML = links;
+    var previewBtn = document.getElementById('stampPreviewPendingBtn');
+    if (previewBtn) previewBtn.addEventListener('click', function(){
+      openStampPreview({ bytes: stampState.pending.bytes }, stampState.pending.filename, stampState.pending.mimeType);
+    });
+    var viewBtn = document.getElementById('stampViewBtn');
+    if (viewBtn) viewBtn.addEventListener('click', function(){
+      openStampPreview({ path: stampState.existing.path }, stampState.existing.filename, stampState.existing.mimeType);
+    });
+    var removeLink = document.getElementById('stampRemoveLink');
+    if (removeLink) removeLink.addEventListener('click', function(){
+      stampState.removed = true;
+      renderStampRow();
+    });
+  }
+  document.getElementById('f_stampImage').addEventListener('change', async function(){
+    var file = this.files && this.files[0];
+    this.value = '';
+    if (!file) return;
+    try {
+      var bytes = await readFileAsBytes(file);
+      stampState.pending = { bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' };
+      stampState.removed = false;
+      renderStampRow();
+    } catch (e) {
+      alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+    }
+  });
+  function buildStampPath(userId, filename){
+    return USER_DOC_FOLDER + '/' + userId + '/stamp' + docFileExt(filename);
+  }
+  // -----------------------------------------------------------------------------
+
   function resetForm(){
     document.getElementById('userForm').reset();
     document.getElementById('f_active').checked = true;
+    document.getElementById('f_isDemo').checked = false;
     document.getElementById('f_giveLogin').checked = false;
+    document.getElementById('f_accessLevel').value = 'team_member';
     document.getElementById('modalError').textContent = '';
+    stampState = { existing: null, pending: null, removed: false };
+    renderStampRow();
     updateLoginBlockVisibility();
+    updateAccessLevelVisibility();
     updateOrganizationFieldMode('');
   }
 
@@ -601,12 +782,17 @@
     document.getElementById('f_email').value = u.email || '';
     document.getElementById('f_phone').value = u.phone || '';
     document.getElementById('f_active').checked = !!u.active;
+    document.getElementById('f_isDemo').checked = !!u.isDemo;
+    document.getElementById('f_accessLevel').value = u.accessLevel || 'team_member';
     document.getElementById('f_giveLogin').checked = !!u.hasLogin;
     document.getElementById('f_username').value = u.username || '';
     document.getElementById('passwordLabel').firstChild.textContent = u.hasLogin
       ? 'New password (leave blank to keep the current one) '
       : 'Password ';
+    stampState = { existing: u.stampImage || null, pending: null, removed: false };
+    renderStampRow();
     updateLoginBlockVisibility();
+    updateAccessLevelVisibility();
     document.getElementById('userModalOverlay').classList.add('open');
     loadOrgsForDropdown().then(function(){ updateOrganizationFieldMode(u.organization || ''); });
   }
@@ -649,28 +835,53 @@
       return;
     }
 
+    var accessLevel = relationship === 'Dessimate Team member' ? document.getElementById('f_accessLevel').value : '';
+    var isDemo = document.getElementById('f_isDemo').checked;
+
     var body = {
       name: name, relationship: relationship,
       organization: organization, role: role, email: email, phone: phone, active: active,
-      username: (relationship === 'Dessimate Team member' && giveLogin) ? username : ''
+      username: (relationship === 'Dessimate Team member' && giveLogin) ? username : '',
+      accessLevel: accessLevel, isDemo: isDemo
     };
     if (password) body.password = password;
 
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
-      var res;
-      if (editingId) {
-        res = await apiFetch('admin/users/' + encodeURIComponent(editingId), {
+      var userId = editingId;
+      var data = {};
+      if (userId) {
+        var res = await apiFetch('admin/users/' + encodeURIComponent(userId), {
           method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
         });
+        try { data = await res.json(); } catch(e){}
+        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
       } else {
-        res = await apiFetch('admin/users', {
+        var createRes = await apiFetch('admin/users', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
         });
+        try { data = await createRes.json(); } catch(e){}
+        if (!createRes.ok) throw new Error(data.message || ('HTTP ' + createRes.status));
+        userId = data.id;
       }
-      var data = {};
-      try { data = await res.json(); } catch(e){}
-      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+
+      // Approver stamp - uploaded/attached as a follow-up PUT, same two-step
+      // pattern Organizations uses for its documents (needs the id first).
+      if (stampState.pending || stampState.removed) {
+        var stampPayload = null;
+        if (stampState.pending) {
+          var stampPath = buildStampPath(userId, stampState.pending.filename);
+          await ghPutFile(stampPath, stampState.pending.bytes, 'Upload approver stamp for ' + (name || username || userId));
+          stampPayload = { path: stampPath, filename: stampState.pending.filename, mimeType: stampState.pending.mimeType, size: stampState.pending.bytes.length };
+        }
+        var stampPutRes = await apiFetch('admin/users/' + encodeURIComponent(userId), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({}, body, { stampImage: stampPayload }))
+        });
+        var stampData = {}; try { stampData = await stampPutRes.json(); } catch(e){}
+        if (!stampPutRes.ok) throw new Error(stampData.message || ('HTTP ' + stampPutRes.status));
+      }
+
       closeModal();
       await loadUsers();
     } catch (err) {
@@ -683,5 +894,4 @@
 
   requireAuthThen(loadUsers);
 })();
-
 </script>
