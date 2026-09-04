@@ -97,7 +97,10 @@
     "role": "",
     "email": "",
     "phone": "",
-    "active": true
+    "active": true,
+    "name": "Manish Talwalkar",
+    "accessLevel": "team_member",
+    "isDemo": false
   },
   {
     "id": "6d39f56f-6ce1-4e5c-a79d-b69429093efa",
