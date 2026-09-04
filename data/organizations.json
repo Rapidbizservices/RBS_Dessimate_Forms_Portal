@@ -110,5 +110,23 @@
       "selfAssessment": null
     },
     "genericDocs": []
+  },
+  {
+    "id": "71bc230c-346f-4404-92d6-71576eeeb028",
+    "name": "a",
+    "relationship": "Supplier",
+    "address": "",
+    "phone": "",
+    "website": "",
+    "logo": null,
+    "addresses": [],
+    "salesEmail": "",
+    "purchasingEmail": "",
+    "docs": {
+      "companyPresentation": null,
+      "nda": null,
+      "selfAssessment": null
+    },
+    "genericDocs": []
   }
 ]
