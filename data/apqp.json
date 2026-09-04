@@ -88,5 +88,50 @@
         "comments": []
       }
     }
+  },
+  {
+    "id": "0fde2e8e-ac8f-4d09-8e44-85d08a86394c",
+    "partNumber": "012374-001",
+    "partName": "Ring Retainer",
+    "createdAt": "2026-09-04T22:43:25.771Z",
+    "createdBy": "Roberto",
+    "items": {
+      "designRecord": {
+        "files": [],
+        "comments": []
+      },
+      "controlPlan": {
+        "files": [],
+        "comments": []
+      },
+      "dimResults": {
+        "files": [],
+        "comments": []
+      },
+      "mpTests": {
+        "files": [],
+        "comments": []
+      },
+      "ips": {
+        "files": [],
+        "comments": []
+      },
+      "sampleProduct": {
+        "files": [],
+        "comments": []
+      },
+      "masterSample": {
+        "files": [],
+        "comments": []
+      },
+      "other": {
+        "files": [],
+        "comments": []
+      },
+      "psw": {
+        "files": [],
+        "comments": []
+      }
+    }
   }
 ]
