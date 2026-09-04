@@ -52,7 +52,9 @@
     "email": "",
     "phone": "",
     "active": true,
-    "name": "Claudia Sanchez"
+    "name": "Claudia Sanchez",
+    "accessLevel": "admin",
+    "isDemo": false
   },
   {
     "id": "2af52e06-3839-4f0e-bd50-ee0a23ab4847",
