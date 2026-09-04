@@ -1,0 +1,47 @@
+[
+  {
+    "id": "a0b7799c-0e5f-4a2d-aeb7-99fb0d660234",
+    "partNumber": "010068-001",
+    "partName": "Bulk Head",
+    "createdAt": "2026-09-04T22:42:13.179Z",
+    "createdBy": "Roberto",
+    "items": {
+      "designRecord": {
+        "files": [],
+        "comments": []
+      },
+      "controlPlan": {
+        "files": [],
+        "comments": []
+      },
+      "dimResults": {
+        "files": [],
+        "comments": []
+      },
+      "mpTests": {
+        "files": [],
+        "comments": []
+      },
+      "ips": {
+        "files": [],
+        "comments": []
+      },
+      "sampleProduct": {
+        "files": [],
+        "comments": []
+      },
+      "masterSample": {
+        "files": [],
+        "comments": []
+      },
+      "other": {
+        "files": [],
+        "comments": []
+      },
+      "psw": {
+        "files": [],
+        "comments": []
+      }
+    }
+  }
+]
