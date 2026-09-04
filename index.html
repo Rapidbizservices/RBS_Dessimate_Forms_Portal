@@ -8,93 +8,97 @@
   :root{
     --brand:#2b4ea3;
     --brand-dark:#1c3877;
+    --brand-light:#eef1fa;
     --ink:#1c1c1e;
     --label:#5b5f66;
     --line:#dde0e6;
-    --bg:#eef0f4;
+    --bg:#f4f5f8;
+
+    --side-bg:#101d3a;
+    --side-bg-raised:#16274d;
+    --side-line:rgba(255,255,255,.09);
+    --side-text:#aebbdc;
+    --side-text-dim:#7387b8;
+    --side-text-active:#ffffff;
+    --side-item-hover:rgba(255,255,255,.07);
+    --side-heading:#6d80ac;
   }
   *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
+  html,body{margin:0;padding:0;height:100%;}
   body{
-    min-height:100vh;
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    justify-content:center;
-    background:var(--bg);
     font-family:Arial,Helvetica,sans-serif;
     color:var(--ink);
-    padding:24px;
-    text-align:center;
+    background:var(--bg);
+    display:flex;
+    height:100vh;
+    overflow:hidden;
   }
-  .card{
-    background:#fff;
-    border:1px solid #d7d9df;
-    border-radius:14px;
-    padding:40px 44px 36px;
-    max-width:480px;
-    width:100%;
-    box-shadow:0 8px 24px rgba(20,20,30,.08);
-  }
-  .logo{ width:72px; height:auto; margin-bottom:18px; }
-  h1{ font-size:20px; margin:0 0 8px; }
-  p.sub{ font-size:14px; color:var(--label); line-height:1.5; margin:0 0 20px; }
-  .btn{
-    display:inline-block;
-    font-size:16px;
-    font-weight:700;
-    color:#fff;
-    background:var(--brand);
-    border-radius:9px;
-    padding:15px 36px;
-    text-decoration:none;
-    letter-spacing:.01em;
-  }
-  .btn:hover{ background:var(--brand-dark); }
-  .btn-stack{ display:flex; flex-direction:column; gap:12px; align-items:stretch; }
-  footer{ margin-top:22px; font-size:11.5px; color:#9a9ea6; }
 
-  .usersBtn{
-    display:inline-block;
-    font-size:13px;
-    font-weight:700;
-    color:var(--brand);
-    background:#fff;
-    border:1px solid #cdd6ee;
-    border-radius:8px;
-    padding:9px 18px;
-    text-decoration:none;
-    margin-top:16px;
+  /* ---- Sidebar ------------------------------------------------------- */
+  .sidebar{
+    width:252px; flex:0 0 auto; background:var(--side-bg); color:var(--side-text);
+    display:flex; flex-direction:column; height:100%; overflow-y:auto;
+    border-right:1px solid var(--side-line);
   }
-  .usersBtn:hover{ background:#eef1fa; }
-  .linkRow{ display:flex; gap:10px; justify-content:center; margin-top:10px; }
-  .linkRow .usersBtn{ margin-top:0; }
+  .sideBrand{ display:flex; align-items:center; gap:11px; padding:20px 18px 16px; }
+  .sideBrand img{ width:36px; height:auto; border-radius:6px; }
+  .sideBrand .name{ font-size:14.5px; font-weight:800; color:#fff; letter-spacing:.01em; line-height:1.2; }
+  .sideBrand .tag{ font-size:10.5px; color:var(--side-text-dim); margin-top:2px; letter-spacing:.02em; }
 
-  .adminBtn{
-    display:none;
-    font-family:inherit;
-    font-size:13px;
-    font-weight:700;
-    color:#7a3fa0;
-    background:#fff;
-    border:1px solid #ddc7ec;
-    border-radius:8px;
-    padding:9px 18px;
-    cursor:pointer;
-    margin-top:16px;
+  .sideNav{ flex:1 1 auto; padding:6px 12px 12px; }
+  .sideGroup{ margin-top:16px; }
+  .sideGroup:first-child{ margin-top:2px; }
+  .sideGroupLabel{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em;
+    color:var(--side-heading); padding:0 10px 7px; }
+  .sideItem{
+    display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    font-family:inherit; font-size:13.5px; font-weight:600; color:var(--side-text);
+    background:none; border:none; border-radius:8px; padding:10px 11px; margin-bottom:2px;
+    cursor:pointer; text-decoration:none;
   }
-  .adminBtn:hover{ background:#f6effa; }
-  .adminBtn.visible{ display:inline-block; }
+  .sideItem:hover{ background:var(--side-item-hover); color:#fff; }
+  .sideItem .dot{ width:6px; height:6px; border-radius:50%; background:var(--side-text-dim); flex:0 0 auto; }
+  .sideItem.active{ background:var(--brand); color:#fff; }
+  .sideItem.active .dot{ background:#fff; }
 
-  .ghbar{ display:flex; align-items:center; justify-content:center; gap:8px;
-    font-size:12.5px; margin:0 0 18px; }
-  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
-  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
-  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
-    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
-  #ghConnectBtn:hover{ background:#e2e8f9; }
+  .sideFoot{ padding:14px 18px 18px; border-top:1px solid var(--side-line); }
+  .sideUser{ font-size:12.5px; color:var(--side-text); margin-bottom:9px; overflow-wrap:anywhere; }
+  .sideUser strong{ color:#fff; display:block; font-size:13px; margin-bottom:1px; }
+  .sideLogoutBtn{
+    width:100%; font-family:inherit; font-size:12.5px; font-weight:700; color:var(--side-text);
+    background:var(--side-bg-raised); border:1px solid var(--side-line); border-radius:7px;
+    padding:8px 10px; cursor:pointer;
+  }
+  .sideLogoutBtn:hover{ background:#1c3160; color:#fff; }
 
-  /* Staff login wall */
+  .sideToggle{ display:none; }
+
+  /* ---- Main area ------------------------------------------------------ */
+  .main{ flex:1 1 auto; display:flex; flex-direction:column; height:100%; min-width:0; }
+  .mainBar{
+    display:flex; align-items:center; justify-content:space-between; gap:14px;
+    padding:14px 22px; border-bottom:1px solid var(--line); background:#fff; flex:0 0 auto;
+  }
+  .mainBar .mTitle{ font-size:15.5px; font-weight:700; }
+  .mainBar .mActions{ display:flex; align-items:center; gap:10px; }
+  .openTabLink{ font-size:12.5px; font-weight:600; color:var(--brand); text-decoration:none; }
+  .openTabLink:hover{ text-decoration:underline; }
+  .hamburgerBtn{
+    display:none; font-family:inherit; font-size:18px; color:var(--ink); background:#fff;
+    border:1px solid var(--line); border-radius:7px; padding:6px 11px; cursor:pointer;
+  }
+
+  .content{ flex:1 1 auto; position:relative; min-height:0; }
+  .content iframe{ position:absolute; inset:0; width:100%; height:100%; border:0; }
+  .welcomeState{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; text-align:center; padding:40px 20px; gap:6px;
+  }
+  .welcomeState img{ width:56px; height:auto; margin-bottom:14px; opacity:.9; }
+  .welcomeState h2{ font-size:18px; margin:0 0 4px; }
+  .welcomeState p{ font-size:13.5px; color:var(--label); max-width:380px; margin:0; line-height:1.5; }
+
+  /* ---- Staff login wall (same pattern as every other page) ------------ */
   .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
     z-index:2000; align-items:center; justify-content:center; padding:20px; }
   .authOverlay.open{ display:flex; }
@@ -110,33 +114,65 @@
   .authCard button:hover{ background:var(--brand-dark); }
   .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
   .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+
+  /* ---- Responsive: sidebar becomes a slide-out drawer below 900px ----- */
+  @media (max-width: 900px){
+    .sidebar{
+      position:fixed; inset:0 auto 0 0; z-index:1200; transform:translateX(-100%);
+      transition:transform .18s ease; box-shadow:0 0 40px rgba(0,0,0,.35);
+    }
+    .sidebar.open{ transform:translateX(0); }
+    .sideToggle{
+      display:block; position:fixed; inset:auto auto 0 0; z-index:1190;
+    }
+    .hamburgerBtn{ display:inline-block; }
+    .sideScrim{
+      display:none; position:fixed; inset:0; background:rgba(10,14,26,.45); z-index:1100;
+    }
+    .sideScrim.open{ display:block; }
+  }
 </style>
 </head>
 <body>
-  <div class="card">
-    <img class="logo" src="logo.jpg" alt="Dessimate">
-    <h1>Dessimate Supply Chain Management System (DSCM)</h1>
-    <p class="sub">
-      Fill out and generate completed forms for your parts.
-      Your entries are filled directly into the real PDF &mdash;
-      nothing is uploaded anywhere.
-    </p>
-    <div class="ghbar">
-      <span id="ghStatus">Checking sign-in&hellip;</span>
-      <button type="button" id="ghConnectBtn">Log out</button>
+
+  <div class="sideScrim" id="sideScrim"></div>
+
+  <nav class="sidebar" id="sidebar">
+    <div class="sideBrand">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <div class="name">DSCM</div>
+        <div class="tag">Dessimate Supply Chain</div>
+      </div>
     </div>
-    <div class="btn-stack">
-      <a class="btn" href="PDIR_Portal.html">PDIR</a>
-      <a class="btn" href="APQP.html">APQP</a>
-      <a class="btn" href="PDIR_Parts.html">Parts</a>
+
+    <div class="sideNav" id="sideNav">
+      <!-- populated by renderNav() once /me resolves the signed-in person's access level -->
     </div>
-    <button type="button" class="adminBtn" id="adminBtn">Admin &#9662;</button>
-    <div class="linkRow" id="adminPanel" style="display:none;">
-      <a class="usersBtn" href="PDIR_Users.html">Users</a>
-      <a class="usersBtn" href="PDIR_Organizations.html">Organizations</a>
+
+    <div class="sideFoot">
+      <div class="sideUser" id="sideUser">Not signed in</div>
+      <button type="button" class="sideLogoutBtn" id="sideLogoutBtn">Log out</button>
+    </div>
+  </nav>
+
+  <div class="main">
+    <div class="mainBar">
+      <button type="button" class="hamburgerBtn" id="hamburgerBtn" aria-label="Open menu">&#9776;</button>
+      <div class="mTitle" id="mTitle">Welcome</div>
+      <div class="mActions">
+        <a class="openTabLink" id="openTabLink" href="#" target="_blank" rel="noopener" style="display:none;">Open in new tab &#8599;</a>
+      </div>
+    </div>
+    <div class="content" id="content">
+      <div class="welcomeState" id="welcomeState">
+        <img src="logo.jpg" alt="">
+        <h2>Welcome to DSCM</h2>
+        <p>Pick a module from the left to get started &mdash; each one opens right here, so you can move between them without losing your place.</p>
+      </div>
+      <iframe id="contentFrame" title="Module content" style="display:none;"></iframe>
     </div>
   </div>
-  <footer>Dessimate &middot; DSCM &middot; PDIR (QF-PDIR-01) &middot; APQP</footer>
 
   <div class="authOverlay" id="authOverlay">
     <div class="authCard">
@@ -155,126 +191,218 @@
     </div>
   </div>
 
-  <script>
-    // ---- Backend (staff login) --------------------------------------------
-    // Same Worker used by every other page in this system - see
-    // worker/README.md. EDIT WORKER_BASE_URL below once after you deploy the
-    // Worker; it must match the value used in every other HTML file.
-    var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
-    var SESSION_KEY = 'dessimate_session';
+<script>
+  // ---- Backend (staff login) --------------------------------------------
+  // Same Worker used by every other page in this system - see
+  // worker/README.md. EDIT WORKER_BASE_URL below once after you deploy the
+  // Worker; it must match the value used in every other HTML file.
+  var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
 
-    function getSession(){
-      try{
-        var raw = localStorage.getItem(SESSION_KEY);
-        if (!raw) return null;
-        var s = JSON.parse(raw);
-        if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
-        return s;
-      }catch(e){ return null; }
-    }
-    function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
-    function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
 
-    var pendingAfterAuth = null;
+  var pendingAfterAuth = null;
 
-    function refreshGhStatus(){
-      var statusEl = document.getElementById('ghStatus');
-      var btn = document.getElementById('ghConnectBtn');
-      if (!statusEl || !btn) return;
-      var session = getSession();
-      if (session) {
-        statusEl.textContent = 'Welcome, ' + session.username;
-        statusEl.className = 'gh-ok';
-        btn.textContent = 'Log out';
-      } else {
-        statusEl.textContent = 'Not signed in';
-        statusEl.className = 'gh-off';
-        btn.textContent = 'Log out';
-      }
-    }
-    function showAuthOverlay(){
-      var overlay = document.getElementById('authOverlay');
-      if (overlay) overlay.classList.add('open');
-      refreshGhStatus();
-    }
-    function hideAuthOverlay(){
-      var overlay = document.getElementById('authOverlay');
-      if (overlay) overlay.classList.remove('open');
-      refreshGhStatus();
-    }
-    function requireAuthThen(fn){
-      if (getSession()) { hideAuthOverlay(); fn(); }
-      else { pendingAfterAuth = fn; showAuthOverlay(); }
-    }
+  function refreshSideUser(){
+    var el = document.getElementById('sideUser');
+    var session = getSession();
+    if (session) { el.innerHTML = 'Signed in as<strong>' + session.username + '</strong>'; }
+    else { el.textContent = 'Not signed in'; }
+  }
+  function showAuthOverlay(){
+    document.getElementById('authOverlay').classList.add('open');
+    refreshSideUser();
+  }
+  function hideAuthOverlay(){
+    document.getElementById('authOverlay').classList.remove('open');
+    refreshSideUser();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
 
-    var authForm = document.getElementById('authForm');
-    authForm.addEventListener('submit', async function(e){
-      e.preventDefault();
-      var username = document.getElementById('authUsername').value.trim();
-      var password = document.getElementById('authPassword').value;
-      var errEl = document.getElementById('authError');
-      var btn = document.getElementById('authSubmitBtn');
-      errEl.textContent = '';
-      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
-      btn.disabled = true; btn.textContent = 'Logging in…';
+  document.getElementById('authForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var username = document.getElementById('authUsername').value.trim();
+    var password = document.getElementById('authPassword').value;
+    var errEl = document.getElementById('authError');
+    var btn = document.getElementById('authSubmitBtn');
+    errEl.textContent = '';
+    if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+    btn.disabled = true; btn.textContent = 'Logging in…';
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username, password: password })
+      });
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+      document.getElementById('authPassword').value = '';
+      hideAuthOverlay();
+      var fn = pendingAfterAuth; pendingAfterAuth = null;
+      if (fn) fn();
+    } catch (err) {
+      console.error(err);
+      errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Log In';
+    }
+  });
+  document.getElementById('sideLogoutBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  // -------------------------------------------------------------------------
+
+  // ---- Sidebar navigation: role-gated module list ------------------------
+  // Mirrors worker/README.md's access-level table exactly - the backend
+  // enforces every one of these for real (403s on the wrong role), this is
+  // just so people don't see a dead-end link to something they can't use.
+  var ALL_SECTIONS = [
+    {
+      label: 'Production Modules',
+      minLevel: 'team_member',
+      items: [
+        { name: 'Dessimate POs', href: 'PDIR_DessimatePOs.html' },
+        { name: 'Supplier Invoices', href: 'PDIR_SupplierInvoices.html' },
+        { name: 'PDIR', href: 'PDIR_Portal.html' },
+        { name: 'Parts', href: 'PDIR_Parts.html' }
+      ]
+    },
+    {
+      label: 'Pre-Production Modules',
+      minLevel: 'team_member',
+      items: [
+        { name: 'APQP', href: 'APQP.html' }
+      ]
+    },
+    {
+      label: 'Admin Modules',
+      minLevel: 'admin',
+      items: [
+        { name: 'Customer POs', href: 'PDIR_CustomerPOs.html', minLevel: 'admin' },
+        { name: 'Dessimate Invoices', href: 'PDIR_DessimateInvoices.html', minLevel: 'admin' },
+        { name: 'Users', href: 'PDIR_Users.html', minLevel: 'super_admin' },
+        { name: 'Organizations', href: 'PDIR_Organizations.html', minLevel: 'super_admin' }
+      ]
+    },
+    {
+      label: 'Resources',
+      minLevel: 'team_member',
+      items: [
+        { name: 'Instructions', href: 'Instructions.html' }
+      ]
+    }
+  ];
+  var LEVEL_RANK = { team_member: 1, admin: 2, super_admin: 3 };
+  function levelMeets(accessLevel, minLevel){
+    var have = LEVEL_RANK[accessLevel] || 0;
+    var need = LEVEL_RANK[minLevel] || 0;
+    return have >= need;
+  }
+
+  var activeHref = null;
+
+  function selectModule(href, name){
+    activeHref = href;
+    document.getElementById('welcomeState').style.display = 'none';
+    var frame = document.getElementById('contentFrame');
+    frame.style.display = 'block';
+    if (frame.getAttribute('src') !== href) frame.setAttribute('src', href);
+    document.getElementById('mTitle').textContent = name;
+    var openLink = document.getElementById('openTabLink');
+    openLink.href = href;
+    openLink.style.display = 'inline-block';
+    document.querySelectorAll('.sideItem').forEach(function(el){
+      el.classList.toggle('active', el.getAttribute('data-href') === href);
+    });
+    closeSidebarOnMobile();
+    try { sessionStorage.setItem('dscm_last_module', href); } catch (e) {}
+  }
+
+  function renderNav(accessLevel){
+    var navEl = document.getElementById('sideNav');
+    navEl.innerHTML = '';
+    ALL_SECTIONS.forEach(function(section){
+      if (!levelMeets(accessLevel, section.minLevel)) return;
+      var visibleItems = section.items.filter(function(item){
+        return levelMeets(accessLevel, item.minLevel || section.minLevel);
+      });
+      if (!visibleItems.length) return;
+
+      var groupEl = document.createElement('div');
+      groupEl.className = 'sideGroup';
+      var labelEl = document.createElement('div');
+      labelEl.className = 'sideGroupLabel';
+      labelEl.textContent = section.label;
+      groupEl.appendChild(labelEl);
+
+      visibleItems.forEach(function(item){
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sideItem';
+        btn.setAttribute('data-href', item.href);
+        btn.innerHTML = '<span class="dot"></span><span>' + item.name + '</span>';
+        btn.addEventListener('click', function(){ selectModule(item.href, item.name); });
+        groupEl.appendChild(btn);
+      });
+
+      navEl.appendChild(groupEl);
+    });
+
+    // Restore whichever module was open last (per-tab), if it's still visible
+    // to this person's access level - otherwise leave the welcome state up.
+    var lastHref = null;
+    try { lastHref = sessionStorage.getItem('dscm_last_module'); } catch (e) {}
+    if (lastHref) {
+      var match = navEl.querySelector('[data-href="' + CSS.escape(lastHref) + '"]');
+      if (match) match.click();
+    }
+  }
+
+  async function resolveAccessAndRenderNav(){
+    var session = getSession();
+    var accessLevel = 'team_member';
+    if (session) {
       try {
-        var res = await fetch(WORKER_BASE_URL + '/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: username, password: password })
-        });
-        var data = await res.json();
-        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
-        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
-        document.getElementById('authPassword').value = '';
-        hideAuthOverlay();
-        var fn = pendingAfterAuth; pendingAfterAuth = null;
-        if (fn) fn();
-      } catch (err) {
-        console.error(err);
-        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
-      } finally {
-        btn.disabled = false; btn.textContent = 'Log In';
-      }
-    });
-    document.getElementById('ghConnectBtn').addEventListener('click', function(){
-      clearSession();
-      showAuthOverlay();
-    });
-    // -----------------------------------------------------------------------
-
-    // The Users and Organizations links manage staff logins and supplier/
-    // customer records - personal contact info and login credentials - so
-    // they're tucked behind this Admin button and only shown to signed-in
-    // Super Admins. This is enforced for real on the backend (GET/POST/PUT/
-    // DELETE on those routes require accessLevel super_admin); hiding the
-    // button is just so everyone else doesn't see a dead end. Resolved via
-    // /me instead of a hardcoded username list, so access follows whatever's
-    // set on each person's Users record (see the Users page).
-    async function updateAdminVisibility(){
-      var session = getSession();
-      var isAdmin = false;
-      if (session) {
-        try {
-          var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
-          if (res.ok) {
-            var data = await res.json();
-            isAdmin = data.accessLevel === 'super_admin';
-          }
-        } catch (e) { console.error('Could not resolve access level', e); }
-      }
-      var adminBtn = document.getElementById('adminBtn');
-      adminBtn.classList.toggle('visible', isAdmin);
-      if (!isAdmin) document.getElementById('adminPanel').style.display = 'none';
+        var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+        if (res.ok) {
+          var data = await res.json();
+          accessLevel = data.accessLevel || 'team_member';
+        }
+      } catch (e) { console.error('Could not resolve access level', e); }
     }
-    document.getElementById('adminBtn').addEventListener('click', function(){
-      var adminPanel = document.getElementById('adminPanel');
-      var open = adminPanel.style.display !== 'none';
-      adminPanel.style.display = open ? 'none' : 'flex';
-      this.innerHTML = open ? 'Admin &#9662;' : 'Admin &#9652;';
-    });
+    renderNav(accessLevel);
+  }
+  // -------------------------------------------------------------------------
 
-    requireAuthThen(updateAdminVisibility);
-  </script>
+  // ---- Mobile sidebar drawer ----------------------------------------------
+  function openSidebarOnMobile(){
+    document.getElementById('sidebar').classList.add('open');
+    document.getElementById('sideScrim').classList.add('open');
+  }
+  function closeSidebarOnMobile(){
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sideScrim').classList.remove('open');
+  }
+  document.getElementById('hamburgerBtn').addEventListener('click', openSidebarOnMobile);
+  document.getElementById('sideScrim').addEventListener('click', closeSidebarOnMobile);
+  // -------------------------------------------------------------------------
+
+  requireAuthThen(resolveAccessAndRenderNav);
+</script>
 </body>
 </html>

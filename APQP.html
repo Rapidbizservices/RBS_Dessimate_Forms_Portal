@@ -1,9 +1,7 @@
 <!doctype html>
-<html lang="en">
-<head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>APQP &mdash; DSCM</title>
+<script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
     --brand:#2b4ea3;
@@ -18,7 +16,7 @@
     margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
     font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
   }
-  .wrap{ width:100%; max-width:560px; }
+  .wrap{ width:100%; max-width:900px; }
 
   .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
     flex-wrap:wrap; margin-bottom:6px; }
@@ -26,15 +24,24 @@
   .header-left img{ width:44px; height:auto; }
   .header-left h1{ font-size:19px; margin:0; }
   .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
-  .homeBtn{
-    font-family:inherit; font-size:14.5px; font-weight:700; color:var(--brand); background:#fff;
-    border:1px solid var(--brand); border-radius:8px; padding:11px 20px; cursor:pointer; text-decoration:none;
-    white-space:nowrap; display:inline-block;
+
+  .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .homeBtn, .addBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
+    border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
   }
+  .homeBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
   .homeBtn:hover{ background:#eef1fa; }
+  /* Hidden when this page is loaded inside the DSCM dashboard shell's content
+     frame (index.html) - the sidebar there is the primary navigation, so this
+     page's own cross-links would just duplicate it. Standalone loads (direct
+     visit, bookmark, another page's link opening a new tab) are unaffected. */
+  html[data-embedded] .homeBtn{ display:none !important; }
+  .addBtn{ color:#fff; background:#1f9254; }
+  .addBtn:hover{ background:#187b46; }
 
   .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
-    font-size:12.5px; margin:10px 0 24px; }
+    font-size:12.5px; margin:10px 0 18px; }
   #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
   #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
   #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
@@ -46,7 +53,7 @@
     z-index:2000; align-items:center; justify-content:center; padding:20px; }
   .authOverlay.open{ display:flex; }
   .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
-    box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
   .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
   .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
   .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
@@ -58,134 +65,379 @@
   .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
   .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
 
-  .stageList{ display:flex; flex-direction:column; gap:10px; }
-  .stageBtn{
-    display:flex; align-items:center; gap:12px;
-    font-family:inherit; font-size:15px; font-weight:700; text-decoration:none;
-    border-radius:10px; padding:15px 20px; text-align:left; width:100%; border:1px solid var(--line);
-  }
-  .stageNum{
-    flex:0 0 auto; width:26px; height:26px; border-radius:50%;
-    display:flex; align-items:center; justify-content:center;
-    font-size:12.5px; font-weight:700;
-  }
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
 
-  .stageBtn.active{ color:#fff; background:var(--brand); border-color:var(--brand); cursor:pointer; }
-  .stageBtn.active .stageNum{ background:rgba(255,255,255,.22); color:#fff; }
-  .stageBtn.active:hover{ background:var(--brand-dark); }
+  .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
+  .state.error{ color:#b23b3b; }
 
-  .stageBtn.placeholder{
-    color:#9a9ea6; background:#fff; cursor:default;
+  /* ---- Part list (state A) ------------------------------------------- */
+  .partRow{ display:flex; align-items:center; gap:14px; padding:14px 18px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .partRow:last-child{ border-bottom:none; }
+  .partRow:hover{ background:#f7f8fb; }
+  .partRow-main{ flex:1 1 auto; min-width:0; }
+  .partRow-num{ font-weight:700; font-size:14.5px; }
+  .partRow-name{ font-size:12.5px; color:var(--label); margin-top:1px; }
+  .partRow-progress{ flex:0 0 auto; font-size:12px; color:var(--label); white-space:nowrap; }
+  .partRow-progress strong{ color:var(--ink); font-variant-numeric:tabular-nums; }
+  .partRow-bar{ width:90px; height:6px; border-radius:3px; background:#eef0f4; overflow:hidden; margin-top:5px; }
+  .partRow-bar-fill{ height:100%; background:var(--brand); border-radius:3px; }
+  .partRow-viewBtn{ flex:0 0 auto; font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand);
+    background:#fff; border:1px solid var(--brand); border-radius:6px; padding:7px 14px; cursor:pointer; white-space:nowrap; }
+  .partRow-viewBtn:hover{ background:#eef1fa; }
+  .partRow-deleteBtn{ flex:0 0 auto; font-family:inherit; font-size:12.5px; font-weight:600; color:#b23b3b;
+    background:#fff; border:1px solid #e3b3b3; border-radius:6px; padding:7px 12px; cursor:pointer; white-space:nowrap; }
+  .partRow-deleteBtn:hover{ background:#fbeaea; border-color:#b23b3b; }
+
+  /* ---- Add-Part modal --------------------------------------------------- */
+  .modalOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1500; align-items:center; justify-content:center; padding:20px; }
+  .modalOverlay.open{ display:flex; }
+  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:420px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .modalCard h2{ font-size:17px; margin:0 0 4px; color:var(--ink); }
+  .modalCard .modalSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .modalCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .modalCard select{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:6px 0 4px; }
+  .modalBtns{ display:flex; gap:10px; margin-top:10px; }
+  .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
+    padding:11px; cursor:pointer; }
+  .saveBtn{ color:#fff; background:var(--brand); border:none; }
+  .saveBtn:hover{ background:var(--brand-dark); }
+  .saveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .cancelBtn:hover{ background:#f4f5f8; }
+
+  /* ---- Checklist (state B) ---------------------------------------------- */
+  #apqpChecklistView{ display:none; }
+  .backLink{ display:inline-block; font-size:13px; font-weight:600; color:var(--brand); text-decoration:none; margin-bottom:14px; }
+  .backLink:hover{ text-decoration:underline; }
+  .partHeader{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+  .partHeader .num{ font-size:19px; font-weight:700; }
+  .partHeader .name{ font-size:14px; color:var(--label); }
+
+  .itemCard{ background:#fff; border:1px solid var(--line); border-radius:10px; margin-bottom:10px; overflow:hidden; }
+  .itemHead{ display:flex; align-items:center; gap:12px; padding:14px 18px; cursor:pointer; width:100%;
+    background:none; border:none; font-family:inherit; text-align:left; }
+  .itemHead:hover{ background:#f7f8fb; }
+  .itemNum{ flex:0 0 auto; width:26px; height:26px; border-radius:50%; background:#eef0f4; color:var(--label);
+    display:flex; align-items:center; justify-content:center; font-size:12.5px; font-weight:700; }
+  .itemCard.hasContent .itemNum{ background:var(--brand); color:#fff; }
+  .itemLabel{ flex:1 1 auto; font-size:14.5px; font-weight:700; }
+  .itemBadges{ flex:0 0 auto; display:flex; gap:8px; }
+  .itemBadge{ font-size:11px; font-weight:700; color:var(--label); background:#eef0f4; border-radius:5px; padding:3px 8px; white-space:nowrap; }
+  .itemChevron{ flex:0 0 auto; font-size:12px; color:var(--label); transition:transform .12s; }
+  .itemCard.open .itemChevron{ transform:rotate(90deg); }
+  .itemBody{ display:none; padding:4px 18px 18px; border-top:1px solid var(--line); }
+  .itemCard.open .itemBody{ display:block; }
+
+  .itemSection{ margin-top:14px; }
+  .itemSection:first-child{ margin-top:16px; }
+  .itemSection h4{ font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--label); margin:0 0 8px; }
+
+  .pswShortcut{ display:inline-block; font-family:inherit; font-size:12.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:7px; padding:9px 16px; text-decoration:none; margin-top:14px; }
+  .pswShortcut:hover{ background:var(--brand-dark); }
+
+  .fileChip{ display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--line);
+    border-radius:7px; margin-bottom:6px; font-size:12.5px; }
+  .fileChip .fname{ flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+  .fileChip .fsize{ flex:0 0 auto; color:var(--label); white-space:nowrap; }
+  .fileChip button{ flex:0 0 auto; font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    border-radius:5px; padding:4px 9px; white-space:nowrap; }
+  .fileChip .viewFileBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .fileChip .viewFileBtn:hover{ background:#eef1fa; }
+  .fileChip .removeFileBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
+  .fileChip .removeFileBtn:hover{ background:#fbeaea; }
+  .noFiles{ font-size:12.5px; color:var(--label); margin-bottom:8px; }
+  .addFileLabel{ display:inline-block; font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand);
+    background:#fff; border:1px solid var(--line); border-radius:7px; padding:7px 14px; cursor:pointer; }
+  .addFileLabel:hover{ background:#eef1fa; }
+  .addFileLabel input{ display:none; }
+  .addFileLabel.busy{ opacity:.6; cursor:wait; }
+
+  .commentItem{ padding:9px 0; border-bottom:1px solid #eef0f4; }
+  .commentItem:last-child{ border-bottom:none; }
+  .commentMeta{ font-size:11.5px; color:var(--label); margin-bottom:2px; }
+  .commentMeta strong{ color:var(--ink); }
+  .commentText{ font-size:13px; line-height:1.45; overflow-wrap:anywhere; }
+  .noComments{ font-size:12.5px; color:var(--label); margin-bottom:4px; }
+  .commentForm{ display:flex; gap:8px; margin-top:10px; align-items:flex-start; }
+  .commentForm textarea{ flex:1 1 auto; font-family:inherit; font-size:13px; padding:8px 10px;
+    border:1px solid var(--line); border-radius:7px; resize:vertical; min-height:38px; }
+  .commentForm button{ flex:0 0 auto; font-family:inherit; font-size:12.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:7px; padding:9px 14px; cursor:pointer; white-space:nowrap; }
+  .commentForm button:hover{ background:var(--brand-dark); }
+  .commentForm button:disabled{ background:#9fb0d8; cursor:wait; }
+
+  .itemErr{ font-size:12px; color:#b23b3b; font-weight:600; margin-top:6px; min-height:14px; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+
+  /* In-page document viewer (used for uploaded item files) */
+  .viewerOverlay{
+    display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:2200; padding:22px; align-items:center; justify-content:center;
   }
-  .stageBtn.placeholder .stageNum{ background:#eef0f4; color:#9a9ea6; }
-  .stageBtn.placeholder .comingSoon{ margin-left:auto; font-size:11px; font-weight:700; text-transform:uppercase;
-    letter-spacing:.03em; color:#b7bac0; white-space:nowrap; }
-
-  footer{ margin-top:28px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+  .viewerOverlay.open{ display:flex; }
+  .viewerPanel{
+    background:#fff; border-radius:10px; width:100%; max-width:980px; height:100%;
+    display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .viewerBar{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:12px 16px; border-bottom:1px solid var(--line); }
+  .viewerTitle{ font-size:14px; font-weight:700; overflow-wrap:anywhere; }
+  .viewerBtns{ display:flex; gap:8px; flex:0 0 auto; }
+  .viewerBtns a, .viewerBtns button{
+    font-family:inherit; font-size:13px; font-weight:600; text-decoration:none; cursor:pointer;
+    border-radius:6px; padding:7px 14px; white-space:nowrap;
+  }
+  #docViewerDownload{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  #docViewerDownload:hover{ background:#eef1fa; }
+  #docViewerClose{ color:#fff; background:#5b5f66; border:1px solid #5b5f66; }
+  #docViewerClose:hover{ background:#3f4248; }
+  .viewerBody{ flex:1 1 auto; position:relative; background:#525659; }
+  .viewerBody iframe, .viewerBody img{ position:absolute; inset:0; width:100%; height:100%; border:0; object-fit:contain; background:#525659; }
+  .viewerBody .viewerState{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:13.5px; text-align:center; padding:20px; flex-direction:column; gap:10px;
+  }
 </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="header">
-      <div class="header-left">
-        <img src="logo.jpg" alt="Dessimate">
-        <div>
-          <h1>APQP</h1>
-          <p class="sub">Advanced Product Quality Planning &mdash; select a stage.</p>
-        </div>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>APQP</h1>
+        <p class="sub">Advanced Product Quality Planning &mdash; one checklist of 9 deliverables per Part, with files and a comment log on each.</p>
       </div>
+    </div>
+    <div class="headerBtns">
       <a class="homeBtn" href="index.html">Home</a>
-    </div>
-
-    <div class="ghbar">
-      <span id="ghStatus">Checking sign-in&hellip;</span>
-      <button type="button" id="ghConnectBtn">Log out</button>
-    </div>
-
-    <div class="stageList">
-      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">1</span> Design Record <span class="comingSoon">Coming soon</span></button>
-      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">2</span> Control Plan <span class="comingSoon">Coming soon</span></button>
-      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">3</span> Dim Results <span class="comingSoon">Coming soon</span></button>
-      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">4</span> M/P Tests <span class="comingSoon">Coming soon</span></button>
-      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">5</span> IPS <span class="comingSoon">Coming soon</span></button>
-      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">6</span> Sample Product <span class="comingSoon">Coming soon</span></button>
-      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">7</span> Master Sample <span class="comingSoon">Coming soon</span></button>
-      <button type="button" class="stageBtn placeholder" disabled><span class="stageNum">8</span> Other <span class="comingSoon">Coming soon</span></button>
-      <a class="stageBtn active" href="PSW_Form_Filler.html"><span class="stageNum">9</span> PSW</a>
-    </div>
-
-    <footer>Dessimate &middot; DSCM &middot; APQP</footer>
-  </div>
-
-  <div class="authOverlay" id="authOverlay">
-    <div class="authCard">
-      <h2>Staff Sign-In</h2>
-      <p class="authSub">Sign in with the username and password you were given to use the DSCM system.</p>
-      <form id="authForm">
-        <label>Username
-          <input type="text" id="authUsername" autocomplete="username" autofocus>
-        </label>
-        <label>Password
-          <input type="password" id="authPassword" autocomplete="current-password">
-        </label>
-        <button type="submit" id="authSubmitBtn">Log In</button>
-        <div class="authError" id="authError"></div>
-      </form>
+      <a class="homeBtn" href="PDIR_Portal.html">PDIR Portal</a>
+      <a class="homeBtn" href="PDIR_Parts.html">Parts</a>
+      <a class="homeBtn" href="PDIR_DessimatePOs.html">Dessimate POs</a>
+      <a class="homeBtn" href="PDIR_SupplierInvoices.html">Supplier Invoices</a>
+      <a class="homeBtn" href="PDIR_CustomerPOs.html">Customer POs</a>
+      <a class="homeBtn" href="PDIR_DessimateInvoices.html">Dessimate Invoices</a>
+      <a class="homeBtn" href="PDIR_Users.html">Users</a>
+      <a class="homeBtn" href="PDIR_Organizations.html">Organizations</a>
+      <a class="homeBtn" href="Instructions.html">Instructions</a>
+      <button type="button" class="addBtn" id="addPartToApqpBtn">Add a Part to APQP</button>
     </div>
   </div>
 
-  <script>
-    // Same Worker/session mechanism as every other page in this system - see
-    // worker/README.md. EDIT WORKER_BASE_URL below once after you deploy the
-    // Worker; it must match the value used in every other HTML file.
-    var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
-    var SESSION_KEY = 'dessimate_session';
+  <div class="ghbar">
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
+  </div>
 
-    function getSession(){
-      try{
-        var raw = localStorage.getItem(SESSION_KEY);
-        if (!raw) return null;
-        var s = JSON.parse(raw);
-        if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
-        return s;
-      }catch(e){ return null; }
-    }
-    function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
-    function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+  <div id="apqpListView">
+    <div class="toolbar">
+      <h2>Parts on APQP</h2>
+    </div>
+    <div class="panel">
+      <div id="loadingState" class="state">Loading&hellip;</div>
+      <div id="errorState" class="state error" style="display:none;"></div>
+      <div id="emptyState" class="state" style="display:none;">No Parts on APQP yet. Click <strong>Add a Part to APQP</strong> above to add the first one.</div>
+      <div id="partList" style="display:none;"></div>
+    </div>
+  </div>
 
-    var pendingAfterAuth = null;
+  <div id="apqpChecklistView">
+    <a href="#" class="backLink" id="backToListLink">&larr; Back to APQP</a>
+    <div class="partHeader">
+      <span class="num" id="checklistPartNum"></span>
+      <span class="name" id="checklistPartName"></span>
+    </div>
+    <div id="itemCardsWrap"></div>
+  </div>
 
-    function refreshGhStatus(){
-      var statusEl = document.getElementById('ghStatus');
-      var btn = document.getElementById('ghConnectBtn');
-      if (!statusEl || !btn) return;
-      var session = getSession();
-      if (session) {
-        statusEl.textContent = 'Welcome, ' + session.username;
-        statusEl.className = 'gh-ok';
-        btn.textContent = 'Log out';
-      } else {
-        statusEl.textContent = 'Not signed in';
-        statusEl.className = 'gh-off';
-        btn.textContent = 'Log out';
-      }
-    }
-    function showAuthOverlay(){
-      var overlay = document.getElementById('authOverlay');
-      if (overlay) overlay.classList.add('open');
-      refreshGhStatus();
-    }
-    function hideAuthOverlay(){
-      var overlay = document.getElementById('authOverlay');
-      if (overlay) overlay.classList.remove('open');
-      refreshGhStatus();
-    }
-    function requireAuthThen(fn){
-      if (getSession()) { hideAuthOverlay(); fn(); }
-      else { pendingAfterAuth = fn; showAuthOverlay(); }
-    }
+  <footer>Dessimate &middot; DSCM &middot; APQP</footer>
+</div>
 
-    document.getElementById('authForm').addEventListener('submit', async function(e){
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Staff Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to use APQP.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+    </form>
+  </div>
+</div>
+
+<div class="modalOverlay" id="addPartModalOverlay">
+  <div class="modalCard">
+    <h2>Add a Part to APQP</h2>
+    <p class="modalSub">Choose a Part from the Parts directory to start its checklist.</p>
+    <label>Part
+      <select id="f_apqpPart"></select>
+    </label>
+    <div class="modalError" id="addPartError"></div>
+    <div class="modalBtns">
+      <button type="button" class="cancelBtn" id="addPartCancelBtn">Cancel</button>
+      <button type="button" class="saveBtn" id="addPartSaveBtn">Add</button>
+    </div>
+  </div>
+</div>
+
+<div id="docViewerOverlay" class="viewerOverlay">
+  <div class="viewerPanel">
+    <div class="viewerBar">
+      <div class="viewerTitle" id="docViewerTitle">Document</div>
+      <div class="viewerBtns">
+        <a id="docViewerDownload" href="#" style="display:none;">Download</a>
+        <button type="button" id="docViewerClose">Close</button>
+      </div>
+    </div>
+    <div class="viewerBody">
+      <div id="docViewerState" class="viewerState">Loading&hellip;</div>
+      <iframe id="docViewerFrame" title="Document preview" style="display:none;"></iframe>
+      <img id="docViewerImg" alt="Document preview" style="display:none;">
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ---- Backend (staff login + GitHub proxy) --------------------------------
+  var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
+  var APQP_DOC_FOLDER = 'apqp_docs';
+
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  async function apiFetch(path, opts){
+    opts = opts || {};
+    var headers = opts.headers || {};
+    var session = getSession();
+    if (session) headers['Authorization'] = 'Bearer ' + session.token;
+    var res = await fetch(WORKER_BASE_URL + '/' + path, { method: opts.method || 'GET', headers: headers, body: opts.body });
+    if (res.status === 401 && path !== 'login') {
+      clearSession();
+      showAuthOverlay();
+      throw new Error('Your session has expired — please log in again.');
+    }
+    return res;
+  }
+  function workerContentsPath(fullPath){
+    return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
+  }
+  function bytesToBase64(bytes){
+    var binary = '', chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+  function base64ToBytes(b64){
+    var bin = atob((b64 || '').replace(/\s+/g, ''));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  function docFileExt(filename){
+    var m = /\.[a-zA-Z0-9]+$/.exec(filename || '');
+    return m ? m[0] : '';
+  }
+  async function ghGetSha(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status);
+    var data = await res.json();
+    return data.sha;
+  }
+  async function ghGetFileBytes(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status + ' while loading ' + fullPath + '.');
+    var data = await res.json();
+    return base64ToBytes(data.content || '');
+  }
+  async function ghPutFile(fullPath, bytes, commitMessage){
+    var sha = await ghGetSha(fullPath);
+    var body = { message: commitMessage || ('Upload ' + fullPath), content: bytesToBase64(bytes) };
+    if (sha) body.sha = sha;
+    var res = await apiFetch(workerContentsPath(fullPath), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+      throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+    }
+    return await res.json();
+  }
+  function buildApqpFilePath(recordId, itemKey, filename){
+    var safeName = (filename || 'file').replace(/[\\/]/g, '_');
+    return APQP_DOC_FOLDER + '/' + recordId + '/' + itemKey + '/' + Date.now() + '-' + safeName;
+  }
+  function readFileAsBytes(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onerror = function(){ reject(new Error('Could not read "' + file.name + '".')); };
+      reader.onload = function(){ resolve(new Uint8Array(reader.result)); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Staff login wall -----------------------------------------------------
+  var pendingAfterAuth = null;
+
+  function refreshGhStatus(){
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Welcome, ' + session.username;
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Log out';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Log out';
+    }
+  }
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
+    refreshGhStatus();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
       e.preventDefault();
       var username = document.getElementById('authUsername').value.trim();
       var password = document.getElementById('authPassword').value;
@@ -214,12 +466,490 @@
         btn.disabled = false; btn.textContent = 'Log In';
       }
     });
-    document.getElementById('ghConnectBtn').addEventListener('click', function(){
-      clearSession();
-      showAuthOverlay();
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  // -----------------------------------------------------------------------------
+
+  // ---- In-page document viewer (uploaded item files) -------------------------
+  var docViewerObjectUrl = null;
+  function isInlineViewable(mimeType, filename){
+    var ext = docFileExt(filename).toLowerCase();
+    if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
+    if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    return null;
+  }
+  function closeDocViewer(){
+    document.getElementById('docViewerOverlay').classList.remove('open');
+    document.getElementById('docViewerFrame').src = 'about:blank';
+    document.getElementById('docViewerFrame').style.display = 'none';
+    document.getElementById('docViewerImg').src = '';
+    document.getElementById('docViewerImg').style.display = 'none';
+    document.getElementById('docViewerDownload').style.display = 'none';
+    if (docViewerObjectUrl) { URL.revokeObjectURL(docViewerObjectUrl); docViewerObjectUrl = null; }
+  }
+  document.getElementById('docViewerClose').addEventListener('click', closeDocViewer);
+  document.getElementById('docViewerOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'docViewerOverlay') closeDocViewer();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
+  });
+  async function openDocViewer(source){
+    var overlay = document.getElementById('docViewerOverlay');
+    var stateEl = document.getElementById('docViewerState');
+    var frame = document.getElementById('docViewerFrame');
+    var img = document.getElementById('docViewerImg');
+    var downloadBtn = document.getElementById('docViewerDownload');
+    document.getElementById('docViewerTitle').textContent = source.filename || 'Document';
+    frame.style.display = 'none'; img.style.display = 'none'; downloadBtn.style.display = 'none';
+    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var bytes = await ghGetFileBytes(source.path);
+      if (!bytes) throw new Error('File not found.');
+      var kind = isInlineViewable(source.mimeType, source.filename);
+      if (!kind) {
+        stateEl.textContent = "This file type can't be previewed here — use Download instead.";
+        var blobAny = new Blob([bytes], { type: source.mimeType || 'application/octet-stream' });
+        if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+        docViewerObjectUrl = URL.createObjectURL(blobAny);
+        downloadBtn.href = docViewerObjectUrl;
+        downloadBtn.download = source.filename || 'file';
+        downloadBtn.style.display = 'inline-block';
+        return;
+      }
+      var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : 'image/jpeg') });
+      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+      docViewerObjectUrl = URL.createObjectURL(blob);
+      if (kind === 'pdf') { frame.src = docViewerObjectUrl; frame.style.display = 'block'; }
+      else { img.src = docViewerObjectUrl; img.style.display = 'block'; }
+      stateEl.style.display = 'none';
+      downloadBtn.href = docViewerObjectUrl;
+      downloadBtn.download = source.filename || 'file';
+      downloadBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
+    }
+  }
+  // -----------------------------------------------------------------------------
+
+  function escapeHtml(s){
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function fileSize(n){
+    var v = Number(n) || 0;
+    if (v < 1024) return v + ' B';
+    if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB';
+    return (v / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+  function formatWhen(iso){
+    if (!iso) return '';
+    try {
+      var d = new Date(iso);
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) +
+        ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    } catch (e) { return iso; }
+  }
+
+  var ITEM_KEYS = ['designRecord', 'controlPlan', 'dimResults', 'mpTests', 'ips', 'sampleProduct', 'masterSample', 'other', 'psw'];
+  var ITEM_LABELS = {
+    designRecord: 'Design Record', controlPlan: 'Control Plan', dimResults: 'Dim Results',
+    mpTests: 'M/P Tests', ips: 'IPS', sampleProduct: 'Sample Product',
+    masterSample: 'Master Sample', other: 'Other', psw: 'PSW'
+  };
+  function itemsWithContentCount(record){
+    return ITEM_KEYS.filter(function(k){
+      var it = record.items && record.items[k];
+      return it && (it.files.length || it.comments.length);
+    }).length;
+  }
+
+  // ---- Data ---------------------------------------------------------------
+  var lastParts = [];
+  var lastApqpRecords = [];
+
+  async function loadParts(){
+    try {
+      var res = await apiFetch('parts');
+      var data = res.ok ? await res.json() : { parts: [] };
+      lastParts = Array.isArray(data.parts) ? data.parts : [];
+    } catch (e) { console.error('Could not load Parts', e); lastParts = []; }
+  }
+
+  async function loadApqp(){
+    var loadingEl = document.getElementById('loadingState');
+    var errorEl = document.getElementById('errorState');
+    var emptyEl = document.getElementById('emptyState');
+    var listEl = document.getElementById('partList');
+    loadingEl.style.display = 'block'; errorEl.style.display = 'none'; emptyEl.style.display = 'none'; listEl.style.display = 'none';
+    try {
+      var res = await apiFetch('apqp');
+      if (!res.ok) {
+        var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+        throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+      }
+      var data = await res.json();
+      lastApqpRecords = Array.isArray(data.apqpRecords) ? data.apqpRecords : [];
+      loadingEl.style.display = 'none';
+      renderPartList();
+    } catch (err) {
+      console.error(err);
+      loadingEl.style.display = 'none';
+      errorEl.style.display = 'block';
+      errorEl.textContent = 'Could not load APQP (' + err.message + ').';
+    }
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- List view (state A) -----------------------------------------------
+  function renderPartList(){
+    var listEl = document.getElementById('partList');
+    var emptyEl = document.getElementById('emptyState');
+    if (!lastApqpRecords.length) { emptyEl.style.display = 'block'; listEl.style.display = 'none'; return; }
+    emptyEl.style.display = 'none'; listEl.style.display = 'block';
+
+    var sorted = lastApqpRecords.slice().sort(function(a, b){ return (a.partNumber || '').localeCompare(b.partNumber || ''); });
+
+    listEl.innerHTML = sorted.map(function(r){
+      var done = itemsWithContentCount(r);
+      var pct = Math.round((done / ITEM_KEYS.length) * 100);
+      return '<div class="partRow" data-open="' + escapeHtml(r.id) + '">' +
+        '<div class="partRow-main">' +
+          '<div class="partRow-num">' + escapeHtml(r.partNumber) + '</div>' +
+          '<div class="partRow-name">' + escapeHtml(r.partName || 'No description on file') + '</div>' +
+        '</div>' +
+        '<div class="partRow-progress">' +
+          '<strong>' + done + ' / ' + ITEM_KEYS.length + '</strong> items started' +
+          '<div class="partRow-bar"><div class="partRow-bar-fill" style="width:' + pct + '%;"></div></div>' +
+        '</div>' +
+        '<button type="button" class="partRow-viewBtn" data-open-btn="' + escapeHtml(r.id) + '">View checklist</button>' +
+        '<button type="button" class="partRow-deleteBtn" data-delete="' + escapeHtml(r.id) + '">Remove</button>' +
+      '</div>';
+    }).join('');
+
+    listEl.querySelectorAll('[data-open], [data-open-btn]').forEach(function(el){
+      el.addEventListener('click', function(e){
+        if (e.target.closest('[data-delete]')) return;
+        var id = el.getAttribute('data-open') || el.getAttribute('data-open-btn');
+        var record = lastApqpRecords.find(function(r){ return r.id === id; });
+        if (record) openChecklist(record);
+      });
+    });
+    listEl.querySelectorAll('[data-delete]').forEach(function(btn){
+      btn.addEventListener('click', function(e){
+        e.stopPropagation();
+        deleteApqpRecord(btn.getAttribute('data-delete'));
+      });
+    });
+  }
+
+  async function deleteApqpRecord(id){
+    var record = lastApqpRecords.find(function(r){ return r.id === id; });
+    if (!confirm('Remove ' + (record ? record.partNumber : 'this Part') + ' from APQP? Any uploaded files stay in the repo, just unlinked.')) return;
+    requireAuthThen(async function(){
+      try {
+        var res = await apiFetch('apqp/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!res.ok) { var d = {}; try { d = await res.json(); } catch(e){} throw new Error(d.message || ('HTTP ' + res.status)); }
+        await loadApqp();
+      } catch (err) {
+        alert('Could not remove this Part from APQP (' + (err && err.message ? err.message : err) + ').');
+      }
+    });
+  }
+
+  // ---- Add-Part modal -------------------------------------------------------
+  function partOptionsNotOnApqp(){
+    var usedLower = lastApqpRecords.map(function(r){ return (r.partNumber || '').toLowerCase(); });
+    var available = lastParts.filter(function(p){ return usedLower.indexOf((p.partNumber || '').toLowerCase()) === -1; });
+    if (!available.length) return '<option value="">— No Parts available (all are on APQP, or none exist yet) —</option>';
+    return '<option value="">— Select Part —</option>' + available.map(function(p){
+      return '<option value="' + escapeHtml(p.partNumber) + '">' + escapeHtml(p.partNumber) + (p.name ? ' — ' + escapeHtml(p.name) : '') + '</option>';
+    }).join('');
+  }
+  function openAddPartModal(){
+    document.getElementById('addPartError').textContent = '';
+    document.getElementById('f_apqpPart').innerHTML = partOptionsNotOnApqp();
+    document.getElementById('addPartModalOverlay').classList.add('open');
+  }
+  function closeAddPartModal(){ document.getElementById('addPartModalOverlay').classList.remove('open'); }
+  document.getElementById('addPartToApqpBtn').addEventListener('click', function(){
+    requireAuthThen(async function(){ await loadParts(); openAddPartModal(); });
+  });
+  document.getElementById('addPartCancelBtn').addEventListener('click', closeAddPartModal);
+  document.getElementById('addPartModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'addPartModalOverlay') closeAddPartModal();
+  });
+  document.getElementById('addPartSaveBtn').addEventListener('click', async function(){
+    var errEl = document.getElementById('addPartError');
+    var btn = document.getElementById('addPartSaveBtn');
+    var partNumber = document.getElementById('f_apqpPart').value;
+    errEl.textContent = '';
+    if (!partNumber) { errEl.textContent = 'Select a Part.'; return; }
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      var res = await apiFetch('apqp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ partNumber: partNumber }) });
+      var data = {}; try { data = await res.json(); } catch(e){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      closeAddPartModal();
+      await loadApqp();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not add this Part to APQP.';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Add';
+    }
+  });
+  // -----------------------------------------------------------------------------
+
+  // ---- Checklist view (state B) --------------------------------------------
+  var currentRecordId = null;
+  var openItemKeys = {};
+
+  function openChecklist(record){
+    currentRecordId = record.id;
+    openItemKeys = {};
+    document.getElementById('apqpListView').style.display = 'none';
+    document.getElementById('apqpChecklistView').style.display = 'block';
+    document.getElementById('checklistPartNum').textContent = record.partNumber;
+    document.getElementById('checklistPartName').textContent = record.partName || '';
+    renderItemCards(record);
+  }
+  function backToList(){
+    currentRecordId = null;
+    document.getElementById('apqpChecklistView').style.display = 'none';
+    document.getElementById('apqpListView').style.display = 'block';
+  }
+  document.getElementById('backToListLink').addEventListener('click', function(e){
+    e.preventDefault();
+    backToList();
+  });
+
+  function currentRecord(){
+    return lastApqpRecords.find(function(r){ return r.id === currentRecordId; });
+  }
+
+  function renderItemCards(record){
+    var wrap = document.getElementById('itemCardsWrap');
+    wrap.innerHTML = ITEM_KEYS.map(function(key, idx){
+      var it = (record.items && record.items[key]) || { files: [], comments: [] };
+      var isOpen = !!openItemKeys[key];
+      var hasContent = it.files.length > 0 || it.comments.length > 0;
+      var pswShortcut = key === 'psw'
+        ? '<a class="pswShortcut" href="PSW_Form_Filler.html">Open PSW Form Filler &#8599;</a>'
+        : '';
+      return '<div class="itemCard' + (isOpen ? ' open' : '') + (hasContent ? ' hasContent' : '') + '" data-item="' + key + '">' +
+        '<button type="button" class="itemHead" data-toggle="' + key + '">' +
+          '<span class="itemNum">' + (idx + 1) + '</span>' +
+          '<span class="itemLabel">' + escapeHtml(ITEM_LABELS[key]) + '</span>' +
+          '<span class="itemBadges">' +
+            '<span class="itemBadge">' + it.files.length + ' file' + (it.files.length === 1 ? '' : 's') + '</span>' +
+            '<span class="itemBadge">' + it.comments.length + ' comment' + (it.comments.length === 1 ? '' : 's') + '</span>' +
+          '</span>' +
+          '<span class="itemChevron">&#9656;</span>' +
+        '</button>' +
+        '<div class="itemBody">' +
+          (key === 'psw' ? pswShortcut : '') +
+          '<div class="itemSection">' +
+            '<h4>Files</h4>' +
+            '<div data-files-list></div>' +
+            '<label class="addFileLabel" data-add-file-label>+ Add File<input type="file" data-add-file-input></label>' +
+          '</div>' +
+          '<div class="itemSection">' +
+            '<h4>Comments</h4>' +
+            '<div data-comments-list></div>' +
+            '<form class="commentForm" data-comment-form>' +
+              '<textarea data-comment-text placeholder="Log a comment for anyone on the team…" rows="1"></textarea>' +
+              '<button type="submit">Post</button>' +
+            '</form>' +
+            '<div class="itemErr" data-comment-err></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+    ITEM_KEYS.forEach(function(key){
+      renderItemFiles(key);
+      renderItemComments(key);
     });
 
-    requireAuthThen(function(){});
-  </script>
-</body>
-</html>
+    wrap.querySelectorAll('[data-toggle]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var key = btn.getAttribute('data-toggle');
+        var card = wrap.querySelector('.itemCard[data-item="' + key + '"]');
+        var willOpen = !card.classList.contains('open');
+        card.classList.toggle('open', willOpen);
+        openItemKeys[key] = willOpen;
+      });
+    });
+    wrap.querySelectorAll('[data-add-file-input]').forEach(function(input){
+      input.addEventListener('change', function(){
+        var card = input.closest('.itemCard');
+        var key = card.getAttribute('data-item');
+        var file = input.files && input.files[0];
+        input.value = '';
+        if (file) uploadItemFile(key, file);
+      });
+    });
+    wrap.querySelectorAll('[data-comment-form]').forEach(function(form){
+      form.addEventListener('submit', function(e){
+        e.preventDefault();
+        var card = form.closest('.itemCard');
+        var key = card.getAttribute('data-item');
+        var textarea = form.querySelector('[data-comment-text]');
+        submitComment(key, textarea.value, form);
+      });
+    });
+  }
+
+  function renderItemFiles(key){
+    var record = currentRecord();
+    if (!record) return;
+    var card = document.querySelector('.itemCard[data-item="' + key + '"]');
+    if (!card) return;
+    var listEl = card.querySelector('[data-files-list]');
+    var it = (record.items && record.items[key]) || { files: [] };
+    if (!it.files.length) {
+      listEl.innerHTML = '<div class="noFiles">No files uploaded yet.</div>';
+    } else {
+      listEl.innerHTML = it.files.map(function(f, idx){
+        return '<div class="fileChip">' +
+          '<span class="fname">' + escapeHtml(f.filename) + '</span>' +
+          '<span class="fsize">' + fileSize(f.size) + '</span>' +
+          '<button type="button" class="viewFileBtn" data-view-file="' + idx + '">View</button>' +
+          '<button type="button" class="removeFileBtn" data-remove-file="' + idx + '">Remove</button>' +
+        '</div>';
+      }).join('');
+      listEl.querySelectorAll('[data-view-file]').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var f = it.files[parseInt(btn.getAttribute('data-view-file'), 10)];
+          if (f) openDocViewer(f);
+        });
+      });
+      listEl.querySelectorAll('[data-remove-file]').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          removeItemFile(key, parseInt(btn.getAttribute('data-remove-file'), 10));
+        });
+      });
+    }
+  }
+
+  function renderItemComments(key){
+    var record = currentRecord();
+    if (!record) return;
+    var card = document.querySelector('.itemCard[data-item="' + key + '"]');
+    if (!card) return;
+    var listEl = card.querySelector('[data-comments-list]');
+    var it = (record.items && record.items[key]) || { comments: [] };
+    if (!it.comments.length) {
+      listEl.innerHTML = '<div class="noComments">No comments yet.</div>';
+    } else {
+      listEl.innerHTML = it.comments.map(function(c){
+        return '<div class="commentItem">' +
+          '<div class="commentMeta"><strong>' + escapeHtml(c.author) + '</strong> &middot; ' + escapeHtml(formatWhen(c.at)) + '</div>' +
+          '<div class="commentText">' + escapeHtml(c.text) + '</div>' +
+        '</div>';
+      }).join('');
+    }
+  }
+
+  function updateBadges(key){
+    var record = currentRecord();
+    if (!record) return;
+    var card = document.querySelector('.itemCard[data-item="' + key + '"]');
+    if (!card) return;
+    var it = (record.items && record.items[key]) || { files: [], comments: [] };
+    var badges = card.querySelectorAll('.itemBadge');
+    if (badges[0]) badges[0].textContent = it.files.length + ' file' + (it.files.length === 1 ? '' : 's');
+    if (badges[1]) badges[1].textContent = it.comments.length + ' comment' + (it.comments.length === 1 ? '' : 's');
+    card.classList.toggle('hasContent', it.files.length > 0 || it.comments.length > 0);
+  }
+
+  function applyUpdatedRecord(updated){
+    var idx = lastApqpRecords.findIndex(function(r){ return r.id === updated.id; });
+    if (idx !== -1) lastApqpRecords[idx] = updated; else lastApqpRecords.push(updated);
+  }
+
+  async function uploadItemFile(key, file){
+    var card = document.querySelector('.itemCard[data-item="' + key + '"]');
+    var label = card ? card.querySelector('[data-add-file-label]') : null;
+    if (label) label.classList.add('busy');
+    try {
+      var record = currentRecord();
+      if (!record) throw new Error('This Part is no longer on APQP.');
+      var bytes = await readFileAsBytes(file);
+      var path = buildApqpFilePath(record.id, key, file.name);
+      await ghPutFile(path, bytes, 'Upload ' + ITEM_LABELS[key] + ' file for ' + record.partNumber);
+      var existing = (record.items[key] && record.items[key].files) || [];
+      var newFiles = existing.concat([{ path: path, filename: file.name, mimeType: file.type || 'application/octet-stream', size: bytes.length }]);
+      var res = await apiFetch('apqp/' + encodeURIComponent(record.id) + '/items/' + encodeURIComponent(key), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: newFiles })
+      });
+      var data = {}; try { data = await res.json(); } catch(e){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      applyUpdatedRecord(data);
+      renderItemFiles(key);
+      updateBadges(key);
+    } catch (err) {
+      alert('Could not upload this file (' + (err && err.message ? err.message : err) + ').');
+    } finally {
+      if (label) label.classList.remove('busy');
+    }
+  }
+
+  async function removeItemFile(key, fileIdx){
+    var record = currentRecord();
+    if (!record) return;
+    var existing = (record.items[key] && record.items[key].files) || [];
+    var target = existing[fileIdx];
+    if (!target) return;
+    if (!confirm('Remove "' + target.filename + '"? The file itself stays in the repo, just unlinked from this checklist.')) return;
+    try {
+      var newFiles = existing.slice(0, fileIdx).concat(existing.slice(fileIdx + 1));
+      var res = await apiFetch('apqp/' + encodeURIComponent(record.id) + '/items/' + encodeURIComponent(key), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: newFiles })
+      });
+      var data = {}; try { data = await res.json(); } catch(e){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      applyUpdatedRecord(data);
+      renderItemFiles(key);
+      updateBadges(key);
+    } catch (err) {
+      alert('Could not remove this file (' + (err && err.message ? err.message : err) + ').');
+    }
+  }
+
+  async function submitComment(key, text, form){
+    var record = currentRecord();
+    var errEl = form.parentElement.querySelector('[data-comment-err]');
+    var btn = form.querySelector('button');
+    var trimmed = (text || '').trim();
+    if (errEl) errEl.textContent = '';
+    if (!trimmed) { if (errEl) errEl.textContent = 'Enter a comment first.'; return; }
+    if (!record) return;
+    btn.disabled = true; btn.textContent = 'Posting…';
+    try {
+      var res = await apiFetch('apqp/' + encodeURIComponent(record.id) + '/items/' + encodeURIComponent(key) + '/comments', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: trimmed })
+      });
+      var data = {}; try { data = await res.json(); } catch(e){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      applyUpdatedRecord(data);
+      form.querySelector('[data-comment-text]').value = '';
+      renderItemComments(key);
+      updateBadges(key);
+    } catch (err) {
+      if (errEl) errEl.textContent = err && err.message ? err.message : 'Could not post this comment.';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Post';
+    }
+  }
+  // -----------------------------------------------------------------------------
+
+  requireAuthThen(async function(){ await loadParts(); await loadApqp(); });
+})();
+</script>

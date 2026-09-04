@@ -1,0 +1,822 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Dessimate Invoices &mdash; DSCM</title>
+<script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:1220px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+
+  .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .homeBtn, .addBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
+    border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
+  }
+  .homeBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .homeBtn:hover{ background:#eef1fa; }
+  /* Hidden when this page is loaded inside the DSCM dashboard shell's content
+     frame (index.html) - the sidebar there is the primary navigation, so this
+     page's own cross-links would just duplicate it. Standalone loads (direct
+     visit, bookmark, another page's link opening a new tab) are unaffected. */
+  html[data-embedded] .homeBtn{ display:none !important; }
+  .addBtn{ color:#fff; background:#1f9254; }
+  .addBtn:hover{ background:#187b46; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
+    font-size:12.5px; margin:10px 0 18px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  /* Staff login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
+
+  .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; overflow-x:auto; }
+  table.poTable{ width:100%; border-collapse:collapse; font-size:13px; min-width:960px; }
+  table.poTable th{ background:#eef1f7; color:var(--label); font-size:11px; text-transform:uppercase;
+    letter-spacing:.02em; text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.poTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  table.poTable tr:last-child td{ border-bottom:none; }
+  .poNumber{ font-weight:700; }
+  .statusPill{ display:inline-block; font-size:11.5px; font-weight:700; border-radius:5px; padding:3px 9px; }
+  .statusPill.unpaid{ color:#a06a1c; background:#fbf1e0; }
+  .statusPill.paid{ color:#187b46; background:#e6f5ec; }
+  .rowActions{ display:flex; gap:8px; white-space:nowrap; }
+  .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:6px 12px; white-space:nowrap; }
+  .editBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .editBtn:hover{ background:#eef1fa; }
+  .pdfBtn{ color:#1f9254; background:#fff; border:1px solid #1f9254; }
+  .pdfBtn:hover{ background:#eaf6ef; }
+  .deleteBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
+  .deleteBtn:hover{ background:#fbeaea; border-color:#b23b3b; }
+  .moneyCell{ font-variant-numeric:tabular-nums; text-align:right; }
+
+  .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
+  .state.error{ color:#b23b3b; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+
+  /* Add/Edit modal */
+  .modalOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1500; align-items:center; justify-content:center; padding:20px; }
+  .modalOverlay.open{ display:flex; }
+  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:900px;
+    max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .modalCard h2{ font-size:17px; margin:0 0 4px; color:var(--ink); }
+  .modalCard .modalSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .modalCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .modalCard input, .modalCard select{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .modalGrid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 14px; }
+
+  .numberBanner{ display:flex; gap:24px; flex-wrap:wrap; background:#f7f8fb; border:1px solid var(--line);
+    border-radius:8px; padding:10px 14px; margin-bottom:16px; font-size:12.5px; color:var(--label); }
+  .numberBanner strong{ color:var(--ink); font-variant-numeric:tabular-nums; }
+
+  .modalSection{ margin:18px 0 4px; }
+  .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
+
+  .linesWrap{ overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
+  table.linesTable{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:700px; }
+  table.linesTable th{ background:#f7f8fb; color:var(--label); font-size:10.5px; text-transform:uppercase;
+    letter-spacing:.02em; text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.linesTable td{ padding:5px 8px; border-bottom:1px solid #eef0f4; vertical-align:middle; }
+  table.linesTable tr:last-child td{ border-bottom:none; }
+  table.linesTable input, table.linesTable select{ width:100%; margin:0; font-size:12.5px; padding:6px 7px; }
+  table.linesTable .extCell{ font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap; padding-right:10px; }
+  table.linesTable .lineRemoveBtn{ font-family:inherit; font-size:11px; font-weight:700; color:#b23b3b; background:#fff;
+    border:1px solid #e3b3b3; border-radius:6px; padding:5px 8px; cursor:pointer; white-space:nowrap; }
+  table.linesTable .lineRemoveBtn:hover{ background:#fbeaea; }
+  .addLineBtn{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand); background:#fff;
+    border:1px solid var(--line); border-radius:7px; padding:7px 14px; cursor:pointer; margin-top:10px; }
+  .addLineBtn:hover{ background:#eef1fa; }
+  .poTotalRow{ display:flex; justify-content:flex-end; gap:10px; margin-top:10px; font-size:14px; }
+  .poTotalRow .label{ color:var(--label); }
+  .poTotalRow .amount{ font-weight:700; font-variant-numeric:tabular-nums; }
+
+  .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
+  .modalBtns{ display:flex; gap:10px; margin-top:10px; }
+  .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
+    padding:11px; cursor:pointer; }
+  .saveBtn{ color:#fff; background:var(--brand); border:none; }
+  .saveBtn:hover{ background:var(--brand-dark); }
+  .saveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .cancelBtn:hover{ background:#f4f5f8; }
+
+  /* In-page document viewer (used for the generated PDF) */
+  .viewerOverlay{
+    display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:2200; padding:22px; align-items:center; justify-content:center;
+  }
+  .viewerOverlay.open{ display:flex; }
+  .viewerPanel{
+    background:#fff; border-radius:10px; width:100%; max-width:980px; height:100%;
+    display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .viewerBar{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:12px 16px; border-bottom:1px solid var(--line); }
+  .viewerTitle{ font-size:14px; font-weight:700; overflow-wrap:anywhere; }
+  .viewerBtns{ display:flex; gap:8px; flex:0 0 auto; }
+  .viewerBtns a, .viewerBtns button{
+    font-family:inherit; font-size:13px; font-weight:600; text-decoration:none; cursor:pointer;
+    border-radius:6px; padding:7px 14px; white-space:nowrap;
+  }
+  #docViewerDownload{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  #docViewerDownload:hover{ background:#eef1fa; }
+  #docViewerClose{ color:#fff; background:#5b5f66; border:1px solid #5b5f66; }
+  #docViewerClose:hover{ background:#3f4248; }
+  .viewerBody{ flex:1 1 auto; position:relative; background:#525659; }
+  .viewerBody iframe, .viewerBody img{ position:absolute; inset:0; width:100%; height:100%; border:0; object-fit:contain; background:#525659; }
+  .viewerBody .viewerState{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:13.5px; text-align:center; padding:20px; flex-direction:column; gap:10px;
+  }
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>Dessimate Invoices</h1>
+        <p class="sub">Invoices Dessimate issues to Customers &mdash; Invoice Number is assigned automatically, and the invoice PDF is generated from this data (no approver stamp &mdash; that's the Dessimate PO only).</p>
+      </div>
+    </div>
+    <div class="headerBtns">
+      <a class="homeBtn" href="index.html">Home</a>
+      <a class="homeBtn" href="PDIR_Portal.html">PDIR Portal</a>
+      <a class="homeBtn" href="PDIR_Parts.html">Parts</a>
+      <a class="homeBtn" href="PDIR_DessimatePOs.html">Dessimate POs</a>
+      <a class="homeBtn" href="PDIR_SupplierInvoices.html">Supplier Invoices</a>
+      <a class="homeBtn" href="PDIR_CustomerPOs.html">Customer POs</a>
+      <a class="homeBtn" href="PDIR_Users.html">Users</a>
+      <a class="homeBtn" href="PDIR_Organizations.html">Organizations</a>
+      <a class="homeBtn" href="APQP.html">APQP</a>
+      <a class="homeBtn" href="Instructions.html">Instructions</a>
+      <button type="button" class="addBtn" id="addInvBtn">Add Dessimate Invoice</button>
+    </div>
+  </div>
+
+  <div class="ghbar">
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
+  </div>
+
+  <div class="toolbar">
+    <h2>Dessimate Invoices</h2>
+  </div>
+
+  <div class="panel">
+    <div id="loadingState" class="state">Loading&hellip;</div>
+    <div id="errorState" class="state error" style="display:none;"></div>
+    <div id="emptyState" class="state" style="display:none;">No Dessimate Invoices yet. Click <strong>Add Dessimate Invoice</strong> above to add the first one.</div>
+    <table class="poTable" id="invTable" style="display:none;">
+      <thead>
+        <tr>
+          <th>Invoice #</th>
+          <th>Customer</th>
+          <th>Invoice Date</th>
+          <th>Status</th>
+          <th>Lines</th>
+          <th>Total</th>
+          <th>PDF</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="invTableBody"></tbody>
+    </table>
+  </div>
+
+  <footer>Dessimate &middot; DSCM &middot; Dessimate Invoices</footer>
+</div>
+
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Staff Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to manage Dessimate Invoices.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+    </form>
+  </div>
+</div>
+
+<div class="modalOverlay" id="invModalOverlay">
+  <div class="modalCard">
+    <h2 id="modalTitle">Add Dessimate Invoice</h2>
+    <p class="modalSub" id="modalSub">Invoice Number is assigned automatically when you save.</p>
+    <form id="invForm">
+      <div class="numberBanner" id="numberBanner">
+        <span>Invoice Number: <strong id="numberBannerInv">assigned on Save</strong></span>
+      </div>
+      <div class="modalGrid3">
+        <label>Invoice Date
+          <input type="date" id="f_invoiceDate">
+        </label>
+        <label>Customer
+          <select id="f_customer" required></select>
+        </label>
+        <label>Customer PO Ref <span style="font-weight:400;">(optional)</span>
+          <select id="f_customerPoRef"></select>
+        </label>
+      </div>
+      <div class="modalGrid3">
+        <label>Ship To
+          <input type="text" id="f_shipTo">
+        </label>
+        <label>Currency
+          <input type="text" id="f_currency" placeholder="USD">
+        </label>
+        <label>Payment Terms
+          <input type="text" id="f_paymentTerms" placeholder="Net 30">
+        </label>
+      </div>
+      <div class="modalGrid3">
+        <label>Incoterms
+          <input type="text" id="f_incoterms" placeholder="FOB">
+        </label>
+        <label>Status
+          <select id="f_status">
+            <option value="Unpaid">Unpaid</option>
+            <option value="Paid">Paid</option>
+          </select>
+        </label>
+        <span></span>
+      </div>
+
+      <div class="modalSection">
+        <h3>Line Items</h3>
+        <div class="linesWrap">
+          <table class="linesTable">
+            <thead>
+              <tr>
+                <th style="min-width:150px;">Part Number</th>
+                <th style="min-width:150px;">Description</th>
+                <th style="min-width:80px;">Revision</th>
+                <th style="min-width:70px;">UOM</th>
+                <th style="min-width:90px;">Qty Shipped</th>
+                <th style="min-width:100px;">Unit Price</th>
+                <th style="min-width:110px;">Ext. Price</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="linesTableBody"></tbody>
+          </table>
+        </div>
+        <button type="button" class="addLineBtn" id="addLineBtn">+ Add Line</button>
+        <div class="poTotalRow"><span class="label">Invoice Total:</span> <span class="amount" id="invTotalDisplay">0.00</span></div>
+      </div>
+
+      <div class="modalError" id="modalError"></div>
+      <div class="modalBtns">
+        <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="docViewerOverlay" class="viewerOverlay">
+  <div class="viewerPanel">
+    <div class="viewerBar">
+      <div class="viewerTitle" id="docViewerTitle">Document</div>
+      <div class="viewerBtns">
+        <a id="docViewerDownload" href="#" style="display:none;">Download</a>
+        <button type="button" id="docViewerClose">Close</button>
+      </div>
+    </div>
+    <div class="viewerBody">
+      <div id="docViewerState" class="viewerState">Loading&hellip;</div>
+      <iframe id="docViewerFrame" title="Document preview" style="display:none;"></iframe>
+      <img id="docViewerImg" alt="Document preview" style="display:none;">
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ---- Backend (staff login + GitHub proxy) --------------------------------
+  var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
+
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  async function apiFetch(path, opts){
+    opts = opts || {};
+    var headers = opts.headers || {};
+    var session = getSession();
+    if (session) headers['Authorization'] = 'Bearer ' + session.token;
+    var res = await fetch(WORKER_BASE_URL + '/' + path, { method: opts.method || 'GET', headers: headers, body: opts.body });
+    if (res.status === 401 && path !== 'login') {
+      clearSession();
+      showAuthOverlay();
+      throw new Error('Your session has expired — please log in again.');
+    }
+    return res;
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Staff login wall -----------------------------------------------------
+  var pendingAfterAuth = null;
+
+  function refreshGhStatus(){
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Welcome, ' + session.username;
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Log out';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Log out';
+    }
+  }
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
+    refreshGhStatus();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+        document.getElementById('authPassword').value = '';
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  refreshGhStatus();
+  // -----------------------------------------------------------------------------
+
+  // ---- In-page document viewer (used to show the generated PDF) -------------
+  var docViewerObjectUrl = null;
+  function closeDocViewer(){
+    document.getElementById('docViewerOverlay').classList.remove('open');
+    document.getElementById('docViewerFrame').src = 'about:blank';
+    document.getElementById('docViewerFrame').style.display = 'none';
+    document.getElementById('docViewerImg').src = '';
+    document.getElementById('docViewerImg').style.display = 'none';
+    document.getElementById('docViewerDownload').style.display = 'none';
+    if (docViewerObjectUrl) { URL.revokeObjectURL(docViewerObjectUrl); docViewerObjectUrl = null; }
+  }
+  document.getElementById('docViewerClose').addEventListener('click', closeDocViewer);
+  document.getElementById('docViewerOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'docViewerOverlay') closeDocViewer();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
+  });
+  function openPdfInViewer(filename, bytes){
+    var overlay = document.getElementById('docViewerOverlay');
+    var stateEl = document.getElementById('docViewerState');
+    var frame = document.getElementById('docViewerFrame');
+    var downloadBtn = document.getElementById('docViewerDownload');
+    document.getElementById('docViewerTitle').textContent = filename;
+    frame.style.display = 'none'; downloadBtn.style.display = 'none';
+    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var blob = new Blob([bytes], { type: 'application/pdf' });
+      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+      docViewerObjectUrl = URL.createObjectURL(blob);
+      frame.src = docViewerObjectUrl; frame.style.display = 'block';
+      stateEl.style.display = 'none';
+      downloadBtn.href = docViewerObjectUrl;
+      downloadBtn.download = filename;
+      downloadBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      stateEl.textContent = 'Could not display this PDF (' + (e && e.message ? e.message : e) + ').';
+    }
+  }
+  async function viewGeneratedPdf(id, invoiceNumber, btn){
+    var originalText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+    try {
+      var res = await apiFetch('dessimate-invoices/' + encodeURIComponent(id) + '/pdf');
+      if (!res.ok) {
+        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
+        throw new Error(msg || ('HTTP ' + res.status));
+      }
+      var buf = await res.arrayBuffer();
+      openPdfInViewer('Dessimate Invoice ' + invoiceNumber + '.pdf', new Uint8Array(buf));
+    } catch (err) {
+      alert('Could not generate the invoice PDF (' + (err && err.message ? err.message : err) + ').');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+    }
+  }
+  // -----------------------------------------------------------------------------
+
+  function escapeHtml(s){
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function money(n){
+    var v = Number(n) || 0;
+    return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  // ---- Customer / Parts / Customer PO dropdowns -------------------------------
+  var lastOrgs = [];
+  var lastParts = [];
+  var lastCustomerPos = [];
+  async function loadDropdownData(){
+    try {
+      var orgRes = await apiFetch('organizations');
+      var orgData = orgRes.ok ? await orgRes.json() : { organizations: [] };
+      lastOrgs = Array.isArray(orgData.organizations) ? orgData.organizations : [];
+    } catch (e) { console.error('Could not load organizations', e); lastOrgs = []; }
+    try {
+      var partRes = await apiFetch('parts');
+      var partData = partRes.ok ? await partRes.json() : { parts: [] };
+      lastParts = Array.isArray(partData.parts) ? partData.parts : [];
+    } catch (e) { console.error('Could not load parts', e); lastParts = []; }
+    try {
+      var cpoRes = await apiFetch('customer-pos');
+      var cpoData = cpoRes.ok ? await cpoRes.json() : { customerPos: [] };
+      lastCustomerPos = Array.isArray(cpoData.customerPos) ? cpoData.customerPos : [];
+    } catch (e) { console.error('Could not load Customer POs', e); lastCustomerPos = []; }
+  }
+  function customerOrgOptions(currentValue){
+    var matching = lastOrgs.filter(function(o){ return o.relationship === 'Customer'; });
+    var html = '<option value="">— Select Customer —</option>' + matching.map(function(o){
+      var sel = (o.name === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(o.name) + '"' + sel + '>' + escapeHtml(o.name) + '</option>';
+    }).join('');
+    if (currentValue && !matching.some(function(o){ return o.name === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Organizations list)</option>';
+    }
+    return html;
+  }
+  function partOptions(currentValue){
+    var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
+      var sel = (p.partNumber === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(p.partNumber) + '"' + sel + '>' + escapeHtml(p.partNumber) + '</option>';
+    }).join('');
+    if (currentValue && !lastParts.some(function(p){ return p.partNumber === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Parts list)</option>';
+    }
+    return html;
+  }
+  function customerPoRefOptions(currentValue){
+    var html = '<option value="">— None —</option>' + lastCustomerPos.map(function(p){
+      var label = (p.poNumber || '') + (p.customer ? ' — ' + p.customer : '');
+      var sel = (p.poNumber === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(p.poNumber) + '"' + sel + '>' + escapeHtml(label) + '</option>';
+    }).join('');
+    if (currentValue && !lastCustomerPos.some(function(p){ return p.poNumber === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Customer POs list)</option>';
+    }
+    return html;
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- List table --------------------------------------------------------------
+  var lastInvoices = [];
+
+  async function loadInvoices(){
+    var loadingEl = document.getElementById('loadingState');
+    var errorEl = document.getElementById('errorState');
+    var emptyEl = document.getElementById('emptyState');
+    var tableEl = document.getElementById('invTable');
+    loadingEl.style.display = 'block'; errorEl.style.display = 'none'; emptyEl.style.display = 'none'; tableEl.style.display = 'none';
+    try {
+      var res = await apiFetch('dessimate-invoices');
+      if (!res.ok) {
+        var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+        throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+      }
+      var data = await res.json();
+      lastInvoices = Array.isArray(data.dessimateInvoices) ? data.dessimateInvoices : [];
+      loadingEl.style.display = 'none';
+      renderTable();
+    } catch (err) {
+      console.error(err);
+      loadingEl.style.display = 'none';
+      errorEl.style.display = 'block';
+      errorEl.textContent = 'Could not load Dessimate Invoices (' + err.message + ').';
+    }
+  }
+
+  function renderTable(){
+    var tableEl = document.getElementById('invTable');
+    var bodyEl = document.getElementById('invTableBody');
+    var emptyEl = document.getElementById('emptyState');
+    if (!lastInvoices.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
+    emptyEl.style.display = 'none'; tableEl.style.display = 'table';
+
+    var sorted = lastInvoices.slice().sort(function(a, b){ return (b.invoiceNumber || 0) - (a.invoiceNumber || 0); });
+
+    bodyEl.innerHTML = sorted.map(function(inv){
+      var statusClass = inv.status === 'Paid' ? 'paid' : 'unpaid';
+      return '<tr>' +
+        '<td class="poNumber">' + escapeHtml(inv.invoiceNumber) + '</td>' +
+        '<td>' + escapeHtml(inv.customer) + '</td>' +
+        '<td>' + escapeHtml(inv.invoiceDate) + '</td>' +
+        '<td><span class="statusPill ' + statusClass + '">' + escapeHtml(inv.status) + '</span></td>' +
+        '<td>' + (inv.lines ? inv.lines.length : 0) + '</td>' +
+        '<td class="moneyCell">' + escapeHtml(inv.currency || '') + ' ' + money(inv.invoiceTotal) + '</td>' +
+        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(inv.id) + '" data-invnum="' + escapeHtml(inv.invoiceNumber) + '">View PDF</button></td>' +
+        '<td><div class="rowActions">' +
+          '<button type="button" class="editBtn" data-edit="' + escapeHtml(inv.id) + '">Edit</button>' +
+          '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(inv.id) + '">Delete</button>' +
+        '</div></td>' +
+        '</tr>';
+    }).join('');
+
+    bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
+      btn.addEventListener('click', function(){ requireAuthThen(function(){ openEditModal(this.getAttribute('data-edit')); }.bind(this)); });
+    });
+    bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
+      btn.addEventListener('click', function(){ deleteInvoice(this.getAttribute('data-delete')); });
+    });
+    bodyEl.querySelectorAll('[data-pdf]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        requireAuthThen(function(){ viewGeneratedPdf(btn.getAttribute('data-pdf'), btn.getAttribute('data-invnum'), btn); });
+      });
+    });
+  }
+
+  async function deleteInvoice(id){
+    var inv = lastInvoices.find(function(p){ return p.id === id; });
+    if (!confirm('Remove Dessimate Invoice ' + (inv ? inv.invoiceNumber : '') + ' from the list? This can\'t be undone from here (the invoice number stays reserved for audit).')) return;
+    requireAuthThen(async function(){
+      try {
+        var res = await apiFetch('dessimate-invoices/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!res.ok) { var d = {}; try { d = await res.json(); } catch(e){} throw new Error(d.message || ('HTTP ' + res.status)); }
+        await loadInvoices();
+      } catch (err) {
+        alert('Could not delete this Dessimate Invoice (' + (err && err.message ? err.message : err) + ').');
+      }
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Add / Edit modal --------------------------------------------------------
+  var editingId = null;
+  var lineRows = []; // { partNumber, description, revision, uom, qtyShipped, unitPrice }
+
+  function newLineRow(){
+    return { partNumber: '', description: '', revision: '', uom: '', qtyShipped: '', unitPrice: '' };
+  }
+
+  function renderLines(){
+    var bodyEl = document.getElementById('linesTableBody');
+    bodyEl.innerHTML = lineRows.map(function(row, idx){
+      var ext = (Number(row.qtyShipped) || 0) * (Number(row.unitPrice) || 0);
+      return '<tr data-line-idx="' + idx + '">' +
+        '<td><select data-line-field="partNumber">' + partOptions(row.partNumber) + '</select></td>' +
+        '<td><input type="text" data-line-field="description" value="' + escapeHtml(row.description) + '"></td>' +
+        '<td><input type="text" data-line-field="revision" value="' + escapeHtml(row.revision) + '"></td>' +
+        '<td><input type="text" data-line-field="uom" value="' + escapeHtml(row.uom) + '"></td>' +
+        '<td><input type="number" step="any" min="0" data-line-field="qtyShipped" value="' + escapeHtml(row.qtyShipped) + '"></td>' +
+        '<td><input type="number" step="any" min="0" data-line-field="unitPrice" value="' + escapeHtml(row.unitPrice) + '"></td>' +
+        '<td class="extCell" data-line-ext>' + money(ext) + '</td>' +
+        '<td><button type="button" class="lineRemoveBtn" data-line-remove="' + idx + '">Remove</button></td>' +
+        '</tr>';
+    }).join('');
+
+    bodyEl.querySelectorAll('tr').forEach(function(tr){
+      var idx = parseInt(tr.getAttribute('data-line-idx'), 10);
+      tr.querySelectorAll('[data-line-field]').forEach(function(el){
+        var field = el.getAttribute('data-line-field');
+        el.addEventListener('input', function(){
+          lineRows[idx][field] = el.value;
+          if (field === 'partNumber') {
+            var part = lastParts.find(function(p){ return p.partNumber === el.value; });
+            if (part && !lineRows[idx].description) {
+              lineRows[idx].description = part.name || '';
+              renderLines();
+              return;
+            }
+          }
+          updateLineExtAndTotal(idx);
+        });
+        el.addEventListener('change', function(){
+          lineRows[idx][field] = el.value;
+          if (field === 'partNumber') {
+            var part = lastParts.find(function(p){ return p.partNumber === el.value; });
+            if (part) { lineRows[idx].description = part.name || lineRows[idx].description; }
+            renderLines();
+          }
+        });
+      });
+    });
+    bodyEl.querySelectorAll('[data-line-remove]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        lineRows.splice(parseInt(this.getAttribute('data-line-remove'), 10), 1);
+        renderLines();
+        updateInvTotal();
+      });
+    });
+    updateInvTotal();
+  }
+  function updateLineExtAndTotal(idx){
+    var tr = document.querySelector('#linesTableBody tr[data-line-idx="' + idx + '"]');
+    if (tr) {
+      var ext = (Number(lineRows[idx].qtyShipped) || 0) * (Number(lineRows[idx].unitPrice) || 0);
+      tr.querySelector('[data-line-ext]').textContent = money(ext);
+    }
+    updateInvTotal();
+  }
+  function updateInvTotal(){
+    var total = lineRows.reduce(function(sum, r){ return sum + (Number(r.qtyShipped) || 0) * (Number(r.unitPrice) || 0); }, 0);
+    document.getElementById('invTotalDisplay').textContent = money(total);
+  }
+  document.getElementById('addLineBtn').addEventListener('click', function(){
+    lineRows.push(newLineRow());
+    renderLines();
+  });
+
+  function resetForm(){
+    document.getElementById('invForm').reset();
+    document.getElementById('modalError').textContent = '';
+    lineRows = [newLineRow()];
+    document.getElementById('f_customer').innerHTML = customerOrgOptions('');
+    document.getElementById('f_customerPoRef').innerHTML = customerPoRefOptions('');
+    document.getElementById('f_status').value = 'Unpaid';
+    document.getElementById('numberBannerInv').textContent = 'assigned on Save';
+    renderLines();
+  }
+
+  function openAddModal(){
+    editingId = null;
+    resetForm();
+    document.getElementById('modalTitle').textContent = 'Add Dessimate Invoice';
+    document.getElementById('modalSub').textContent = 'Invoice Number is assigned automatically when you save.';
+    document.getElementById('invModalOverlay').classList.add('open');
+  }
+  function openEditModal(id){
+    var inv = lastInvoices.find(function(x){ return x.id === id; });
+    if (!inv) return;
+    editingId = id;
+    document.getElementById('invForm').reset();
+    document.getElementById('modalError').textContent = '';
+    lineRows = (inv.lines && inv.lines.length) ? inv.lines.map(function(l){
+      return { partNumber: l.partNumber, description: l.description, revision: l.revision, uom: l.uom,
+        qtyShipped: l.qtyShipped, unitPrice: l.unitPrice };
+    }) : [newLineRow()];
+    document.getElementById('modalTitle').textContent = 'Edit Dessimate Invoice';
+    document.getElementById('modalSub').textContent = 'Invoice Number was assigned when this invoice was created and can\'t change.';
+    document.getElementById('numberBannerInv').textContent = inv.invoiceNumber;
+    document.getElementById('f_invoiceDate').value = inv.invoiceDate || '';
+    document.getElementById('f_customer').innerHTML = customerOrgOptions(inv.customer || '');
+    document.getElementById('f_customerPoRef').innerHTML = customerPoRefOptions(inv.customerPoRef || '');
+    document.getElementById('f_shipTo').value = inv.shipTo || '';
+    document.getElementById('f_currency').value = inv.currency || '';
+    document.getElementById('f_paymentTerms').value = inv.paymentTerms || '';
+    document.getElementById('f_incoterms').value = inv.incoterms || '';
+    document.getElementById('f_status').value = inv.status || 'Unpaid';
+    renderLines();
+    document.getElementById('invModalOverlay').classList.add('open');
+  }
+  function closeModal(){ document.getElementById('invModalOverlay').classList.remove('open'); }
+  document.getElementById('addInvBtn').addEventListener('click', function(){
+    requireAuthThen(async function(){ await loadDropdownData(); openAddModal(); });
+  });
+  document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('invModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'invModalOverlay') closeModal();
+  });
+
+  document.getElementById('invForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
+
+    var baseFields = {
+      invoiceDate: document.getElementById('f_invoiceDate').value,
+      customer: document.getElementById('f_customer').value,
+      customerPoRef: document.getElementById('f_customerPoRef').value,
+      shipTo: document.getElementById('f_shipTo').value.trim(),
+      currency: document.getElementById('f_currency').value.trim(),
+      paymentTerms: document.getElementById('f_paymentTerms').value.trim(),
+      incoterms: document.getElementById('f_incoterms').value.trim(),
+      status: document.getElementById('f_status').value,
+      lines: lineRows.filter(function(r){ return r.partNumber; })
+    };
+    if (!baseFields.customer) { errEl.textContent = 'Select a Customer.'; return; }
+    if (!baseFields.lines.length) { errEl.textContent = 'Add at least one line item with a Part Number.'; return; }
+
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      var res;
+      if (editingId) {
+        res = await apiFetch('dessimate-invoices/' + encodeURIComponent(editingId), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
+      } else {
+        res = await apiFetch('dessimate-invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
+      }
+      var data = {}; try { data = await res.json(); } catch(e){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+
+      closeModal();
+      await loadInvoices();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not save this Dessimate Invoice.';
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+  // -----------------------------------------------------------------------------
+
+  requireAuthThen(async function(){ await loadDropdownData(); await loadInvoices(); });
+})();
+</script>

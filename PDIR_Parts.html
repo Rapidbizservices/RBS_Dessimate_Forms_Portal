@@ -1,6 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>Parts &mdash; DSCM</title>
+<script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
     --brand:#2b4ea3;
@@ -31,6 +32,11 @@
   }
   .homeBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
   .homeBtn:hover{ background:#eef1fa; }
+  /* Hidden when this page is loaded inside the DSCM dashboard shell's content
+     frame (index.html) - the sidebar there is the primary navigation, so this
+     page's own cross-links would just duplicate it. Standalone loads (direct
+     visit, bookmark, another page's link opening a new tab) are unaffected. */
+  html[data-embedded] .homeBtn{ display:none !important; }
   .addBtn{ color:#fff; background:#1f9254; }
   .addBtn:hover{ background:#187b46; }
 
@@ -181,6 +187,12 @@
       <a class="homeBtn" href="PDIR_Portal.html">PDIR Portal</a>
       <a class="homeBtn" href="PDIR_Users.html">Users</a>
       <a class="homeBtn" href="PDIR_Organizations.html">Organizations</a>
+      <a class="homeBtn" href="PDIR_DessimatePOs.html">Dessimate POs</a>
+      <a class="homeBtn" href="PDIR_SupplierInvoices.html">Supplier Invoices</a>
+      <a class="homeBtn" href="PDIR_CustomerPOs.html">Customer POs</a>
+      <a class="homeBtn" href="PDIR_DessimateInvoices.html">Dessimate Invoices</a>
+      <a class="homeBtn" href="APQP.html">APQP</a>
+      <a class="homeBtn" href="Instructions.html">Instructions</a>
       <button type="button" class="addBtn" id="addPartBtn">Add Part</button>
     </div>
   </div>
