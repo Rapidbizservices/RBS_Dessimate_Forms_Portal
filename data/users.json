@@ -39,7 +39,10 @@
     "role": "",
     "email": "",
     "phone": "",
-    "active": true
+    "active": true,
+    "name": "Komal Bankapure",
+    "accessLevel": "team_member",
+    "isDemo": false
   },
   {
     "id": "f2c26173-2bb1-4a1f-9f1c-45ec3e780c84",
