@@ -71,15 +71,18 @@
   },
   {
     "id": "e9013ce1-3d68-44b6-adef-87ffb43165e2",
-    "username": "Karan",
-    "salt": "83fa99c357d3103600106926379991c6",
-    "hash": "caf262c5e00887b1fae3b3283b65a1d36b1c0ebfa2c737617888be476e6cb7ac",
-    "organization": "",
-    "relationship": "Dessimate Team member",
+    "username": null,
+    "salt": null,
+    "hash": null,
+    "organization": "GMT",
+    "relationship": "Supplier",
     "role": "",
     "email": "",
     "phone": "",
-    "active": true
+    "active": true,
+    "name": "Karan Parit",
+    "accessLevel": null,
+    "isDemo": false
   },
   {
     "id": "b7d82291-f846-42f4-86e6-8a6823a392c0",
