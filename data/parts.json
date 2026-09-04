@@ -65,7 +65,13 @@
     "suppliers": [
       "Manoj Industries"
     ],
-    "drawing": null
+    "drawing": {
+      "id": null,
+      "path": "part_docs/03a3f329-6a61-47f5-8c10-db29e9569dc5/drawing.stp",
+      "filename": "010055-xxx.stp",
+      "mimeType": "application/octet-stream",
+      "size": 1531865
+    }
   },
   {
     "id": "5276914c-3eed-474a-9c41-de834b61a728",
