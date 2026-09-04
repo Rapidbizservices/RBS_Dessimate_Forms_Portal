@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Organizations &mdash; DSCM</title>
+<title>Supplier Invoices &mdash; DSCM</title>
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -16,7 +16,7 @@
     margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
     font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
   }
-  .wrap{ width:100%; max-width:1040px; }
+  .wrap{ width:100%; max-width:1220px; }
 
   .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
     flex-wrap:wrap; margin-bottom:6px; }
@@ -69,19 +69,15 @@
   .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
 
   .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; overflow-x:auto; }
-  table.orgTable{ width:100%; border-collapse:collapse; font-size:13px; min-width:900px; }
-  table.orgTable th{ background:#eef1f7; color:var(--label); font-size:11px; text-transform:uppercase;
+  table.poTable{ width:100%; border-collapse:collapse; font-size:13px; min-width:980px; }
+  table.poTable th{ background:#eef1f7; color:var(--label); font-size:11px; text-transform:uppercase;
     letter-spacing:.02em; text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
-  table.orgTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
-  table.orgTable tr:last-child td{ border-bottom:none; }
-  .orgName{ font-weight:700; }
-  .relBadge{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
-    border-radius:4px; padding:2px 8px; white-space:nowrap; display:inline-block; }
-  .relBadge.Supplier{ background:#e6eefc; color:var(--brand); }
-  .relBadge.Customer{ background:#f1e6f6; color:#7a3fa0; }
-  .relBadge.Self{ background:#e6f6ec; color:#1f9254; }
-  .docSummary{ font-size:12px; color:var(--label); }
-  .docSummary .have{ color:#187b46; font-weight:600; }
+  table.poTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  table.poTable tr:last-child td{ border-bottom:none; }
+  .poNumber{ font-weight:700; }
+  .statusPill{ display:inline-block; font-size:11.5px; font-weight:700; border-radius:5px; padding:3px 9px; }
+  .statusPill.unpaid{ color:#a06a1c; background:#fbf1e0; }
+  .statusPill.paid{ color:#187b46; background:#e6f5ec; }
   .rowActions{ display:flex; gap:8px; white-space:nowrap; }
   .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
     border-radius:6px; padding:6px 12px; white-space:nowrap; }
@@ -89,27 +85,46 @@
   .editBtn:hover{ background:#eef1fa; }
   .deleteBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
   .deleteBtn:hover{ background:#fbeaea; border-color:#b23b3b; }
+  .moneyCell{ font-variant-numeric:tabular-nums; text-align:right; }
 
   .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
   .state.error{ color:#b23b3b; }
 
   footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
 
-  /* Add/Edit organization modal */
+  /* Add/Edit modal */
   .modalOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
     z-index:1500; align-items:center; justify-content:center; padding:20px; }
   .modalOverlay.open{ display:flex; }
-  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:560px;
+  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:900px;
     max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
   .modalCard h2{ font-size:17px; margin:0 0 4px; color:var(--ink); }
   .modalCard .modalSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
   .modalCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
   .modalCard input, .modalCard select{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
     padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
-  .modalGrid{ display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+  .modalGrid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 14px; }
 
   .modalSection{ margin:18px 0 4px; }
   .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
+
+  .linesWrap{ overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
+  table.linesTable{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:640px; }
+  table.linesTable th{ background:#f7f8fb; color:var(--label); font-size:10.5px; text-transform:uppercase;
+    letter-spacing:.02em; text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.linesTable td{ padding:5px 8px; border-bottom:1px solid #eef0f4; vertical-align:middle; }
+  table.linesTable tr:last-child td{ border-bottom:none; }
+  table.linesTable input, table.linesTable select{ width:100%; margin:0; font-size:12.5px; padding:6px 7px; }
+  table.linesTable .extCell{ font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap; padding-right:10px; }
+  table.linesTable .lineRemoveBtn{ font-family:inherit; font-size:11px; font-weight:700; color:#b23b3b; background:#fff;
+    border:1px solid #e3b3b3; border-radius:6px; padding:5px 8px; cursor:pointer; white-space:nowrap; }
+  table.linesTable .lineRemoveBtn:hover{ background:#fbeaea; }
+  .addLineBtn{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand); background:#fff;
+    border:1px solid var(--line); border-radius:7px; padding:7px 14px; cursor:pointer; margin-top:10px; }
+  .addLineBtn:hover{ background:#eef1fa; }
+  .poTotalRow{ display:flex; justify-content:flex-end; gap:10px; margin-top:10px; font-size:14px; }
+  .poTotalRow .label{ color:var(--label); }
+  .poTotalRow .amount{ font-weight:700; font-variant-numeric:tabular-nums; }
 
   .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
     padding:9px 0; border-bottom:1px solid #eef0f4; font-size:12.5px; }
@@ -124,27 +139,6 @@
     background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
   .docLinks button:hover, .docLinks a:hover{ text-decoration:underline; }
   .docLinks .removeLink{ color:#b23b3b; }
-
-  .selfSection{ display:none; }
-  .selfSection.show{ display:block; }
-  .addrRow{ display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid #eef0f4; }
-  .addrRow:last-child{ border-bottom:none; }
-  .addrRow input{ margin-top:0; }
-  .addrRow .addrLabel{ flex:0 0 190px; }
-  .addrRow .addrValue{ flex:1 1 auto; }
-  .addrRow .addrRemove{ flex:0 0 auto; font-family:inherit; font-size:12px; font-weight:600; color:#b23b3b;
-    background:#fff; border:1px solid #e3b3b3; border-radius:6px; padding:8px 10px; cursor:pointer; margin-top:5px; }
-  .addrRow .addrRemove:hover{ background:#fbeaea; }
-
-  .genericList{ list-style:none; margin:0 0 10px; padding:0; }
-  .genericList li{ display:flex; align-items:center; justify-content:space-between; gap:10px;
-    padding:8px 0; border-bottom:1px solid #eef0f4; font-size:12.5px; }
-  .genericList li:last-child{ border-bottom:none; }
-  .genericList .genName{ flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
-  .genericList .genPending{ color:#a06a1c; font-style:italic; font-weight:600; }
-  .addFileBtn{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand); background:#fff;
-    border:1px solid var(--line); border-radius:7px; padding:7px 14px; cursor:pointer; }
-  .addFileBtn:hover{ background:#eef1fa; }
 
   .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
   .modalBtns{ display:flex; gap:10px; margin-top:10px; }
@@ -191,22 +185,22 @@
     <div class="header-left">
       <img src="logo.jpg" alt="Dessimate">
       <div>
-        <h1>Organizations</h1>
-        <p class="sub">Suppliers and Customers Dessimate works with, and their documents.</p>
+        <h1>Supplier Invoices</h1>
+        <p class="sub">Invoices received from Suppliers against Dessimate POs, with line items and the original invoice on file.</p>
       </div>
     </div>
     <div class="headerBtns">
       <a class="homeBtn" href="index.html">Home</a>
       <a class="homeBtn" href="PDIR_Portal.html">PDIR Portal</a>
-      <a class="homeBtn" href="PDIR_Users.html">Users</a>
       <a class="homeBtn" href="PDIR_Parts.html">Parts</a>
       <a class="homeBtn" href="PDIR_DessimatePOs.html">Dessimate POs</a>
-      <a class="homeBtn" href="PDIR_SupplierInvoices.html">Supplier Invoices</a>
       <a class="homeBtn" href="PDIR_CustomerPOs.html">Customer POs</a>
+      <a class="homeBtn" href="PDIR_Users.html">Users</a>
+      <a class="homeBtn" href="PDIR_Organizations.html">Organizations</a>
       <a class="homeBtn" href="PDIR_DessimateInvoices.html">Dessimate Invoices</a>
       <a class="homeBtn" href="APQP.html">APQP</a>
       <a class="homeBtn" href="Instructions.html">Instructions</a>
-      <button type="button" class="addBtn" id="addOrgBtn">Add Organization</button>
+      <button type="button" class="addBtn" id="addInvBtn">Add Supplier Invoice</button>
     </div>
   </div>
 
@@ -216,36 +210,38 @@
   </div>
 
   <div class="toolbar">
-    <h2>Directory</h2>
+    <h2>Supplier Invoices</h2>
   </div>
 
   <div class="panel">
     <div id="loadingState" class="state">Loading&hellip;</div>
     <div id="errorState" class="state error" style="display:none;"></div>
-    <div id="emptyState" class="state" style="display:none;">No organizations yet. Click <strong>Add Organization</strong> above to add the first one.</div>
-    <table class="orgTable" id="orgTable" style="display:none;">
+    <div id="emptyState" class="state" style="display:none;">No Supplier Invoices yet. Click <strong>Add Supplier Invoice</strong> above to add the first one.</div>
+    <table class="poTable" id="invTable" style="display:none;">
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Relationship</th>
-          <th>Address</th>
-          <th>Phone</th>
-          <th>Website</th>
-          <th>Documents</th>
+          <th>Invoice #</th>
+          <th>Supplier</th>
+          <th>Dessimate PO</th>
+          <th>Invoice Date</th>
+          <th>Due Date</th>
+          <th>Status</th>
+          <th>Total</th>
+          <th>Invoice PDF</th>
           <th></th>
         </tr>
       </thead>
-      <tbody id="orgTableBody"></tbody>
+      <tbody id="invTableBody"></tbody>
     </table>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Organizations</footer>
+  <footer>Dessimate &middot; DSCM &middot; Supplier Invoices</footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
   <div class="authCard">
     <h2>Staff Sign-In</h2>
-    <p class="authSub">Sign in with the username and password you were given to manage organizations.</p>
+    <p class="authSub">Sign in with the username and password you were given to manage Supplier Invoices.</p>
     <form id="authForm">
       <label>Username
         <input type="text" id="authUsername" autocomplete="username" autofocus>
@@ -259,96 +255,78 @@
   </div>
 </div>
 
-<div class="modalOverlay" id="orgModalOverlay">
+<div class="modalOverlay" id="invModalOverlay">
   <div class="modalCard">
-    <h2 id="modalTitle">Add Organization</h2>
-    <p class="modalSub" id="modalSub">Fill in what you know — most fields are optional.</p>
-    <form id="orgForm">
-      <div class="modalGrid">
-        <label>Organization Name
-          <input type="text" id="f_name" required>
+    <h2 id="modalTitle">Add Supplier Invoice</h2>
+    <p class="modalSub" id="modalSub">Enter the supplier's invoice exactly as received &mdash; the original PDF stays attached for reference.</p>
+    <form id="invForm">
+      <div class="modalGrid3">
+        <label>Invoice Number
+          <input type="text" id="f_invoiceNumber" required>
         </label>
-        <label>Relationship with Dessimate
-          <select id="f_relationship" required>
-            <option value="Supplier">Supplier</option>
-            <option value="Customer">Customer</option>
-            <option value="Self">Self (Dessimate)</option>
+        <label>Invoice Date
+          <input type="date" id="f_invoiceDate">
+        </label>
+        <label>Due Date
+          <input type="date" id="f_dueDate">
+        </label>
+      </div>
+      <div class="modalGrid3">
+        <label>Supplier
+          <select id="f_supplier" required></select>
+        </label>
+        <label>Dessimate PO Ref <span style="font-weight:400;">(optional)</span>
+          <select id="f_dessimatePoRef"></select>
+        </label>
+        <label>Status
+          <select id="f_status">
+            <option value="Unpaid">Unpaid</option>
+            <option value="Paid">Paid</option>
           </select>
         </label>
       </div>
-      <label>Address
-        <input type="text" id="f_address">
-      </label>
-      <div class="modalGrid">
-        <label>Phone
-          <input type="text" id="f_phone">
+      <div class="modalGrid3">
+        <label>Currency
+          <input type="text" id="f_currency" placeholder="USD">
         </label>
-        <label>Website
-          <input type="text" id="f_website" placeholder="https://">
+        <label>Payment Terms
+          <input type="text" id="f_paymentTerms" placeholder="Net 45">
         </label>
+        <span></span>
       </div>
 
       <div class="modalSection">
-        <h3>Logo</h3>
-        <p class="modalSub" style="margin:-6px 0 10px;">Shown on this organization's login screen (Supplier/Customer portals) once those launch. PNG, JPG, or PDF.</p>
-        <div class="docRow" data-doc-row="logo">
-          <div class="docLabel">Logo</div>
-          <div class="docMain">
-            <span class="docStatus" data-doc-status="logo">No file attached</span>
-            <input type="file" data-doc-input="logo" accept=".png,.jpg,.jpeg,.pdf,image/png,image/jpeg,application/pdf">
-            <div class="docLinks" data-doc-links="logo"></div>
-          </div>
+        <h3>Line Items</h3>
+        <div class="linesWrap">
+          <table class="linesTable">
+            <thead>
+              <tr>
+                <th style="min-width:150px;">Part Number</th>
+                <th style="min-width:170px;">Description</th>
+                <th style="min-width:70px;">UOM</th>
+                <th style="min-width:90px;">Qty Invoiced</th>
+                <th style="min-width:100px;">Unit Price</th>
+                <th style="min-width:110px;">Ext. Price</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="linesTableBody"></tbody>
+          </table>
         </div>
-      </div>
-
-      <div class="modalSection selfSection" id="selfSection">
-        <h3>Self Organization Details</h3>
-        <p class="modalSub" style="margin:-6px 0 10px;">Dessimate's own record — addresses and the emails used on generated Dessimate POs and Invoices.</p>
-        <div class="modalGrid">
-          <label>Sales Email <span style="font-weight:400;">(shown on Invoices)</span>
-            <input type="email" id="f_salesEmail" placeholder="sales@dessimate.com">
-          </label>
-          <label>Purchasing Email <span style="font-weight:400;">(shown on POs)</span>
-            <input type="email" id="f_purchasingEmail" placeholder="purchasing@dessimate.com">
-          </label>
-        </div>
-        <div id="addressList"></div>
-        <button type="button" class="addFileBtn" id="addAddressBtn">+ Add Address</button>
+        <button type="button" class="addLineBtn" id="addLineBtn">+ Add Line</button>
+        <div class="poTotalRow"><span class="label">Invoice Total:</span> <span class="amount" id="invTotalDisplay">0.00</span></div>
       </div>
 
       <div class="modalSection">
-        <h3>Documents</h3>
-        <div class="docRow" data-doc-row="companyPresentation">
-          <div class="docLabel">Company Presentation</div>
+        <h3>Original Invoice</h3>
+        <div class="docRow" data-doc-row="sourcePdf">
+          <div class="docLabel">Supplier Invoice PDF</div>
           <div class="docMain">
-            <span class="docStatus" data-doc-status="companyPresentation">No file attached</span>
-            <input type="file" data-doc-input="companyPresentation">
-            <div class="docLinks" data-doc-links="companyPresentation"></div>
+            <span class="docStatus" data-doc-status="sourcePdf">No file attached</span>
+            <input type="file" data-doc-input="sourcePdf" accept=".pdf,application/pdf">
+            <div class="docLinks" data-doc-links="sourcePdf"></div>
           </div>
         </div>
-        <div class="docRow" data-doc-row="nda">
-          <div class="docLabel">NDA</div>
-          <div class="docMain">
-            <span class="docStatus" data-doc-status="nda">No file attached</span>
-            <input type="file" data-doc-input="nda">
-            <div class="docLinks" data-doc-links="nda"></div>
-          </div>
-        </div>
-        <div class="docRow" data-doc-row="selfAssessment">
-          <div class="docLabel">Self-Assessment</div>
-          <div class="docMain">
-            <span class="docStatus" data-doc-status="selfAssessment">No file attached</span>
-            <input type="file" data-doc-input="selfAssessment">
-            <div class="docLinks" data-doc-links="selfAssessment"></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="modalSection">
-        <h3>Additional Documents</h3>
-        <ul class="genericList" id="genericList"></ul>
-        <input type="file" id="genericFileInput" style="display:none;">
-        <button type="button" class="addFileBtn" id="addGenericBtn">+ Add File</button>
       </div>
 
       <div class="modalError" id="modalError"></div>
@@ -382,7 +360,7 @@
   // ---- Backend (staff login + GitHub proxy) --------------------------------
   var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
-  var ORG_DOC_FOLDER = 'org_docs';
+  var SUPPLIER_INVOICE_DOC_FOLDER = 'supplier_invoice_docs';
 
   function getSession(){
     try{
@@ -412,7 +390,6 @@
   function workerContentsPath(fullPath){
     return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
   }
-
   function bytesToBase64(bytes){
     var binary = '', chunk = 0x8000;
     for (var i = 0; i < bytes.length; i += chunk) {
@@ -457,11 +434,8 @@
     }
     return await res.json();
   }
-  function buildNamedDocPath(orgId, key, filename){
-    return ORG_DOC_FOLDER + '/' + orgId + '/' + key + docFileExt(filename);
-  }
-  function buildGenericDocPath(orgId, genId, filename){
-    return ORG_DOC_FOLDER + '/' + orgId + '/generic/' + genId + '-' + (filename || 'file').replace(/\//g, '_');
+  function buildSourcePdfPath(invId, filename){
+    return SUPPLIER_INVOICE_DOC_FOLDER + '/' + invId + '/source' + docFileExt(filename);
   }
   function readFileAsBytes(file){
     return new Promise(function(resolve, reject){
@@ -546,8 +520,6 @@
   // -----------------------------------------------------------------------------
 
   // ---- In-page document viewer -----------------------------------------------
-  // Accepts either { filename, mimeType, bytes } (already in memory - a just
-  // -chosen file) or { filename, mimeType, path } (needs fetching first).
   var docViewerObjectUrl = null;
   function isInlineViewable(mimeType, filename){
     var ext = docFileExt(filename).toLowerCase();
@@ -608,94 +580,153 @@
   }
   // -----------------------------------------------------------------------------
 
-  // ---- Directory table --------------------------------------------------------
-  var lastOrgs = [];
-  var DOC_KEYS = [['companyPresentation', 'Presentation'], ['nda', 'NDA'], ['selfAssessment', 'Self-Assessment']];
-
   function escapeHtml(s){
     return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
       return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
     });
   }
-  function linkify(url){
-    if (!url) return '';
-    var href = /^https?:\/\//i.test(url) ? url : ('https://' + url);
-    return '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener">' + escapeHtml(url) + '</a>';
+  function money(n){
+    var v = Number(n) || 0;
+    return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  async function loadOrgs(){
+  // ---- Supplier / Parts / Dessimate PO dropdowns ------------------------------
+  var lastOrgs = [];
+  var lastParts = [];
+  var lastDessimatePos = [];
+  async function loadDropdownData(){
+    try {
+      var orgRes = await apiFetch('organizations');
+      var orgData = orgRes.ok ? await orgRes.json() : { organizations: [] };
+      lastOrgs = Array.isArray(orgData.organizations) ? orgData.organizations : [];
+    } catch (e) { console.error('Could not load organizations', e); lastOrgs = []; }
+    try {
+      var partRes = await apiFetch('parts');
+      var partData = partRes.ok ? await partRes.json() : { parts: [] };
+      lastParts = Array.isArray(partData.parts) ? partData.parts : [];
+    } catch (e) { console.error('Could not load parts', e); lastParts = []; }
+    try {
+      var dpoRes = await apiFetch('dessimate-pos');
+      var dpoData = dpoRes.ok ? await dpoRes.json() : { dessimatePos: [] };
+      lastDessimatePos = Array.isArray(dpoData.dessimatePos) ? dpoData.dessimatePos : [];
+    } catch (e) { console.error('Could not load Dessimate POs', e); lastDessimatePos = []; }
+  }
+  function supplierOrgOptions(currentValue){
+    var matching = lastOrgs.filter(function(o){ return o.relationship === 'Supplier'; });
+    var html = '<option value="">— Select Supplier —</option>' + matching.map(function(o){
+      var sel = (o.name === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(o.name) + '"' + sel + '>' + escapeHtml(o.name) + '</option>';
+    }).join('');
+    if (currentValue && !matching.some(function(o){ return o.name === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Organizations list)</option>';
+    }
+    return html;
+  }
+  function partOptions(currentValue){
+    var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
+      var sel = (p.partNumber === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(p.partNumber) + '"' + sel + '>' + escapeHtml(p.partNumber) + '</option>';
+    }).join('');
+    if (currentValue && !lastParts.some(function(p){ return p.partNumber === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Parts list)</option>';
+    }
+    return html;
+  }
+  function dessimatePoRefOptions(currentValue){
+    var html = '<option value="">— None —</option>' + lastDessimatePos.map(function(p){
+      var label = (p.poNumber || '') + ' — ' + (p.shipmentNumber || '') + (p.supplier ? ' — ' + p.supplier : '');
+      var val = String(p.poNumber);
+      var sel = (val === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(val) + '"' + sel + '>' + escapeHtml(label) + '</option>';
+    }).join('');
+    if (currentValue && !lastDessimatePos.some(function(p){ return String(p.poNumber) === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Dessimate POs list)</option>';
+    }
+    return html;
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- List table --------------------------------------------------------------
+  var lastInvoices = [];
+
+  async function loadInvoices(){
     var loadingEl = document.getElementById('loadingState');
     var errorEl = document.getElementById('errorState');
     var emptyEl = document.getElementById('emptyState');
-    var tableEl = document.getElementById('orgTable');
+    var tableEl = document.getElementById('invTable');
     loadingEl.style.display = 'block'; errorEl.style.display = 'none'; emptyEl.style.display = 'none'; tableEl.style.display = 'none';
     try {
-      var res = await apiFetch('organizations');
+      var res = await apiFetch('supplier-invoices');
       if (!res.ok) {
         var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
         throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
       }
       var data = await res.json();
-      lastOrgs = Array.isArray(data.organizations) ? data.organizations : [];
+      lastInvoices = Array.isArray(data.supplierInvoices) ? data.supplierInvoices : [];
       loadingEl.style.display = 'none';
       renderTable();
     } catch (err) {
       console.error(err);
       loadingEl.style.display = 'none';
       errorEl.style.display = 'block';
-      errorEl.textContent = 'Could not load organizations (' + err.message + ').';
+      errorEl.textContent = 'Could not load Supplier Invoices (' + err.message + ').';
     }
   }
 
   function renderTable(){
-    var tableEl = document.getElementById('orgTable');
-    var bodyEl = document.getElementById('orgTableBody');
+    var tableEl = document.getElementById('invTable');
+    var bodyEl = document.getElementById('invTableBody');
     var emptyEl = document.getElementById('emptyState');
-    if (!lastOrgs.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
+    if (!lastInvoices.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var sorted = lastOrgs.slice().sort(function(a, b){ return (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()); });
+    var sorted = lastInvoices.slice().sort(function(a, b){ return (b.invoiceDate || '').localeCompare(a.invoiceDate || ''); });
 
-    bodyEl.innerHTML = sorted.map(function(o){
-      var docBits = DOC_KEYS.map(function(kv){
-        var have = o.docs && o.docs[kv[0]];
-        return '<span class="' + (have ? 'have' : '') + '">' + kv[1] + (have ? ' ✓' : ' —') + '</span>';
-      }).join(' · ');
-      var genCount = (o.genericDocs || []).length;
-      var docsHtml = '<div class="docSummary">' + docBits + (genCount ? ' · ' + genCount + ' more' : '') + '</div>';
-
+    bodyEl.innerHTML = sorted.map(function(inv){
+      var docHtml = inv.sourcePdf
+        ? '<button type="button" class="editBtn" style="padding:5px 10px;" data-view-src="' + escapeHtml(inv.id) + '">View</button>'
+        : '<span style="color:var(--label);">—</span>';
+      var statusClass = inv.status === 'Paid' ? 'paid' : 'unpaid';
       return '<tr>' +
-        '<td class="orgName">' + escapeHtml(o.name) + '</td>' +
-        '<td><span class="relBadge ' + escapeHtml(o.relationship) + '">' + escapeHtml(o.relationship) + '</span></td>' +
-        '<td>' + escapeHtml(o.address) + '</td>' +
-        '<td>' + escapeHtml(o.phone) + '</td>' +
-        '<td>' + linkify(o.website) + '</td>' +
-        '<td>' + docsHtml + '</td>' +
+        '<td class="poNumber">' + escapeHtml(inv.invoiceNumber) + '</td>' +
+        '<td>' + escapeHtml(inv.supplier) + '</td>' +
+        '<td>' + escapeHtml(inv.dessimatePoRef || '—') + '</td>' +
+        '<td>' + escapeHtml(inv.invoiceDate) + '</td>' +
+        '<td>' + escapeHtml(inv.dueDate) + '</td>' +
+        '<td><span class="statusPill ' + statusClass + '">' + escapeHtml(inv.status) + '</span></td>' +
+        '<td class="moneyCell">' + escapeHtml(inv.currency || '') + ' ' + money(inv.invoiceTotal) + '</td>' +
+        '<td>' + docHtml + '</td>' +
         '<td><div class="rowActions">' +
-          '<button type="button" class="editBtn" data-edit="' + escapeHtml(o.id) + '">Edit</button>' +
-          '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(o.id) + '">Delete</button>' +
+          '<button type="button" class="editBtn" data-edit="' + escapeHtml(inv.id) + '">Edit</button>' +
+          '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(inv.id) + '">Delete</button>' +
         '</div></td>' +
         '</tr>';
     }).join('');
 
     bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
-      btn.addEventListener('click', function(){ openEditModal(this.getAttribute('data-edit')); });
+      btn.addEventListener('click', function(){ requireAuthThen(function(){ openEditModal(this.getAttribute('data-edit')); }.bind(this)); });
     });
     bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
-      btn.addEventListener('click', function(){ deleteOrg(this.getAttribute('data-delete')); });
+      btn.addEventListener('click', function(){ deleteInvoice(this.getAttribute('data-delete')); });
+    });
+    bodyEl.querySelectorAll('[data-view-src]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var inv = lastInvoices.find(function(p){ return p.id === this.getAttribute('data-view-src'); }.bind(this));
+        if (inv && inv.sourcePdf) openDocViewer({ filename: inv.sourcePdf.filename, mimeType: inv.sourcePdf.mimeType, path: inv.sourcePdf.path });
+      });
     });
   }
 
-  async function deleteOrg(id){
-    var org = lastOrgs.find(function(o){ return o.id === id; });
-    if (!confirm('Remove ' + (org ? org.name : 'this organization') + '? This can\'t be undone (its uploaded files stay in the repo, just unlinked).')) return;
+  async function deleteInvoice(id){
+    var inv = lastInvoices.find(function(p){ return p.id === id; });
+    if (!confirm('Remove Supplier Invoice ' + (inv ? inv.invoiceNumber : '') + '? This can\'t be undone (its attached source PDF stays in the repo, just unlinked).')) return;
     requireAuthThen(async function(){
       try {
-        var res = await apiFetch('organizations/' + encodeURIComponent(id), { method: 'DELETE' });
+        var res = await apiFetch('supplier-invoices/' + encodeURIComponent(id), { method: 'DELETE' });
         if (!res.ok) { var d = {}; try { d = await res.json(); } catch(e){} throw new Error(d.message || ('HTTP ' + res.status)); }
-        await loadOrgs();
+        await loadInvoices();
       } catch (err) {
-        alert('Could not delete this organization (' + (err && err.message ? err.message : err) + ').');
+        alert('Could not delete this Supplier Invoice (' + (err && err.message ? err.message : err) + ').');
       }
     });
   }
@@ -703,337 +734,237 @@
 
   // ---- Add / Edit modal --------------------------------------------------------
   var editingId = null;
-  var namedDocState = {}; // key -> { existing: {path,filename,mimeType,size}|null, pending: {bytes,filename,mimeType}|null, removed: bool }
-  var genericState = []; // { kind:'existing', id, path, filename, mimeType, size } | { kind:'pending', localId, bytes, filename, mimeType }
-  var logoState = { existing: null, pending: null, removed: false };
-  var addressState = []; // { label, address }
+  var sourcePdfState = { existing: null, pending: null, removed: false };
+  var lineRows = []; // { partNumber, description, uom, qtyInvoiced, unitPrice }
 
-  function resetDocState(org){
-    namedDocState = {};
-    DOC_KEYS.forEach(function(kv){
-      var key = kv[0];
-      namedDocState[key] = { existing: (org && org.docs && org.docs[key]) || null, pending: null, removed: false };
-    });
-    genericState = (org && org.genericDocs || []).map(function(d){
-      return { kind: 'existing', id: d.id, path: d.path, filename: d.filename, mimeType: d.mimeType, size: d.size };
-    });
-    logoState = { existing: (org && org.logo) || null, pending: null, removed: false };
-    addressState = (org && Array.isArray(org.addresses) ? org.addresses : []).map(function(a){
-      return { label: a.label || '', address: a.address || '' };
-    });
+  function newLineRow(){
+    return { partNumber: '', description: '', uom: '', qtyInvoiced: '', unitPrice: '' };
   }
 
-  function renderLogoRow(){
-    var statusEl = document.querySelector('[data-doc-status="logo"]');
-    var linksEl = document.querySelector('[data-doc-links="logo"]');
+  function renderLines(){
+    var bodyEl = document.getElementById('linesTableBody');
+    bodyEl.innerHTML = lineRows.map(function(row, idx){
+      var ext = (Number(row.qtyInvoiced) || 0) * (Number(row.unitPrice) || 0);
+      return '<tr data-line-idx="' + idx + '">' +
+        '<td><select data-line-field="partNumber">' + partOptions(row.partNumber) + '</select></td>' +
+        '<td><input type="text" data-line-field="description" value="' + escapeHtml(row.description) + '"></td>' +
+        '<td><input type="text" data-line-field="uom" value="' + escapeHtml(row.uom) + '"></td>' +
+        '<td><input type="number" step="any" min="0" data-line-field="qtyInvoiced" value="' + escapeHtml(row.qtyInvoiced) + '"></td>' +
+        '<td><input type="number" step="any" min="0" data-line-field="unitPrice" value="' + escapeHtml(row.unitPrice) + '"></td>' +
+        '<td class="extCell" data-line-ext>' + money(ext) + '</td>' +
+        '<td><button type="button" class="lineRemoveBtn" data-line-remove="' + idx + '">Remove</button></td>' +
+        '</tr>';
+    }).join('');
+
+    bodyEl.querySelectorAll('tr').forEach(function(tr){
+      var idx = parseInt(tr.getAttribute('data-line-idx'), 10);
+      tr.querySelectorAll('[data-line-field]').forEach(function(el){
+        var field = el.getAttribute('data-line-field');
+        el.addEventListener('input', function(){
+          lineRows[idx][field] = el.value;
+          if (field === 'partNumber') {
+            var part = lastParts.find(function(p){ return p.partNumber === el.value; });
+            if (part && !lineRows[idx].description) {
+              lineRows[idx].description = part.name || '';
+              renderLines();
+              return;
+            }
+          }
+          updateLineExtAndTotal(idx);
+        });
+        el.addEventListener('change', function(){
+          lineRows[idx][field] = el.value;
+          if (field === 'partNumber') {
+            var part = lastParts.find(function(p){ return p.partNumber === el.value; });
+            if (part) { lineRows[idx].description = part.name || lineRows[idx].description; }
+            renderLines();
+          }
+        });
+      });
+    });
+    bodyEl.querySelectorAll('[data-line-remove]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        lineRows.splice(parseInt(this.getAttribute('data-line-remove'), 10), 1);
+        renderLines();
+        updateInvTotal();
+      });
+    });
+    updateInvTotal();
+  }
+  function updateLineExtAndTotal(idx){
+    var tr = document.querySelector('#linesTableBody tr[data-line-idx="' + idx + '"]');
+    if (tr) {
+      var ext = (Number(lineRows[idx].qtyInvoiced) || 0) * (Number(lineRows[idx].unitPrice) || 0);
+      tr.querySelector('[data-line-ext]').textContent = money(ext);
+    }
+    updateInvTotal();
+  }
+  function updateInvTotal(){
+    var total = lineRows.reduce(function(sum, r){ return sum + (Number(r.qtyInvoiced) || 0) * (Number(r.unitPrice) || 0); }, 0);
+    document.getElementById('invTotalDisplay').textContent = money(total);
+  }
+  document.getElementById('addLineBtn').addEventListener('click', function(){
+    lineRows.push(newLineRow());
+    renderLines();
+  });
+
+  function renderSourcePdfRow(){
+    var statusEl = document.querySelector('[data-doc-status="sourcePdf"]');
+    var linksEl = document.querySelector('[data-doc-links="sourcePdf"]');
     var links = '';
-    if (logoState.pending) {
-      statusEl.textContent = 'Selected: ' + logoState.pending.filename + ' (will be uploaded on Save)';
+    if (sourcePdfState.pending) {
+      statusEl.textContent = 'Selected: ' + sourcePdfState.pending.filename + ' (will be uploaded on Save)';
       statusEl.className = 'docStatus ok';
-      links = '<button type="button" id="logoPreviewPendingBtn">Preview</button>';
-    } else if (logoState.existing && !logoState.removed) {
-      statusEl.textContent = 'Attached: ' + logoState.existing.filename;
+      links = '<button type="button" id="srcPreviewPendingBtn">Preview</button>';
+    } else if (sourcePdfState.existing && !sourcePdfState.removed) {
+      statusEl.textContent = 'Attached: ' + sourcePdfState.existing.filename;
       statusEl.className = 'docStatus ok';
-      links = '<button type="button" id="logoViewBtn">View</button>' +
-        '<span class="removeLink" style="cursor:pointer;" id="logoRemoveLink">Remove</span>';
+      links = '<button type="button" id="srcViewBtn">View</button>' +
+        '<span class="removeLink" style="cursor:pointer;" id="srcRemoveLink">Remove</span>';
     } else {
       statusEl.textContent = 'No file attached';
       statusEl.className = 'docStatus';
     }
     linksEl.innerHTML = links;
-    var previewBtn = document.getElementById('logoPreviewPendingBtn');
+    var previewBtn = document.getElementById('srcPreviewPendingBtn');
     if (previewBtn) previewBtn.addEventListener('click', function(){
-      openDocViewer({ filename: logoState.pending.filename, mimeType: logoState.pending.mimeType, bytes: logoState.pending.bytes });
+      openDocViewer({ filename: sourcePdfState.pending.filename, mimeType: sourcePdfState.pending.mimeType, bytes: sourcePdfState.pending.bytes });
     });
-    var viewBtn = document.getElementById('logoViewBtn');
+    var viewBtn = document.getElementById('srcViewBtn');
     if (viewBtn) viewBtn.addEventListener('click', function(){
-      openDocViewer({ filename: logoState.existing.filename, mimeType: logoState.existing.mimeType, path: logoState.existing.path });
+      openDocViewer({ filename: sourcePdfState.existing.filename, mimeType: sourcePdfState.existing.mimeType, path: sourcePdfState.existing.path });
     });
-    var removeLink = document.getElementById('logoRemoveLink');
+    var removeLink = document.getElementById('srcRemoveLink');
     if (removeLink) removeLink.addEventListener('click', function(){
-      logoState.removed = true;
-      renderLogoRow();
+      sourcePdfState.removed = true;
+      renderSourcePdfRow();
     });
   }
-  document.querySelector('[data-doc-input="logo"]').addEventListener('change', async function(){
+  document.querySelector('[data-doc-input="sourcePdf"]').addEventListener('change', async function(){
     var file = this.files && this.files[0];
     this.value = '';
     if (!file) return;
     try {
       var bytes = await readFileAsBytes(file);
-      logoState.pending = { bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' };
-      logoState.removed = false;
-      renderLogoRow();
-    } catch (e) {
-      alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
-    }
-  });
-
-  function renderAddressList(){
-    var listEl = document.getElementById('addressList');
-    if (!addressState.length) { listEl.innerHTML = ''; return; }
-    listEl.innerHTML = addressState.map(function(a, idx){
-      return '<div class="addrRow">' +
-        '<label class="addrLabel">Label' +
-          '<input type="text" data-addr-label="' + idx + '" value="' + escapeHtml(a.label) + '" placeholder="e.g. Delaware (Registered)">' +
-        '</label>' +
-        '<label class="addrValue">Address' +
-          '<input type="text" data-addr-value="' + idx + '" value="' + escapeHtml(a.address) + '" placeholder="Street, city, state, zip">' +
-        '</label>' +
-        '<button type="button" class="addrRemove" data-addr-remove="' + idx + '">Remove</button>' +
-      '</div>';
-    }).join('');
-    listEl.querySelectorAll('[data-addr-label]').forEach(function(inp){
-      inp.addEventListener('input', function(){ addressState[parseInt(this.getAttribute('data-addr-label'), 10)].label = this.value; });
-    });
-    listEl.querySelectorAll('[data-addr-value]').forEach(function(inp){
-      inp.addEventListener('input', function(){ addressState[parseInt(this.getAttribute('data-addr-value'), 10)].address = this.value; });
-    });
-    listEl.querySelectorAll('[data-addr-remove]').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        addressState.splice(parseInt(this.getAttribute('data-addr-remove'), 10), 1);
-        renderAddressList();
-      });
-    });
-  }
-  document.getElementById('addAddressBtn').addEventListener('click', function(){
-    addressState.push({ label: '', address: '' });
-    renderAddressList();
-  });
-
-  function updateSelfSectionVisibility(){
-    var isSelf = document.getElementById('f_relationship').value === 'Self';
-    document.getElementById('selfSection').classList.toggle('show', isSelf);
-  }
-  document.getElementById('f_relationship').addEventListener('change', updateSelfSectionVisibility);
-
-  function renderNamedDocRow(key){
-    var statusEl = document.querySelector('[data-doc-status="' + key + '"]');
-    var linksEl = document.querySelector('[data-doc-links="' + key + '"]');
-    var state = namedDocState[key];
-    var links = '';
-    if (state.pending) {
-      statusEl.textContent = 'Selected: ' + state.pending.filename + ' (will be uploaded on Save)';
-      statusEl.className = 'docStatus ok';
-      links = '<button type="button" data-doc-preview-pending="' + key + '">Preview</button>';
-    } else if (state.existing && !state.removed) {
-      statusEl.textContent = 'Attached: ' + state.existing.filename;
-      statusEl.className = 'docStatus ok';
-      links = '<button type="button" data-doc-view="' + key + '">View</button>' +
-        '<span class="removeLink" style="cursor:pointer;" data-doc-remove="' + key + '">Remove</span>';
-    } else {
-      statusEl.textContent = 'No file attached';
-      statusEl.className = 'docStatus';
-    }
-    linksEl.innerHTML = links;
-    var previewBtn = linksEl.querySelector('[data-doc-preview-pending]');
-    if (previewBtn) previewBtn.addEventListener('click', function(){
-      openDocViewer({ filename: state.pending.filename, mimeType: state.pending.mimeType, bytes: state.pending.bytes });
-    });
-    var viewBtn = linksEl.querySelector('[data-doc-view]');
-    if (viewBtn) viewBtn.addEventListener('click', function(){
-      openDocViewer({ filename: state.existing.filename, mimeType: state.existing.mimeType, path: state.existing.path });
-    });
-    var removeLink = linksEl.querySelector('[data-doc-remove]');
-    if (removeLink) removeLink.addEventListener('click', function(){
-      state.removed = true;
-      renderNamedDocRow(key);
-    });
-  }
-
-  function renderGenericList(){
-    var listEl = document.getElementById('genericList');
-    if (!genericState.length) { listEl.innerHTML = '<li style="color:var(--label); font-style:italic;">No additional documents.</li>'; return; }
-    listEl.innerHTML = genericState.map(function(item, idx){
-      var name = item.filename + (item.kind === 'pending' ? '' : '');
-      var pendingTag = item.kind === 'pending' ? '<span class="genPending">(pending upload)</span> ' : '';
-      return '<li>' +
-        '<span class="genName">' + pendingTag + escapeHtml(name) + '</span>' +
-        '<span class="docLinks">' +
-          '<button type="button" data-gen-view="' + idx + '">View</button>' +
-          '<span class="removeLink" style="cursor:pointer;" data-gen-remove="' + idx + '">Remove</span>' +
-        '</span>' +
-      '</li>';
-    }).join('');
-    listEl.querySelectorAll('[data-gen-view]').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var item = genericState[parseInt(this.getAttribute('data-gen-view'), 10)];
-        if (item.kind === 'pending') openDocViewer({ filename: item.filename, mimeType: item.mimeType, bytes: item.bytes });
-        else openDocViewer({ filename: item.filename, mimeType: item.mimeType, path: item.path });
-      });
-    });
-    listEl.querySelectorAll('[data-gen-remove]').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        genericState.splice(parseInt(this.getAttribute('data-gen-remove'), 10), 1);
-        renderGenericList();
-      });
-    });
-  }
-
-  DOC_KEYS.forEach(function(kv){
-    var key = kv[0];
-    document.querySelector('[data-doc-input="' + key + '"]').addEventListener('change', async function(){
-      var file = this.files && this.files[0];
-      this.value = '';
-      if (!file) return;
-      try {
-        var bytes = await readFileAsBytes(file);
-        namedDocState[key].pending = { bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' };
-        namedDocState[key].removed = false;
-        renderNamedDocRow(key);
-      } catch (e) {
-        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
-      }
-    });
-  });
-
-  document.getElementById('addGenericBtn').addEventListener('click', function(){
-    document.getElementById('genericFileInput').click();
-  });
-  document.getElementById('genericFileInput').addEventListener('change', async function(){
-    var file = this.files && this.files[0];
-    this.value = '';
-    if (!file) return;
-    try {
-      var bytes = await readFileAsBytes(file);
-      genericState.push({ kind: 'pending', localId: 'g' + Date.now() + Math.random().toString(16).slice(2), bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' });
-      renderGenericList();
+      sourcePdfState.pending = { bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' };
+      sourcePdfState.removed = false;
+      renderSourcePdfRow();
     } catch (e) {
       alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
     }
   });
 
   function resetForm(){
-    document.getElementById('orgForm').reset();
+    document.getElementById('invForm').reset();
     document.getElementById('modalError').textContent = '';
-    resetDocState(null);
-    DOC_KEYS.forEach(function(kv){ renderNamedDocRow(kv[0]); });
-    renderGenericList();
-    renderLogoRow();
-    renderAddressList();
-    updateSelfSectionVisibility();
+    sourcePdfState = { existing: null, pending: null, removed: false };
+    lineRows = [newLineRow()];
+    renderSourcePdfRow();
+    document.getElementById('f_supplier').innerHTML = supplierOrgOptions('');
+    document.getElementById('f_dessimatePoRef').innerHTML = dessimatePoRefOptions('');
+    document.getElementById('f_status').value = 'Unpaid';
+    renderLines();
   }
 
   function openAddModal(){
     editingId = null;
     resetForm();
-    document.getElementById('modalTitle').textContent = 'Add Organization';
-    document.getElementById('modalSub').textContent = 'Fill in what you know — most fields are optional.';
-    document.getElementById('orgModalOverlay').classList.add('open');
+    document.getElementById('modalTitle').textContent = 'Add Supplier Invoice';
+    document.getElementById('modalSub').textContent = 'Enter the supplier\'s invoice exactly as received — the original PDF stays attached for reference.';
+    document.getElementById('invModalOverlay').classList.add('open');
   }
   function openEditModal(id){
-    var o = lastOrgs.find(function(x){ return x.id === id; });
-    if (!o) return;
+    var inv = lastInvoices.find(function(x){ return x.id === id; });
+    if (!inv) return;
     editingId = id;
-    document.getElementById('orgForm').reset();
+    document.getElementById('invForm').reset();
     document.getElementById('modalError').textContent = '';
-    resetDocState(o);
-    DOC_KEYS.forEach(function(kv){ renderNamedDocRow(kv[0]); });
-    renderGenericList();
-    renderLogoRow();
-    renderAddressList();
-    document.getElementById('modalTitle').textContent = 'Edit Organization';
-    document.getElementById('modalSub').textContent = 'Update this organization\'s details.';
-    document.getElementById('f_name').value = o.name || '';
-    document.getElementById('f_relationship').value = o.relationship || 'Supplier';
-    document.getElementById('f_address').value = o.address || '';
-    document.getElementById('f_phone').value = o.phone || '';
-    document.getElementById('f_website').value = o.website || '';
-    document.getElementById('f_salesEmail').value = o.salesEmail || '';
-    document.getElementById('f_purchasingEmail').value = o.purchasingEmail || '';
-    updateSelfSectionVisibility();
-    document.getElementById('orgModalOverlay').classList.add('open');
+    sourcePdfState = { existing: inv.sourcePdf || null, pending: null, removed: false };
+    lineRows = (inv.lines && inv.lines.length) ? inv.lines.map(function(l){
+      return { partNumber: l.partNumber, description: l.description, uom: l.uom, qtyInvoiced: l.qtyInvoiced, unitPrice: l.unitPrice };
+    }) : [newLineRow()];
+    renderSourcePdfRow();
+    document.getElementById('modalTitle').textContent = 'Edit Supplier Invoice';
+    document.getElementById('modalSub').textContent = 'Update this Supplier Invoice\'s details.';
+    document.getElementById('f_invoiceNumber').value = inv.invoiceNumber || '';
+    document.getElementById('f_invoiceDate').value = inv.invoiceDate || '';
+    document.getElementById('f_dueDate').value = inv.dueDate || '';
+    document.getElementById('f_supplier').innerHTML = supplierOrgOptions(inv.supplier || '');
+    document.getElementById('f_dessimatePoRef').innerHTML = dessimatePoRefOptions(inv.dessimatePoRef || '');
+    document.getElementById('f_status').value = inv.status || 'Unpaid';
+    document.getElementById('f_currency').value = inv.currency || '';
+    document.getElementById('f_paymentTerms').value = inv.paymentTerms || '';
+    renderLines();
+    document.getElementById('invModalOverlay').classList.add('open');
   }
-  function closeModal(){ document.getElementById('orgModalOverlay').classList.remove('open'); }
-  document.getElementById('addOrgBtn').addEventListener('click', function(){ requireAuthThen(openAddModal); });
+  function closeModal(){ document.getElementById('invModalOverlay').classList.remove('open'); }
+  document.getElementById('addInvBtn').addEventListener('click', function(){
+    requireAuthThen(async function(){ await loadDropdownData(); openAddModal(); });
+  });
   document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
-  document.getElementById('orgModalOverlay').addEventListener('click', function(e){
-    if (e.target.id === 'orgModalOverlay') closeModal();
+  document.getElementById('invModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'invModalOverlay') closeModal();
   });
 
-  document.getElementById('orgForm').addEventListener('submit', async function(e){
+  document.getElementById('invForm').addEventListener('submit', async function(e){
     e.preventDefault();
     var errEl = document.getElementById('modalError');
     var saveBtn = document.getElementById('modalSaveBtn');
     errEl.textContent = '';
 
     var baseFields = {
-      name: document.getElementById('f_name').value.trim(),
-      relationship: document.getElementById('f_relationship').value,
-      address: document.getElementById('f_address').value.trim(),
-      phone: document.getElementById('f_phone').value.trim(),
-      website: document.getElementById('f_website').value.trim(),
-      salesEmail: document.getElementById('f_salesEmail').value.trim(),
-      purchasingEmail: document.getElementById('f_purchasingEmail').value.trim(),
-      addresses: addressState.filter(function(a){ return a.label.trim() || a.address.trim(); })
+      invoiceNumber: document.getElementById('f_invoiceNumber').value.trim(),
+      invoiceDate: document.getElementById('f_invoiceDate').value,
+      dueDate: document.getElementById('f_dueDate').value,
+      supplier: document.getElementById('f_supplier').value,
+      dessimatePoRef: document.getElementById('f_dessimatePoRef').value,
+      status: document.getElementById('f_status').value,
+      currency: document.getElementById('f_currency').value.trim(),
+      paymentTerms: document.getElementById('f_paymentTerms').value.trim(),
+      lines: lineRows.filter(function(r){ return r.partNumber; })
     };
-    if (!baseFields.name) { errEl.textContent = 'Organization name is required.'; return; }
+    if (!baseFields.invoiceNumber) { errEl.textContent = 'Invoice Number is required.'; return; }
+    if (!baseFields.supplier) { errEl.textContent = 'Select a Supplier.'; return; }
+    if (!baseFields.lines.length) { errEl.textContent = 'Add at least one line item with a Part Number.'; return; }
 
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
-      var orgId = editingId;
-      if (!orgId) {
-        var createRes = await apiFetch('organizations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
+      var invId = editingId;
+      if (!invId) {
+        var createRes = await apiFetch('supplier-invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
         var createData = {}; try { createData = await createRes.json(); } catch(e){}
         if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
-        orgId = createData.id;
+        invId = createData.id;
       }
 
-      var docsPayload = {};
-      for (var i = 0; i < DOC_KEYS.length; i++) {
-        var key = DOC_KEYS[i][0];
-        var state = namedDocState[key];
-        if (state.pending) {
-          var path = buildNamedDocPath(orgId, key, state.pending.filename);
-          await ghPutFile(path, state.pending.bytes, 'Upload ' + key + ' for organization ' + baseFields.name);
-          docsPayload[key] = { path: path, filename: state.pending.filename, mimeType: state.pending.mimeType, size: state.pending.bytes.length };
-        } else if (state.removed) {
-          docsPayload[key] = null;
-        } else {
-          docsPayload[key] = state.existing;
-        }
-      }
-
-      var genericPayload = [];
-      for (var j = 0; j < genericState.length; j++) {
-        var item = genericState[j];
-        if (item.kind === 'existing') {
-          genericPayload.push({ id: item.id, path: item.path, filename: item.filename, mimeType: item.mimeType, size: item.size });
-        } else {
-          var genPath = buildGenericDocPath(orgId, item.localId, item.filename);
-          await ghPutFile(genPath, item.bytes, 'Upload additional document for organization ' + baseFields.name);
-          genericPayload.push({ id: item.localId, path: genPath, filename: item.filename, mimeType: item.mimeType, size: item.bytes.length });
-        }
-      }
-
-      var logoPayload;
-      if (logoState.pending) {
-        var logoPath = buildNamedDocPath(orgId, 'logo', logoState.pending.filename);
-        await ghPutFile(logoPath, logoState.pending.bytes, 'Upload logo for organization ' + baseFields.name);
-        logoPayload = { path: logoPath, filename: logoState.pending.filename, mimeType: logoState.pending.mimeType, size: logoState.pending.bytes.length };
-      } else if (logoState.removed) {
-        logoPayload = null;
+      var sourcePayload;
+      if (sourcePdfState.pending) {
+        var path = buildSourcePdfPath(invId, sourcePdfState.pending.filename);
+        await ghPutFile(path, sourcePdfState.pending.bytes, 'Upload source PDF for Supplier Invoice ' + baseFields.invoiceNumber);
+        sourcePayload = { path: path, filename: sourcePdfState.pending.filename, mimeType: sourcePdfState.pending.mimeType, size: sourcePdfState.pending.bytes.length };
+      } else if (sourcePdfState.removed) {
+        sourcePayload = null;
       } else {
-        logoPayload = logoState.existing;
+        sourcePayload = sourcePdfState.existing;
       }
 
-      var putRes = await apiFetch('organizations/' + encodeURIComponent(orgId), {
+      var putRes = await apiFetch('supplier-invoices/' + encodeURIComponent(invId), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({}, baseFields, { docs: docsPayload, genericDocs: genericPayload, logo: logoPayload }))
+        body: JSON.stringify(Object.assign({}, baseFields, { sourcePdf: sourcePayload }))
       });
       var putData = {}; try { putData = await putRes.json(); } catch(e){}
       if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
 
       closeModal();
-      await loadOrgs();
+      await loadInvoices();
     } catch (err) {
-      errEl.textContent = err && err.message ? err.message : 'Could not save this organization.';
+      errEl.textContent = err && err.message ? err.message : 'Could not save this Supplier Invoice.';
     } finally {
       saveBtn.disabled = false; saveBtn.textContent = 'Save';
     }
   });
   // -----------------------------------------------------------------------------
 
-  requireAuthThen(loadOrgs);
+  requireAuthThen(async function(){ await loadDropdownData(); await loadInvoices(); });
 })();
 </script>

@@ -1,0 +1,428 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Instructions &mdash; DSCM</title>
+<script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:900px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+
+  .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .homeBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
+    border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
+    color:var(--brand); background:#fff; border:1px solid var(--brand);
+  }
+  .homeBtn:hover{ background:#eef1fa; }
+  html[data-embedded] .homeBtn{ display:none !important; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
+    font-size:12.5px; margin:10px 0 18px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  /* Staff login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+
+  .intro{ font-size:13.5px; color:var(--label); margin:0 0 18px; max-width:64ch; }
+
+  .tabBar{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; border-bottom:1px solid var(--line); padding-bottom:14px; }
+  .tabBtn{ font-family:inherit; font-size:13.5px; font-weight:700; cursor:pointer;
+    border-radius:8px; padding:9px 16px; border:1px solid var(--line); background:#fff; color:var(--label); }
+  .tabBtn:hover{ background:#eef1fa; color:var(--brand); }
+  .tabBtn.active{ background:var(--brand); border-color:var(--brand); color:#fff; }
+
+  .guidePanel{ display:none; }
+  .guidePanel.active{ display:block; }
+  .guideHead{ margin-bottom:16px; }
+  .guideHead h2{ font-size:17px; margin:0 0 4px; }
+  .guideHead p{ font-size:13px; color:var(--label); margin:0; max-width:62ch; }
+  .previewNote{ display:inline-block; margin-top:8px; font-size:11.5px; font-weight:600; color:#a06a1c;
+    background:#fdf1de; border-radius:6px; padding:5px 10px; }
+
+  .stepList{ display:flex; flex-direction:column; gap:0; }
+  .step{ display:flex; gap:14px; padding:16px 0; border-bottom:1px solid var(--line); }
+  .step:last-child{ border-bottom:none; }
+  .stepNum{ flex:0 0 30px; width:30px; height:30px; border-radius:50%; background:var(--brand); color:#fff;
+    font-weight:700; font-size:13.5px; display:flex; align-items:center; justify-content:center; }
+  .stepBody{ flex:1 1 auto; min-width:0; }
+  .stepBody h3{ font-size:14.5px; margin:2px 0 5px; }
+  .stepBody p{ font-size:13px; color:var(--label); margin:0 0 8px; max-width:60ch; }
+  .stepLink{ display:inline-block; font-size:12.5px; font-weight:700; color:var(--brand); background:#eef1fa;
+    border-radius:6px; padding:5px 11px; text-decoration:none; }
+  .stepLink:hover{ background:#dde6f8; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>Instructions</h1>
+        <p class="sub">A short walkthrough of the workflow, in the order it actually happens.</p>
+      </div>
+    </div>
+    <div class="headerBtns">
+      <a class="homeBtn" href="index.html">Home</a>
+      <a class="homeBtn" href="PDIR_Portal.html">PDIR Portal</a>
+      <a class="homeBtn" href="PDIR_Users.html">Users</a>
+      <a class="homeBtn" href="PDIR_Organizations.html">Organizations</a>
+      <a class="homeBtn" href="PDIR_Parts.html">Parts</a>
+      <a class="homeBtn" href="PDIR_DessimatePOs.html">Dessimate POs</a>
+      <a class="homeBtn" href="PDIR_SupplierInvoices.html">Supplier Invoices</a>
+      <a class="homeBtn" href="PDIR_CustomerPOs.html">Customer POs</a>
+      <a class="homeBtn" href="PDIR_DessimateInvoices.html">Dessimate Invoices</a>
+      <a class="homeBtn" href="APQP.html">APQP</a>
+    </div>
+  </div>
+
+  <div class="ghbar">
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
+  </div>
+
+  <p class="intro">Four short guides, one per role — each shows only the steps that role actually does. You're
+    seeing the one(s) that match your own sign-in below; an Admin or Super Admin sees all four, since supporting
+    everyone else's workflow is part of the job.</p>
+
+  <div class="tabBar" id="tabBar"></div>
+
+  <div id="guideAdmin" class="guidePanel" data-guide="admin">
+    <div class="guideHead">
+      <h2>Admin — full workflow</h2>
+      <p>Everything below, start to finish, plus the accounts and records behind it all.</p>
+    </div>
+    <div class="stepList">
+      <div class="step"><div class="stepNum">1</div><div class="stepBody">
+        <h3>Add the Part, if it's new</h3>
+        <p>Part Number is the only required field. Link the Customer and any Suppliers who make it, and attach the drawing if you have one.</p>
+        <a class="stepLink" href="PDIR_Parts.html">Open Parts</a>
+      </div></div>
+      <div class="step"><div class="stepNum">2</div><div class="stepBody">
+        <h3>Log the Customer PO</h3>
+        <p>Enter the header (customer, dates, terms) and every line item, then attach the customer's original PDF for reference. The line total and PO total are calculated for you as you type.</p>
+        <a class="stepLink" href="PDIR_CustomerPOs.html">Open Customer POs</a>
+      </div></div>
+      <div class="step"><div class="stepNum">3</div><div class="stepBody">
+        <h3>A Dessimate PO goes out to the supplier</h3>
+        <p>A Team Member issues the Dessimate PO — PO Number and Shipment Number are both assigned automatically the moment it's saved, and can't be typed or changed afterward.</p>
+        <a class="stepLink" href="PDIR_DessimatePOs.html">Open Dessimate POs</a>
+      </div></div>
+      <div class="step"><div class="stepNum">4</div><div class="stepBody">
+        <h3>PDIR and Supplier Invoice come in</h3>
+        <p>The PDIR is filled under that Shipment Number, and the Supplier Invoice is recorded once it arrives — linked to the Dessimate PO it belongs to.</p>
+        <a class="stepLink" href="PDIR_Portal.html">Open PDIR Portal</a>
+      </div></div>
+      <div class="step"><div class="stepNum">5</div><div class="stepBody">
+        <h3>Track pre-production sign-off, if this Part needs it</h3>
+        <p>The 9-item APQP checklist (Design Record, Control Plan, PSW, and so on) — files and a comment log, per Part.</p>
+        <a class="stepLink" href="APQP.html">Open APQP</a>
+      </div></div>
+      <div class="step"><div class="stepNum">6</div><div class="stepBody">
+        <h3>Issue the Dessimate Invoice</h3>
+        <p>Reference the Customer PO — Invoice Number is assigned automatically on save. Mark it Paid once payment is received; deleting one is a soft delete, so the numbering sequence never has a gap.</p>
+        <a class="stepLink" href="PDIR_DessimateInvoices.html">Open Dessimate Invoices</a>
+      </div></div>
+      <div class="step"><div class="stepNum">7</div><div class="stepBody">
+        <h3>Manage the people and organizations behind all of this</h3>
+        <p>Users — accounts, access levels, and each Approver's stamp image. Organizations — every Supplier and Customer's contact info and documents. Both are Super Admin only; Parts is open to every signed-in Dessimate team member already.</p>
+        <a class="stepLink" href="PDIR_Users.html">Open Users</a>
+      </div></div>
+    </div>
+  </div>
+
+  <div id="guideTeam" class="guidePanel" data-guide="team">
+    <div class="guideHead">
+      <h2>Dessimate Team Member — Dessimate PO through Supplier Invoice</h2>
+      <p>Starts once a Customer PO already exists in the system, and stops before the Dessimate Invoice — that part's an Admin step.</p>
+    </div>
+    <div class="stepList">
+      <div class="step"><div class="stepNum">1</div><div class="stepBody">
+        <h3>Issue the Dessimate PO</h3>
+        <p>Pick the Supplier and the Part(s) being ordered. PO Number and Shipment Number are assigned automatically when you save — if your account has an Approver's stamp set, it's embedded on the generated PDF.</p>
+        <a class="stepLink" href="PDIR_DessimatePOs.html">Open Dessimate POs</a>
+      </div></div>
+      <div class="step"><div class="stepNum">2</div><div class="stepBody">
+        <h3>Fill the PDIR</h3>
+        <p>Under the same Shipment Number the Dessimate PO just created.</p>
+        <a class="stepLink" href="PDIR_Portal.html">Open PDIR Portal</a>
+      </div></div>
+      <div class="step"><div class="stepNum">3</div><div class="stepBody">
+        <h3>Record the Supplier Invoice</h3>
+        <p>Once the supplier's invoice arrives, log it here and link it to the Dessimate PO it belongs to.</p>
+        <a class="stepLink" href="PDIR_SupplierInvoices.html">Open Supplier Invoices</a>
+      </div></div>
+      <div class="step"><div class="stepNum">4</div><div class="stepBody">
+        <h3>Keep the Parts master current</h3>
+        <p>Add new part numbers as they come up, attach drawings, and keep each part's Customer/Supplier links accurate — read and write here is open to every signed-in Dessimate team member.</p>
+        <a class="stepLink" href="PDIR_Parts.html">Open Parts</a>
+      </div></div>
+      <div class="step"><div class="stepNum">5</div><div class="stepBody">
+        <h3>Track pre-production sign-off</h3>
+        <p>Upload documents and leave comments against the 9-item APQP checklist for any Part that needs it.</p>
+        <a class="stepLink" href="APQP.html">Open APQP</a>
+      </div></div>
+    </div>
+  </div>
+
+  <div id="guideSupplier" class="guidePanel" data-guide="supplier">
+    <div class="guideHead">
+      <h2>Supplier — your PO through your invoice</h2>
+      <p>Everything from your side of one shipment, in order.</p>
+      <span class="previewNote">Supplier sign-in isn't turned on yet — this is what you'll see once it is.</span>
+    </div>
+    <div class="stepList">
+      <div class="step"><div class="stepNum">1</div><div class="stepBody">
+        <h3>You receive a Dessimate PO</h3>
+        <p>It carries a PO Number and a Shipment Number — this is the order to fulfill.</p>
+      </div></div>
+      <div class="step"><div class="stepNum">2</div><div class="stepBody">
+        <h3>Ship against it</h3>
+        <p>The Shipment Number is how everything downstream — the PDIR, your invoice — ties back to this specific order.</p>
+      </div></div>
+      <div class="step"><div class="stepNum">3</div><div class="stepBody">
+        <h3>Your input feeds the PDIR</h3>
+        <p>The quality inspection report for that shipment, filed under its Shipment Number.</p>
+      </div></div>
+      <div class="step"><div class="stepNum">4</div><div class="stepBody">
+        <h3>Send your invoice</h3>
+        <p>Once it's sent, Dessimate records it against this same Dessimate PO and shipment.</p>
+      </div></div>
+    </div>
+  </div>
+
+  <div id="guideCustomer" class="guidePanel" data-guide="customer">
+    <div class="guideHead">
+      <h2>Customer — your PO through your invoice</h2>
+      <p>What happens to your order after you send it, and what you'll be able to see.</p>
+      <span class="previewNote">Customer sign-in isn't turned on yet — this is what you'll see once it is.</span>
+    </div>
+    <div class="stepList">
+      <div class="step"><div class="stepNum">1</div><div class="stepBody">
+        <h3>Your PO is logged</h3>
+        <p>Once Dessimate receives it, it's entered against your organization with every line item.</p>
+      </div></div>
+      <div class="step"><div class="stepNum">2</div><div class="stepBody">
+        <h3>Dessimate places the order with a manufacturing supplier</h3>
+        <p>On your behalf, and manages the shipment through to delivery.</p>
+      </div></div>
+      <div class="step"><div class="stepNum">3</div><div class="stepBody">
+        <h3>You can review the PDIR</h3>
+        <p>The quality inspection report for your shipment — everything on it except the Supplier Invoice, which stays internal to Dessimate.</p>
+      </div></div>
+      <div class="step"><div class="stepNum">4</div><div class="stepBody">
+        <h3>Dessimate invoices you</h3>
+        <p>Referencing your original PO number.</p>
+      </div></div>
+    </div>
+  </div>
+
+  <footer>Dessimate &middot; DSCM &middot; Instructions</footer>
+</div>
+
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Staff Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to view the instructions.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ---- Backend (staff login only - this page has no data of its own) --------
+  var WORKER_BASE_URL = 'https://amy.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
+
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+  // -----------------------------------------------------------------------------
+
+  // ---- Staff login wall -----------------------------------------------------
+  var pendingAfterAuth = null;
+
+  function refreshGhStatus(){
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Welcome, ' + session.username;
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Log out';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Log out';
+    }
+  }
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
+    refreshGhStatus();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+        document.getElementById('authPassword').value = '';
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  refreshGhStatus();
+  // -----------------------------------------------------------------------------
+
+  // ---- Role-gated guide tabs --------------------------------------------------
+  // Which guide(s) each access level sees, and which one opens by default.
+  // Admin/Super Admin see every guide (they support everyone's workflow), a
+  // Team Member sees only their own, and Supplier/Customer (once those logins
+  // exist) see only theirs - "gated the same way the module it documents is
+  // gated," per the original spec.
+  var GUIDES = [
+    { key: 'admin', tabLabel: 'Admin', panelId: 'guideAdmin', levels: ['admin', 'super_admin'] },
+    { key: 'team', tabLabel: 'Dessimate Team Member', panelId: 'guideTeam', levels: ['team_member', 'admin', 'super_admin'] },
+    { key: 'supplier', tabLabel: 'Supplier', panelId: 'guideSupplier', levels: ['supplier', 'admin', 'super_admin'] },
+    { key: 'customer', tabLabel: 'Customer', panelId: 'guideCustomer', levels: ['customer', 'admin', 'super_admin'] }
+  ];
+  var DEFAULT_TAB = { team_member: 'team', admin: 'admin', super_admin: 'admin', supplier: 'supplier', customer: 'customer' };
+
+  function showTab(key){
+    document.querySelectorAll('.tabBtn').forEach(function(el){
+      el.classList.toggle('active', el.getAttribute('data-tab') === key);
+    });
+    document.querySelectorAll('.guidePanel').forEach(function(el){
+      el.classList.toggle('active', el.getAttribute('data-guide') === key);
+    });
+  }
+
+  function renderTabs(accessLevel){
+    var visible = GUIDES.filter(function(g){ return g.levels.indexOf(accessLevel) !== -1; });
+    if (!visible.length) visible = GUIDES.filter(function(g){ return g.key === 'team'; }); // safe fallback
+    var bar = document.getElementById('tabBar');
+    bar.innerHTML = '';
+    visible.forEach(function(g){
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tabBtn';
+      btn.setAttribute('data-tab', g.key);
+      btn.textContent = g.tabLabel;
+      btn.addEventListener('click', function(){ showTab(g.key); });
+      bar.appendChild(btn);
+    });
+    var defaultKey = DEFAULT_TAB[accessLevel] || visible[0].key;
+    if (!visible.some(function(g){ return g.key === defaultKey; })) defaultKey = visible[0].key;
+    showTab(defaultKey);
+  }
+
+  async function resolveAccessAndRenderTabs(){
+    var session = getSession();
+    var accessLevel = 'team_member';
+    if (session) {
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+        if (res.ok) {
+          var data = await res.json();
+          accessLevel = data.accessLevel || 'team_member';
+        }
+      } catch (e) { console.error('Could not resolve access level', e); }
+    }
+    renderTabs(accessLevel);
+  }
+  // -----------------------------------------------------------------------------
+
+  requireAuthThen(resolveAccessAndRenderTabs);
+})();
+</script>
