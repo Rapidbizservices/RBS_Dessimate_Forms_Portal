@@ -1,0 +1,29 @@
+[
+  {
+    "id": "8fd431f4-c322-4fc9-a2ca-27cfa0b68d8f",
+    "createdAt": "2026-09-04T23:08:56.659Z",
+    "invoiceNumber": 3014,
+    "deleted": false,
+    "deletedAt": null,
+    "invoiceDate": "2026-09-04",
+    "customer": "Det-tronics",
+    "customerPoRef": "1",
+    "shipTo": "",
+    "currency": "",
+    "paymentTerms": "",
+    "incoterms": "",
+    "status": "Unpaid",
+    "lines": [
+      {
+        "lineNo": "",
+        "partNumber": "007157-001",
+        "description": "Flanged Head",
+        "revision": "",
+        "uom": "",
+        "qtyShipped": 0,
+        "unitPrice": 0,
+        "extendedPrice": 0
+      }
+    ]
+  }
+]
