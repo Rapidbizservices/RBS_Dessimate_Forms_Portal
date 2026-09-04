@@ -23,7 +23,9 @@
     "email": "",
     "phone": "",
     "active": true,
-    "name": "Roberto Marin"
+    "name": "Roberto Marin",
+    "accessLevel": "super_admin",
+    "isDemo": false
   },
   {
     "id": "69c677d6-9996-4e36-8991-94d4cbaadbb7",
