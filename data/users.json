@@ -166,5 +166,21 @@
     "email": "",
     "phone": "",
     "active": true
+  },
+  {
+    "id": "46f57367-9bfb-49e9-98b2-81a42df20ac7",
+    "name": "Santosh Gaikwad",
+    "username": null,
+    "salt": null,
+    "hash": null,
+    "organization": "Manoj Industries",
+    "relationship": "Supplier",
+    "role": "Delivery Head",
+    "email": "",
+    "phone": "",
+    "active": true,
+    "accessLevel": null,
+    "isDemo": false,
+    "stampImage": null
   }
 ]
