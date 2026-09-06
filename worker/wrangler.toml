@@ -1,18 +1,36 @@
-name = "amy"
+name = "roberto"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
 
-# Not secret - which repo this backend saves into, and which single origin
-# is allowed to call it (your GitHub Pages site). Change these if you ever
-# rename the repo or move the site.
+# Not secret - the one origin allowed to call this backend (your GitHub Pages
+# site). Change this if you ever move the site to a different address.
 [vars]
-GITHUB_OWNER = "Rapidbizservices"
-GITHUB_REPO = "RBS_Dessimate_Forms_Portal"
 ALLOWED_ORIGIN = "https://rapidbizservices.github.io"
 
-# Secrets (set these with `wrangler secret put <NAME>` — see the README in
+# Cloudflare-native storage bindings - replaces the old GitHub-backed
+# storage entirely. Both resources already exist in your Cloudflare account
+# (created by the one-time setup workflow) - this just wires the Worker to
+# them.
+[[d1_databases]]
+binding = "DB"
+database_name = "dscm-db"
+database_id = "5e6c1f37-8995-4425-bdad-b8f4e7985743"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "dscm-files"
+
+# Secrets (set these with `wrangler secret put <NAME>` - see the README in
 # this folder for exact commands):
-#   GITHUB_TOKEN    - a GitHub PAT with Contents: Read and write on the repo
 #   SESSION_SECRET  - random string, used to sign staff login sessions
 #   STAFF_USERS     - JSON array of {username, salt, hash} - generate each
-#                     entry with password_hash_tool.html
+#                     entry with password_hash_tool.html. Every current
+#                     account is already migrated into data/users.json, so
+#                     this can simply be "[]" on this new backend.
+#   MIGRATION_KEY   - TEMPORARY, only needed once. A random string that
+#                     guards the one-time /admin/migrate-from-github route
+#                     (see worker/README.md). Delete this secret once the
+#                     migration is confirmed complete.
+# Note: GITHUB_TOKEN is no longer used - this backend never talks to GitHub
+# for anything except the one-time migration, which reads the old public
+# repo's already-public files with no token at all.
