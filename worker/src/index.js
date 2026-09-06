@@ -1,34 +1,41 @@
 /**
- * Dessimate Forms Portal - backend
+ * Dessimate Supply Chain Management System - backend ("roberto")
  * ---------------------------------------------------------------------------
- * A thin, authenticated proxy in front of the GitHub Contents API.
+ * An authenticated API backed entirely by Cloudflare's own storage - no
+ * GitHub involved in storing any data or files.
  *
  * WHY THIS EXISTS
  * The Forms Portal pages (PDIR_Form_Filler.html, PDIR_Portal.html, and
- * eventually the PSW form) are plain static files with no server of their
- * own. Saving data into the GitHub repo therefore requires *someone's*
- * GitHub credentials. Originally each staff member pasted in their own
- * GitHub Personal Access Token — which meant every staff member needed a
- * GitHub account with write access to the repo. That doesn't work for
- * non-technical staff.
+ * the rest) are plain static files with no server of their own. Staff log in
+ * with a username/password and get back a short-lived signed session token;
+ * every route except /login and /health requires a valid session token.
  *
- * This Worker fixes that by being the only thing that holds the real GitHub
- * token (as a Worker secret, never sent to the browser). Staff instead log
- * in with a username/password, and get back a short-lived signed session
- * token. Every route except /login and /health requires a valid session
- * token.
+ * STORAGE (Cloudflare-native, migrated from GitHub - see worker/README.md
+ * "Cloudflare-native storage migration" section for the full history)
+ * - D1 (env.DB): one SQL table, `documents`, holding every JSON "database"
+ *   record (users, organizations, parts, POs, invoices, counters, etc.) as
+ *   one row per logical path (e.g. "data/users.json"). A `version` column
+ *   replaces GitHub's blob "sha" for optimistic-concurrency checks - every
+ *   write generates a fresh version token, and an update only succeeds if
+ *   the caller's version still matches what's stored.
+ * - R2 (env.FILES): every actual file - CAD drawings, PDFs, PDIR reports,
+ *   stamps, logos, attachments - stored under the exact same relative paths
+ *   the GitHub repo used to use (part_docs/<id>/..., customer_po_docs/<id>/
+ *   source.pdf, etc.), so nothing about the app's own path conventions had
+ *   to change. R2 is private by default - nothing here is publicly
+ *   reachable the way the old public GitHub repo's files were.
  *
- * The response *shapes* for /contents and /commits deliberately mirror
- * GitHub's own Contents API (an object with base64 "content" for a file, an
- * array of {name,type,...} for a directory listing, etc.) so the existing
- * frontend code — which already treats "the API" as a configurable base URL
- * — needed almost no changes beyond pointing at this Worker and swapping the
- * Authorization header from a GitHub PAT to a session token.
+ * The response *shapes* for /contents and /commits still mirror GitHub's own
+ * old Contents API (an object with base64 "content" for a file, an array of
+ * {name,type,...} for a directory listing, etc.) purely so the existing
+ * frontend code - which already treats "the API" as a configurable base URL
+ * - needed no changes beyond pointing at this Worker's URL. Nothing behind
+ * that shape actually talks to GitHub any more.
  *
  * USER DIRECTORY (Organization, Role, Email, Phone, Active, etc.)
  * The full user directory (everyone with a Portal login, plus Supplier /
- * Customer contact records with no login) lives in one JSON file in the
- * repo, USERS_FILE_PATH below, read and written only through the /admin/users
+ * Customer contact records with no login) lives in one JSON document in D1,
+ * USERS_FILE_PATH below, read and written only through the /admin/users
  * routes — never through the generic /contents proxy, so a signed-in staff
  * member's own browser can never fetch anyone's password hash directly (see
  * the guard at the top of proxyContents).
@@ -46,7 +53,7 @@
  * A second directory file, ORGANIZATIONS_FILE_PATH below, holds Supplier and
  * Customer companies (not people - that's the user directory above). Its
  * documents (company presentation, NDA, self-assessment, and any number of
- * generic files) are ordinary files under ORG_DOC_FOLDER in the repo,
+ * generic files) are ordinary files under ORG_DOC_FOLDER in R2,
  * uploaded/read through the normal /contents proxy - only the metadata
  * record (name, address, phone, website, which files exist) goes through
  * the dedicated /organizations routes. Unlike users.json there's no secret
@@ -113,15 +120,15 @@
  *   POST   /organizations             - super_admin required; create an organization.
  *   PUT    /organizations/<id>        - super_admin required; update one.
  *   DELETE /organizations/<id>        - super_admin required; remove one (its document files
- *                                        in the repo are left in place, same as PDIRs do when
- *                                        a document is replaced - nothing here deletes repo
+ *                                        in storage are left in place, same as PDIRs do when
+ *                                        a document is replaced - nothing here deletes stored
  *                                        file content, only the directory record).
  *   GET    /parts                     - auth required (any signed-in user); full parts
  *                                        directory.
  *   POST   /parts                     - team_member or above required; create a part.
  *   PUT    /parts/<id>                - team_member or above required; update one.
  *   DELETE /parts/<id>                - team_member or above required; remove one (its
- *                                        drawing file in the repo is left in place, same as
+ *                                        drawing file in storage is left in place, same as
  *                                        Organizations).
  *   GET    /apqp                       - auth required (any signed-in user); full APQP list (one
  *                                        record per Part on the APQP checklist, each with its
@@ -144,14 +151,14 @@
  *   PUT    /customer-pos/<id>          - admin or above required; update one.
  *   DELETE /customer-pos/<id>          - admin or above required; remove one (its attached
  *                                        source PDF is left in place, same as Organizations/Parts).
- *   GET    /contents/<path...>        - proxies GET  .../repos/:owner/:repo/contents/<path>
- *                                        (blocked for anything under data/ - see above)
- *   PUT    /contents/<path...>        - proxies PUT  .../repos/:owner/:repo/contents/<path>
- *                                        (blocked for anything under data/ - see above)
- *   GET    /commits?path=<path>       - proxies GET  .../repos/:owner/:repo/commits?path=...
+ *   GET    /contents/<path...>        - reads one file from R2 (blocked for anything
+ *                                        under data/ - see above), or lists a "directory"
+ *                                        prefix, in a shape mirroring GitHub's old API.
+ *   PUT    /contents/<path...>        - writes one file to R2 (same data/ block as above).
+ *   GET    /commits?path=<path>       - "last modified" info for a path (D1 row's
+ *                                        updated_at, or an R2 object's upload time).
  *
  * SECRETS (set with `wrangler secret put <NAME>`)
- *   GITHUB_TOKEN   - a GitHub PAT with Contents: Read and write on the repo
  *   SESSION_SECRET - random string used to sign session tokens (see README)
  *   STAFF_USERS    - JSON array of {username, salt, hash} - the original login list.
  *                    Still consulted as a fallback for anyone not yet migrated into
@@ -159,8 +166,8 @@
  *                    again going forward, new/changed logins are managed from the
  *                    Users admin page instead.
  *
- * VARS (set in wrangler.toml, not secret)
- *   GITHUB_OWNER, GITHUB_REPO, ALLOWED_ORIGIN
+ * BINDINGS (set in wrangler.toml)
+ *   DB (D1 database "dscm-db"), FILES (R2 bucket "dscm-files"), ALLOWED_ORIGIN (var)
  * ---------------------------------------------------------------------------
  */
 
@@ -191,7 +198,7 @@ const PART_STATUSES = ['Active', 'Inactive', 'Obsolete'];
 // belongs to, so a Supplier login's PDIR list - and its /contents/ access to
 // that PDIR's own files - can be scoped to their own shipments, the same way
 // every other module now is. It does not replace or duplicate the PDIR
-// record itself (still the PDF/draft/docs on GitHub) - just tags it.
+// record itself (still the PDF/draft/docs in R2) - just tags it.
 const PDIR_INDEX_FILE_PATH = 'data/pdir_index.json';
 
 const APQP_FILE_PATH = 'data/apqp.json';
@@ -236,6 +243,10 @@ export default {
     try {
       if (url.pathname === '/health') {
         return json({ ok: true, service: 'dessimate-forms-backend' }, 200, origin);
+      }
+
+      if (url.pathname === '/admin/migrate-from-github' && request.method === 'POST') {
+        return await handleMigrateFromGithub(request, env, origin);
       }
 
       if (url.pathname === '/login' && request.method === 'POST') {
@@ -499,13 +510,13 @@ export default {
           return json({ message: 'Not accessible via this route.' }, 403, origin);
         }
         // This proxy has no access control of its own beyond "signed in" -
-        // it will fetch or write whatever GitHub path it's given. That was
+        // it will fetch or write whatever storage path it's given. That was
         // fine while only trusted Dessimate staff could sign in at all; now
         // that Supplier/Customer logins exist, a Supplier/Customer account
         // is restricted to read-only access, and only to the small set of
         // PDIR files their own organization is tagged as owning (see
         // isContentsPathAllowedForExternal) - never another organization's
-        // PDIRs, drawings, invoices, or anything else in the repo.
+        // PDIRs, drawings, invoices, or anything else in storage.
         if (auth.accessLevel === 'supplier' || auth.accessLevel === 'customer') {
           if (request.method !== 'GET') {
             return json({ message: 'Your account has read-only access.' }, 403, origin);
@@ -1393,7 +1404,7 @@ async function handleListPdirIndex(env, origin, accessLevel, organization) {
 
 // Upserts (by title, PDIR's one stable identifier) the tag for a single PDIR
 // record. Called by the Form Filler right after it saves a draft or a
-// finished PDF, so the index always reflects whatever's actually on GitHub
+// finished PDF, so the index always reflects whatever's actually stored
 // without PDIR needing to become a full JSON-array-of-records module itself.
 async function handleUpsertPdirIndexEntry(request, env, origin) {
   let body;
@@ -1438,7 +1449,7 @@ async function resolvePdirIndexOrganization(env, title) {
 // finished PDF, the resumable draft, and its supporting documents/photos -
 // are ever reachable, and only for a title this Supplier's own organization
 // is tagged as owning in the PDIR index. A Customer login has no PDIR
-// relationship at all and never passes this. Everything else in the repo
+// relationship at all and never passes this. Everything else in storage
 // (other organizations' PDIRs, drawings, invoices, org/user documents...)
 // is refused, even though this proxy has no path allowlist of its own.
 async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organization) {
@@ -2436,30 +2447,58 @@ function readLegacyStaff(env) {
   try { return JSON.parse(env.STAFF_USERS || '[]'); } catch (e) { return []; }
 }
 
-async function readJsonArrayFile(env, path) {
-  const upstream = 'https://api.github.com/repos/' + env.GITHUB_OWNER + '/' + env.GITHUB_REPO + '/contents/' + path;
-  const res = await fetch(upstream, { headers: githubHeaders(env) });
-  if (res.status === 404) return { items: [], sha: null };
-  if (!res.ok) throw new Error('Could not read ' + path + ' (HTTP ' + res.status + ').');
-  const data = await res.json();
-  let items = [];
-  try { items = JSON.parse(base64ToUtf8(data.content || '')); if (!Array.isArray(items)) items = []; } catch (e) { items = []; }
-  return { items: items, sha: data.sha };
+// ---- D1-backed JSON document storage ---------------------------------------
+// Every "database" file (data/users.json, data/parts.json, etc.) is one row
+// in the `documents` table: { path, content, version, updated_at }. `version`
+// is a fresh random token written on every update, replacing GitHub's blob
+// "sha" for optimistic-concurrency checks - a write only succeeds if the
+// caller's version still matches what's currently stored, and callers above
+// this layer (readJsonArrayFile/writeJsonArrayFile/mutateJsonArrayFile, and
+// the object-file equivalents below) keep the exact same shape and retry
+// behavior they had when this was backed by GitHub, so nothing above this
+// point in the file needed to change.
+
+function newVersionToken() {
+  return cryptoRandomId() + cryptoRandomId();
 }
 
-async function writeJsonArrayFile(env, path, items, sha, commitMessage) {
-  const upstream = 'https://api.github.com/repos/' + env.GITHUB_OWNER + '/' + env.GITHUB_REPO + '/contents/' + path;
-  const body = { message: commitMessage || ('Update ' + path + ' via admin'), content: utf8ToBase64(JSON.stringify(items, null, 2)) };
-  if (sha) body.sha = sha;
-  return fetch(upstream, {
-    method: 'PUT',
-    headers: Object.assign({}, githubHeaders(env), { 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body)
-  });
+async function readJsonArrayFile(env, path) {
+  const row = await env.DB.prepare('SELECT content, version FROM documents WHERE path = ?1').bind(path).first();
+  if (!row) return { items: [], sha: null };
+  let items = [];
+  try { items = JSON.parse(row.content); if (!Array.isArray(items)) items = []; } catch (e) { items = []; }
+  return { items: items, sha: row.version };
+}
+
+// Returns { ok: true } or { ok: false, conflict: true } - never throws for a
+// normal conflict, mirroring the old fetch-based version's res.ok/409 shape
+// closely enough for mutateJsonArrayFile below to behave identically.
+async function writeDocumentRow(env, path, content, sha) {
+  const version = newVersionToken();
+  const now = new Date().toISOString();
+  if (sha) {
+    const res = await env.DB.prepare(
+      'UPDATE documents SET content = ?1, version = ?2, updated_at = ?3 WHERE path = ?4 AND version = ?5'
+    ).bind(content, version, now, path, sha).run();
+    if (!res.meta || res.meta.changes === 0) return { ok: false, conflict: true };
+    return { ok: true };
+  }
+  try {
+    await env.DB.prepare(
+      'INSERT INTO documents (path, content, version, updated_at) VALUES (?1, ?2, ?3, ?4)'
+    ).bind(path, content, version, now).run();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, conflict: true }; // path already exists - a race with another writer
+  }
+}
+
+async function writeJsonArrayFile(env, path, items, sha) {
+  return writeDocumentRow(env, path, JSON.stringify(items, null, 2), sha);
 }
 
 // mutateFn(items) -> { items, meta? } to write, or null/falsy to signal "not found".
-// Retries once on a sha conflict (409), re-reading fresh state and re-applying mutateFn.
+// Retries once on a version conflict, re-reading fresh state and re-applying mutateFn.
 async function mutateJsonArrayFile(env, path, mutateFn, opts) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const state = await readJsonArrayFile(env, path);
@@ -2467,9 +2506,8 @@ async function mutateJsonArrayFile(env, path, mutateFn, opts) {
     if (!outcome) return (opts && opts.requireFound) ? 'not-found' : { ok: false, message: 'Not found.' };
     const res = await writeJsonArrayFile(env, path, outcome.items, state.sha);
     if (res.ok) return { ok: true, items: outcome.items, meta: outcome.meta };
-    if (res.status === 409 && attempt === 0) continue; // someone else wrote in between - retry once
-    const text = await res.text().catch(function () { return ''; });
-    return { ok: false, message: 'Could not save (HTTP ' + res.status + '). ' + text };
+    if (res.conflict && attempt === 0) continue; // someone else wrote in between - retry once
+    return { ok: false, message: 'Could not save after a conflicting update - please try again.' };
   }
   return { ok: false, message: 'Could not save after a conflicting update - please try again.' };
 }
@@ -2488,126 +2526,246 @@ async function mutateUsersFile(env, mutateFn, opts) {
   return result.ok ? { ok: true, users: result.items, meta: result.meta } : result;
 }
 
-function githubHeaders(env) {
-  return {
-    'Accept': 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    'Authorization': 'Bearer ' + env.GITHUB_TOKEN,
-    'User-Agent': 'dessimate-forms-backend'
-  };
-}
-
 // ---- generic JSON-*object*-file read/write (data/counters.json) -----------
 // Same optimistic-concurrency shape as the array-file helpers above, but for
 // a single JSON object rather than a list - used for the Dessimate PO /
 // Shipment / Dessimate Invoice numbering counters.
 async function readJsonObjectFile(env, path, defaults) {
-  const upstream = 'https://api.github.com/repos/' + env.GITHUB_OWNER + '/' + env.GITHUB_REPO + '/contents/' + path;
-  const res = await fetch(upstream, { headers: githubHeaders(env) });
-  if (res.status === 404) return { obj: Object.assign({}, defaults), sha: null };
-  if (!res.ok) throw new Error('Could not read ' + path + ' (HTTP ' + res.status + ').');
-  const data = await res.json();
+  const row = await env.DB.prepare('SELECT content, version FROM documents WHERE path = ?1').bind(path).first();
+  if (!row) return { obj: Object.assign({}, defaults), sha: null };
   let obj = {};
   try {
-    obj = JSON.parse(base64ToUtf8(data.content || ''));
+    obj = JSON.parse(row.content);
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) obj = {};
   } catch (e) { obj = {}; }
-  return { obj: Object.assign({}, defaults, obj), sha: data.sha };
+  return { obj: Object.assign({}, defaults, obj), sha: row.version };
 }
-async function writeJsonObjectFile(env, path, obj, sha, commitMessage) {
-  const upstream = 'https://api.github.com/repos/' + env.GITHUB_OWNER + '/' + env.GITHUB_REPO + '/contents/' + path;
-  const body = { message: commitMessage || ('Update ' + path), content: utf8ToBase64(JSON.stringify(obj, null, 2)) };
-  if (sha) body.sha = sha;
-  return fetch(upstream, {
-    method: 'PUT',
-    headers: Object.assign({}, githubHeaders(env), { 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body)
-  });
+async function writeJsonObjectFile(env, path, obj, sha) {
+  return writeDocumentRow(env, path, JSON.stringify(obj, null, 2), sha);
 }
-// mutateFn(obj) -> { obj, meta? } to write. Retries once on a sha conflict.
+// mutateFn(obj) -> { obj, meta? } to write. Retries once on a version conflict.
 async function mutateJsonObjectFile(env, path, defaults, mutateFn) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const state = await readJsonObjectFile(env, path, defaults);
     const outcome = mutateFn(Object.assign({}, state.obj));
     const res = await writeJsonObjectFile(env, path, outcome.obj, state.sha);
     if (res.ok) return { ok: true, obj: outcome.obj, meta: outcome.meta };
-    if (res.status === 409 && attempt === 0) continue; // someone else wrote in between - retry once
-    const text = await res.text().catch(function () { return ''; });
-    return { ok: false, message: 'Could not save (HTTP ' + res.status + '). ' + text };
+    if (res.conflict && attempt === 0) continue; // someone else wrote in between - retry once
+    return { ok: false, message: 'Could not save after a conflicting update - please try again.' };
   }
   return { ok: false, message: 'Could not save after a conflicting update - please try again.' };
 }
 
-// Raw-bytes read of an arbitrary repo file (images, PDFs) for server-side use
-// (e.g. embedding an approver's stamp image into a generated PDF) - not
+// ---- R2-backed raw file storage --------------------------------------------
+
+// Chunked to avoid blowing the call stack on large files (same technique the
+// frontend already uses for the same job).
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+// Raw-bytes read of an arbitrary stored file (images, PDFs) for server-side
+// use (e.g. embedding an approver's stamp image into a generated PDF) - not
 // routed to the browser, just used internally.
 async function readGithubFileBytes(env, path) {
-  const upstream = 'https://api.github.com/repos/' + env.GITHUB_OWNER + '/' + env.GITHUB_REPO + '/contents/' + path.split('/').map(encodeURIComponent).join('/');
-  const res = await fetch(upstream, { headers: githubHeaders(env) });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error('Could not read ' + path + ' (HTTP ' + res.status + ').');
-  const data = await res.json();
-  return base64ToBytes(data.content || '');
+  const obj = await env.FILES.get(path);
+  if (!obj) return null;
+  return new Uint8Array(await obj.arrayBuffer());
 }
 
 // ---- proxy routes (PDIRs, drafts, docs) ------------------------------------
+// Response shapes here deliberately still mirror GitHub's old Contents API
+// (base64 "content" + "sha" for a file, an array for a directory listing) so
+// the existing frontend code needs no changes - see the file header.
 
 async function proxyContents(request, env, origin, ghPath) {
-  const upstream = 'https://api.github.com/repos/' + env.GITHUB_OWNER + '/' + env.GITHUB_REPO + '/contents/' + ghPath;
-  const headers = githubHeaders(env);
-
   if (request.method === 'PUT') {
-    const res = await fetch(upstream, {
-      method: 'PUT',
-      headers: Object.assign({}, headers, { 'Content-Type': 'application/json' }),
-      body: await request.text()
-    });
-    const bodyText = await res.text();
-    return new Response(bodyText, { status: res.status, headers: corsHeaders(origin, 'application/json') });
-  }
-
-  const res = await fetch(upstream, { headers: headers });
-  if (!res.ok) {
-    const bodyText = await res.text();
-    return new Response(bodyText, { status: res.status, headers: corsHeaders(origin, 'application/json') });
-  }
-
-  let data;
-  try { data = await res.json(); } catch (e) {
-    return new Response('{}', { status: res.status, headers: corsHeaders(origin, 'application/json') });
-  }
-
-  // GitHub's Contents API only inlines base64 "content" for files up to
-  // ~1MB; above that the request still succeeds, but "content" comes back
-  // empty even though "sha"/"size" are still populated. That silently
-  // produced 0-byte PDFs for anything over ~1MB. Fix: fall back to the Git
-  // Blobs API (base64 content up to 100MB) using the sha we already have,
-  // and splice its content back into this same response shape, so nothing
-  // on the frontend needs to change.
-  if (data && !Array.isArray(data) && data.type === 'file' && data.sha && !data.content) {
-    const blobRes = await fetch(
-      'https://api.github.com/repos/' + env.GITHUB_OWNER + '/' + env.GITHUB_REPO + '/git/blobs/' + data.sha,
-      { headers: headers }
-    );
-    if (blobRes.ok) {
-      const blob = await blobRes.json();
-      data.content = blob.content;
-      data.encoding = blob.encoding;
+    let body;
+    try { body = JSON.parse(await request.text()); } catch (e) {
+      return json({ message: 'Invalid request body.' }, 400, origin);
     }
+    let bytes;
+    try { bytes = base64ToBytes(body.content || ''); } catch (e) {
+      return json({ message: 'Invalid file content.' }, 400, origin);
+    }
+    if (body.sha) {
+      const current = await env.FILES.head(ghPath);
+      if (!current || current.etag !== body.sha) {
+        return json({ message: 'sha does not match current file - refresh and retry.' }, 409, origin);
+      }
+    }
+    const put = await env.FILES.put(ghPath, bytes);
+    const head = put || (await env.FILES.head(ghPath));
+    const name = ghPath.split('/').pop();
+    return json({ content: { sha: head.etag, path: ghPath, name: name, size: bytes.length }, sha: head.etag }, 200, origin);
   }
 
-  return new Response(JSON.stringify(data), { status: res.status, headers: corsHeaders(origin, 'application/json') });
+  const obj = await env.FILES.get(ghPath);
+  if (!obj) {
+    // Not an exact file - see if it's a "directory" of files instead (a
+    // handful of pages list a folder's contents this way).
+    const prefix = ghPath.endsWith('/') ? ghPath : ghPath + '/';
+    const listing = await env.FILES.list({ prefix: prefix });
+    if (listing.objects.length > 0) {
+      const seen = {};
+      const entries = [];
+      listing.objects.forEach(function (o) {
+        const rest = o.key.slice(prefix.length);
+        const name = rest.split('/')[0];
+        if (seen[name]) return;
+        seen[name] = true;
+        entries.push({ name: name, path: prefix + name, type: rest.indexOf('/') === -1 ? 'file' : 'dir', sha: o.etag, size: o.size });
+      });
+      return json(entries, 200, origin);
+    }
+    return json({ message: 'Not Found' }, 404, origin);
+  }
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  const name = ghPath.split('/').pop();
+  return json({
+    sha: obj.etag, content: bytesToBase64(bytes), encoding: 'base64',
+    name: name, path: ghPath, type: 'file', size: bytes.length
+  }, 200, origin);
 }
 
 async function proxyCommits(request, env, origin, path) {
-  const upstream = 'https://api.github.com/repos/' + env.GITHUB_OWNER + '/' + env.GITHUB_REPO +
-    '/commits?path=' + encodeURIComponent(path) + '&per_page=1';
-  const res = await fetch(upstream, { headers: githubHeaders(env) });
-  const bodyText = await res.text();
-  return new Response(bodyText, { status: res.status, headers: corsHeaders(origin, 'application/json') });
+  // "Last modified" info for a path - an R2 file's upload time, or a D1
+  // document row's updated_at - wrapped in the same array-of-commits shape
+  // the old GitHub-backed version returned, so any caller reading
+  // result[0].commit.author.date keeps working unchanged.
+  const head = await env.FILES.head(path);
+  if (head) {
+    return json([{ sha: head.etag, commit: { author: { date: head.uploaded.toISOString() }, message: 'Updated' } }], 200, origin);
+  }
+  const row = await env.DB.prepare('SELECT version, updated_at FROM documents WHERE path = ?1').bind(path).first();
+  if (row) {
+    return json([{ sha: row.version, commit: { author: { date: row.updated_at }, message: 'Updated' } }], 200, origin);
+  }
+  return json([], 200, origin);
 }
 
 // ---- auth helpers -------------------------------------------------------
+
+// ---- one-time GitHub -> D1/R2 data migration -------------------------------
+// Bootstrap-only route: copies every "database" JSON file and every stored
+// document/drawing/PDF out of the old public GitHub repo and into this
+// Worker's own D1 (documents table) and R2 (FILES bucket). It never writes
+// back to GitHub or deletes anything there - safe to point at the live repo
+// while it's still in use, and safe to re-run (already-migrated paths are
+// skipped, tracked in a small manifest document at "_migration/manifest.json"
+// so a re-run costs almost nothing and a partial run just picks up where it
+// left off). Reads GitHub's public API/raw endpoints unauthenticated - no
+// GitHub token is needed for this, since the repo being migrated away from
+// is the public one.
+//
+// Protected by env.MIGRATION_KEY (a Worker secret, not a session token) since
+// it must be runnable before any user account exists in the new D1 users
+// document. Once the migration is verified complete, remove this route (or
+// just `wrangler secret delete MIGRATION_KEY`) - it isn't needed again.
+//
+// Usage: POST /admin/migrate-from-github?key=<MIGRATION_KEY>&limit=20
+// Call it repeatedly (e.g. from a browser bookmarklet or curl) until the
+// response says "done": true.
+
+const MIGRATION_SOURCE_OWNER = 'Rapidbizservices';
+const MIGRATION_SOURCE_REPO = 'RBS_Dessimate_Forms_Portal';
+const MIGRATION_SOURCE_BRANCH = 'main';
+const MIGRATION_MANIFEST_PATH = '_migration/manifest.json';
+// Only paths under these folders are ever copied - matches the folders the
+// app actually uses in the source repo (see worker/src/index.js's *_FILE_PATH
+// and *_DOC_FOLDER constants, plus the folders the frontend writes drawings/
+// PDFs/drafts into directly). Anything else in the repo (the HTML pages,
+// worker/, .github/) is source code, not data, and is deliberately never
+// touched by this route.
+const MIGRATION_FOLDERS = [
+  'data/', 'org_docs/', 'part_docs/', 'apqp_docs/', 'customer_po_docs/',
+  'pdir_docs/', 'pdir_drafts/', 'pdir_meta/', 'pdirs/', 'supplier_invoice_docs/'
+];
+
+async function handleMigrateFromGithub(request, env, origin) {
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key') || '';
+  if (!env.MIGRATION_KEY || key !== env.MIGRATION_KEY) {
+    return json({ message: 'Not found.' }, 404, origin); // deliberately vague - don't confirm this route exists
+  }
+  const limit = Math.max(1, Math.min(30, parseInt(url.searchParams.get('limit') || '20', 10) || 20));
+
+  // 1. Full file listing from the source repo (one call - the whole repo is
+  //    small enough that GitHub never truncates this).
+  const treeUrl = 'https://api.github.com/repos/' + MIGRATION_SOURCE_OWNER + '/' + MIGRATION_SOURCE_REPO +
+    '/git/trees/' + MIGRATION_SOURCE_BRANCH + '?recursive=1';
+  const treeRes = await fetch(treeUrl, { headers: { 'User-Agent': 'dscm-migration-worker', 'Accept': 'application/vnd.github+json' } });
+  if (!treeRes.ok) {
+    return json({ message: 'Could not list source repo (' + treeRes.status + ').' }, 502, origin);
+  }
+  const tree = await treeRes.json();
+  if (tree.truncated) {
+    return json({ message: 'Repo tree listing was truncated - migration script needs updating for a repo this large.' }, 500, origin);
+  }
+  const allPaths = (tree.tree || [])
+    .filter(function (entry) { return entry.type === 'blob'; })
+    .map(function (entry) { return entry.path; })
+    .filter(function (path) { return MIGRATION_FOLDERS.some(function (folder) { return path.indexOf(folder) === 0; }); });
+
+  // 2. What's already been migrated (persisted so re-runs are cheap and a
+  //    partial run resumes correctly).
+  const manifestState = await readJsonObjectFile(env, MIGRATION_MANIFEST_PATH, { done: [] });
+  const doneSet = {};
+  (manifestState.obj.done || []).forEach(function (p) { doneSet[p] = true; });
+
+  const remaining = allPaths.filter(function (p) { return !doneSet[p]; });
+  const batch = remaining.slice(0, limit);
+  const migratedThisRun = [];
+  const errors = [];
+
+  for (const path of batch) {
+    try {
+      const rawUrl = 'https://raw.githubusercontent.com/' + MIGRATION_SOURCE_OWNER + '/' + MIGRATION_SOURCE_REPO +
+        '/' + MIGRATION_SOURCE_BRANCH + '/' + path.split('/').map(encodeURIComponent).join('/');
+      const fileRes = await fetch(rawUrl, { headers: { 'User-Agent': 'dscm-migration-worker' } });
+      if (!fileRes.ok) {
+        errors.push({ path: path, error: 'fetch failed (' + fileRes.status + ')' });
+        continue;
+      }
+      if (path.indexOf('data/') === 0) {
+        const text = await fileRes.text();
+        const version = newVersionToken();
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+          'INSERT INTO documents (path, content, version, updated_at) VALUES (?1, ?2, ?3, ?4) ' +
+          'ON CONFLICT(path) DO UPDATE SET content = excluded.content, version = excluded.version, updated_at = excluded.updated_at'
+        ).bind(path, text, version, now).run();
+      } else {
+        const bytes = await fileRes.arrayBuffer();
+        await env.FILES.put(path, bytes);
+      }
+      migratedThisRun.push(path);
+      doneSet[path] = true;
+    } catch (e) {
+      errors.push({ path: path, error: String(e && e.message || e) });
+    }
+  }
+
+  // 3. Persist progress - even if a later path in this batch failed, keep
+  //    everything that succeeded so it's never re-copied.
+  const newManifest = { done: Object.keys(doneSet), lastRunAt: new Date().toISOString() };
+  await writeJsonObjectFile(env, MIGRATION_MANIFEST_PATH, newManifest, manifestState.sha);
+
+  const stillRemaining = allPaths.length - Object.keys(doneSet).length;
+  return json({
+    totalPathsInSourceRepo: allPaths.length,
+    alreadyMigratedBeforeThisRun: Object.keys(doneSet).length - migratedThisRun.length,
+    migratedThisRun: migratedThisRun,
+    errors: errors,
+    remaining: Math.max(0, stillRemaining),
+    done: stillRemaining <= 0 && errors.length === 0
+  }, 200, origin);
+}
 
 async function requireAuth(request, env) {
   const header = request.headers.get('Authorization') || '';
