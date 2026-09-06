@@ -1,0 +1,32 @@
+yaml
+name: Deploy Backend (Cloudflare Worker)
+
+# Auto-deploys the "amy" Cloudflare Worker whenever worker/ changes on main.
+# Requires two repo secrets (Settings -> Secrets and variables -> Actions):
+#   CLOUDFLARE_API_TOKEN   - Cloudflare API token with Workers Scripts:Edit
+#   CLOUDFLARE_ACCOUNT_ID  - Cloudflare account ID
+# These are encrypted by GitHub, never exposed in logs, and never checked
+# into this repo.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          command: deploy
