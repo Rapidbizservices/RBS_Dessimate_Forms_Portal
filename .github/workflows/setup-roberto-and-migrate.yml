@@ -1,0 +1,86 @@
+name: One-Time Setup - Configure Roberto + Migrate Data to Cloudflare
+
+# Second one-time step in the Cloudflare-native backend migration (after
+# setup-cloudflare-storage.yml, which already created the D1 database and R2
+# bucket). This workflow:
+#   1. Sets the new "roberto" Worker's secrets (SESSION_SECRET, STAFF_USERS,
+#      MIGRATION_KEY) from repo secrets you add first - see below.
+#   2. Copies every file and "database" record out of this repo's data/ and
+#      document folders into the roberto Worker's D1 database and R2 bucket
+#      (read-only against this repo - nothing here is changed or deleted).
+#   3. Runs a few smoke-test requests against the roberto Worker and prints
+#      the results so you can see it's actually working.
+#
+# SAFE TO RUN NOW: this only affects the "roberto" Worker, which nothing is
+# using yet. The live site keeps working exactly as it does today ("amy")
+# until the separate frontend cutover step happens later.
+#
+# BEFORE RUNNING THIS: add two repo secrets (Settings -> Secrets and
+# variables -> Actions -> New repository secret), using the exact values
+# Claude gave you in chat:
+#   ROBERTO_SESSION_SECRET
+#   ROBERTO_MIGRATION_KEY
+# This workflow will fail with a clear message if either is missing.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  setup-and-migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required repo secrets are set
+        run: |
+          if [ -z "${{ secrets.ROBERTO_SESSION_SECRET }}" ] || [ -z "${{ secrets.ROBERTO_MIGRATION_KEY }}" ]; then
+            echo "::error::ROBERTO_SESSION_SECRET and/or ROBERTO_MIGRATION_KEY repo secrets are not set. Add them under Settings > Secrets and variables > Actions, then re-run this workflow."
+            exit 1
+          fi
+          echo "Both required secrets are present."
+
+      - name: Install wrangler
+        run: npm install -g wrangler@4
+
+      - name: Set roberto's secrets
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "${{ secrets.ROBERTO_SESSION_SECRET }}" | wrangler secret put SESSION_SECRET
+          echo "[]" | wrangler secret put STAFF_USERS
+          echo "${{ secrets.ROBERTO_MIGRATION_KEY }}" | wrangler secret put MIGRATION_KEY
+
+      - name: Health check roberto
+        run: |
+          echo "Waiting a few seconds for secrets to take effect..."
+          sleep 5
+          curl -sf https://roberto.dessimate.workers.dev/health && echo
+          echo "If the line above shows {\"ok\":true,...} roberto is live and its secrets are set."
+
+      - name: Migrate data from GitHub into D1 + R2 (resumable, repeats until done)
+        run: |
+          for i in $(seq 1 25); do
+            echo "---- migration batch $i ----"
+            RESP=$(curl -s -X POST "https://roberto.dessimate.workers.dev/admin/migrate-from-github?key=${{ secrets.ROBERTO_MIGRATION_KEY }}&limit=20")
+            echo "$RESP"
+            DONE=$(node -e "try{const d=JSON.parse(process.argv[1]);console.log(d.done===true?'yes':'no')}catch(e){console.log('parse-error')}" "$RESP")
+            if [ "$DONE" = "yes" ]; then
+              echo ""
+              echo "Migration complete - every file and record has been copied to Cloudflare."
+              exit 0
+            fi
+            if [ "$DONE" = "parse-error" ]; then
+              echo "::error::Could not parse the migration response above - stopping. Check the MIGRATION_KEY secret matches, and that the roberto Worker deployed successfully."
+              exit 1
+            fi
+          done
+          echo "::warning::Migration did not finish in 25 batches. This is safe - it always resumes where it left off. Just re-run this workflow (the 'Set roberto's secrets' step is harmless to repeat too)."
+
+      - name: Smoke test - list migrated usernames
+        run: |
+          echo "These usernames should match your real Users page:"
+          curl -s https://roberto.dessimate.workers.dev/users
+          echo
