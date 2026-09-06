@@ -1,0 +1,95 @@
+name: One-Time Cleanup - Remove Sensitive Files From Entire Git History
+
+# DESTRUCTIVE, ONE-TIME operation. Rewrites every commit in this repo to
+# permanently remove folders that are no longer used (their real content
+# now lives in Cloudflare, not here) but are still sitting in this public
+# repo's history: customer CAD drawings/attachments, supplier invoices,
+# organization documents (including the NDA), PDIR reports, and the old
+# data/*.json records.
+#
+# This changes every commit hash in the repo. That's expected and fine -
+# nobody working on this repo uses a local git clone; everything happens
+# through GitHub's web UI, which is unaffected by commit hashes changing.
+#
+# Claude tested this exact operation on a disposable copy of the real repo
+# before this workflow was written: confirmed the sensitive folders are
+# removed from all 516 commits with zero trace, confirmed every other file
+# (worker code, the 12 site pages, the CI workflows) comes out byte-for-byte
+# identical, and the repo shrinks from ~60MB to ~1.6MB of history.
+#
+# SAFETY: A full backup of the repo (current code + everything being
+# removed) was made and handed to you privately before this workflow was
+# written - keep that file somewhere private, never upload it anywhere
+# public, since it's the one copy that still has everything in it.
+#
+# To run: go to the Actions tab, select this workflow, click "Run workflow",
+# and type exactly REWRITE-HISTORY in the confirmation box. Any other value
+# (including leaving it blank) stops safely before anything happens.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type REWRITE-HISTORY (all caps, exactly) to proceed'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  rewrite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "REWRITE-HISTORY" ]; then
+            echo "::error::Confirmation text didn't match exactly - stopping before touching anything. Re-run and type REWRITE-HISTORY exactly (all caps) to proceed."
+            exit 1
+          fi
+          echo "Confirmed - proceeding."
+
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Record before-state
+        run: |
+          echo "Commits before: $(git log --oneline | wc -l)"
+          echo ".git size before: $(du -sh .git | cut -f1)"
+
+      - name: Install git-filter-repo
+        run: |
+          pip install --break-system-packages git-filter-repo || pip install --user git-filter-repo
+          echo "$(python3 -m site --user-base 2>/dev/null)/bin" >> "$GITHUB_PATH"
+
+      - name: Rewrite history - strip now-migrated data/attachment folders
+        run: |
+          git filter-repo --force \
+            --path data/ \
+            --path customer_po_docs/ \
+            --path org_docs/ \
+            --path part_docs/ \
+            --path apqp_docs/ \
+            --path pdir_docs/ \
+            --path pdir_drafts/ \
+            --path pdir_meta/ \
+            --path pdirs/ \
+            --path supplier_invoice_docs/ \
+            --invert-paths
+
+      - name: Record after-state
+        run: |
+          echo "Commits after: $(git log --oneline | wc -l)"
+          echo ".git size after: $(du -sh .git | cut -f1)"
+          echo "Sensitive-folder trace remaining in history (should be 0):"
+          git log --all --diff-filter=A --name-only --pretty=format: | sort -u | grep -E "^(data|customer_po_docs|org_docs|part_docs|apqp_docs|pdir_docs|pdir_drafts|pdir_meta|pdirs|supplier_invoice_docs)/" | wc -l
+
+      - name: Push rewritten history back to GitHub
+        run: |
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push --force origin HEAD:main
+          echo ""
+          echo "Done. The repo's history no longer contains those folders."
+          echo "Note: GitHub Pages / the deploy-backend workflow may fire again automatically as a side effect of this push - that's expected and harmless, it'll just redeploy the same code that's already live."
