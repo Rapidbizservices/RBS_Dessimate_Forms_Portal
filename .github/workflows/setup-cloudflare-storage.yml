@@ -1,0 +1,33 @@
+name: One-Time Setup - Create D1 Database + R2 Bucket
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install wrangler
+        run: npm install -g wrangler@4
+
+      - name: Create D1 database (dscm-db)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "If this reports the database already exists, that's fine - copy its ID from the 'wrangler d1 list' output below instead."
+          wrangler d1 create dscm-db || true
+          echo "---- Current D1 databases (copy the dscm-db id from here) ----"
+          wrangler d1 list
+
+      - name: Create R2 bucket (dscm-files)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          wrangler r2 bucket create dscm-files || true
+          echo "---- Current R2 buckets ----"
+          wrangler r2 bucket list
