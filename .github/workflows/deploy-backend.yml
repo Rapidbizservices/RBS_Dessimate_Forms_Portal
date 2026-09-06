@@ -1,4 +1,4 @@
-yaml
+
 name: Deploy Backend (Cloudflare Worker)
 
 # Auto-deploys the "amy" Cloudflare Worker whenever worker/ changes on main.
