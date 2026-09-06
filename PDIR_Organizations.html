@@ -37,6 +37,12 @@
      page's own cross-links would just duplicate it. Standalone loads (direct
      visit, bookmark, another page's link opening a new tab) are unaffected. */
   html[data-embedded] .homeBtn{ display:none !important; }
+  /* Embedded in the dashboard's iframe: the sidebar already has its own
+     Log out, so a second one here (which would also silently sign the
+     dashboard itself out) is just confusing - hide the button, but keep
+     the "Welcome, X" status text since the outer dashboard doesn't show
+     per-module context like that. */
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
   .addBtn{ color:#fff; background:#1f9254; }
   .addBtn:hover{ background:#187b46; }
 
@@ -239,7 +245,7 @@
     </table>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Organizations</footer>
+  <footer>Dessimate &middot; DSCM &middot; Organizations &middot; DSCM v2.0 &middot; Built September 2026</footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">

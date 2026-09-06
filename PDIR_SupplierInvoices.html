@@ -37,6 +37,12 @@
      page's own cross-links would just duplicate it. Standalone loads (direct
      visit, bookmark, another page's link opening a new tab) are unaffected. */
   html[data-embedded] .homeBtn{ display:none !important; }
+  /* Embedded in the dashboard's iframe: the sidebar already has its own
+     Log out, so a second one here (which would also silently sign the
+     dashboard itself out) is just confusing - hide the button, but keep
+     the "Welcome, X" status text since the outer dashboard doesn't show
+     per-module context like that. */
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
   .addBtn{ color:#fff; background:#1f9254; }
   .addBtn:hover{ background:#187b46; }
 
@@ -75,6 +81,8 @@
   table.poTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
   table.poTable tr:last-child td{ border-bottom:none; }
   .poNumber{ font-weight:700; }
+  .xrefLink{ color:var(--brand); font-weight:600; text-decoration:none; }
+  .xrefLink:hover{ text-decoration:underline; }
   .statusPill{ display:inline-block; font-size:11.5px; font-weight:700; border-radius:5px; padding:3px 9px; }
   .statusPill.unpaid{ color:#a06a1c; background:#fbf1e0; }
   .statusPill.paid{ color:#187b46; background:#e6f5ec; }
@@ -235,7 +243,7 @@
     </table>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Supplier Invoices</footer>
+  <footer>Dessimate &middot; DSCM &middot; Supplier Invoices &middot; DSCM v2.0 &middot; Built September 2026</footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
@@ -687,10 +695,13 @@
         ? '<button type="button" class="editBtn" style="padding:5px 10px;" data-view-src="' + escapeHtml(inv.id) + '">View</button>'
         : '<span style="color:var(--label);">—</span>';
       var statusClass = inv.status === 'Paid' ? 'paid' : 'unpaid';
+      var poRefCell = inv.dessimatePoRef
+        ? '<a class="xrefLink" href="PDIR_DessimatePOs.html?poNumber=' + encodeURIComponent(inv.dessimatePoRef) + '">' + escapeHtml(inv.dessimatePoRef) + '</a>'
+        : '<span style="color:var(--label);">—</span>';
       return '<tr>' +
         '<td class="poNumber">' + escapeHtml(inv.invoiceNumber) + '</td>' +
         '<td>' + escapeHtml(inv.supplier) + '</td>' +
-        '<td>' + escapeHtml(inv.dessimatePoRef || '—') + '</td>' +
+        '<td>' + poRefCell + '</td>' +
         '<td>' + escapeHtml(inv.invoiceDate) + '</td>' +
         '<td>' + escapeHtml(inv.dueDate) + '</td>' +
         '<td><span class="statusPill ' + statusClass + '">' + escapeHtml(inv.status) + '</span></td>' +

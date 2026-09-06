@@ -37,6 +37,12 @@
      page's own cross-links would just duplicate it. Standalone loads (direct
      visit, bookmark, another page's link opening a new tab) are unaffected. */
   html[data-embedded] .homeBtn{ display:none !important; }
+  /* Embedded in the dashboard's iframe: the sidebar already has its own
+     Log out, so a second one here (which would also silently sign the
+     dashboard itself out) is just confusing - hide the button, but keep
+     the "Welcome, X" status text since the outer dashboard doesn't show
+     per-module context like that. */
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
   .addBtn{ color:#fff; background:#1f9254; }
   .addBtn:hover{ background:#187b46; }
 
@@ -107,9 +113,18 @@
     padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
   .modalGrid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 14px; }
 
-  .numberBanner{ display:flex; gap:24px; flex-wrap:wrap; background:#f7f8fb; border:1px solid var(--line);
-    border-radius:8px; padding:10px 14px; margin-bottom:16px; font-size:12.5px; color:var(--label); }
+  .numberBanner{ display:flex; gap:20px; flex-wrap:wrap; background:#f7f8fb; border:1px solid var(--line);
+    border-radius:8px; padding:12px 14px; margin-bottom:16px; font-size:12.5px; color:var(--label); }
   .numberBanner strong{ color:var(--ink); font-variant-numeric:tabular-nums; }
+  .numberField{ flex:1 1 220px; min-width:200px; }
+  .numberField label{ display:block; margin-bottom:4px; }
+  .numberFieldRow{ display:flex; gap:8px; align-items:center; }
+  .numberFieldRow input{ flex:1 1 auto; min-width:0; font-variant-numeric:tabular-nums; }
+  .numberFieldRow input[readonly]{ background:#eef1f5; color:var(--ink); font-weight:700; }
+  .numberFieldRow button{ flex:0 0 auto; font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:7px 10px; white-space:nowrap; color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .numberFieldRow button:hover{ background:#eef1fa; }
+  .numberFieldRow button:disabled{ opacity:.5; cursor:default; background:#fff; }
 
   .modalSection{ margin:18px 0 4px; }
   .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
@@ -226,7 +241,7 @@
     </table>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Dessimate Invoices</footer>
+  <footer>Dessimate &middot; DSCM &middot; Dessimate Invoices &middot; DSCM v2.0 &middot; Built September 2026</footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
@@ -252,7 +267,13 @@
     <p class="modalSub" id="modalSub">Invoice Number is assigned automatically when you save.</p>
     <form id="invForm">
       <div class="numberBanner" id="numberBanner">
-        <span>Invoice Number: <strong id="numberBannerInv">assigned on Save</strong></span>
+        <div class="numberField">
+          <label for="f_invoiceNumber">Invoice Number <span style="font-weight:400;">(optional — leave blank to auto-assign)</span></label>
+          <div class="numberFieldRow">
+            <input type="text" id="f_invoiceNumber" placeholder="assigned on Save">
+            <button type="button" id="useSystemInvBtn">Use System Number</button>
+          </div>
+        </div>
       </div>
       <div class="modalGrid3">
         <label>Invoice Date
@@ -725,6 +746,26 @@
     renderLines();
   });
 
+  // Invoice Number is voluntary (Rev2) - same pattern as the Dessimate PO's
+  // PO Number/Shipment Number. See setNumberFieldsEditable there.
+  function setNumberFieldEditable(editable){
+    var input = document.getElementById('f_invoiceNumber');
+    input.readOnly = !editable;
+    document.getElementById('useSystemInvBtn').style.display = editable ? '' : 'none';
+  }
+  document.getElementById('useSystemInvBtn').addEventListener('click', async function(){
+    var btn = this;
+    btn.disabled = true;
+    try {
+      var res = await apiFetch('dessimate-invoices/peek-number');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      document.getElementById('f_invoiceNumber').value = data.invoiceNumber;
+    } catch (e) {
+      alert('Could not look up the next system Invoice Number (' + (e && e.message ? e.message : e) + ').');
+    } finally { btn.disabled = false; }
+  });
+
   function resetForm(){
     document.getElementById('invForm').reset();
     document.getElementById('modalError').textContent = '';
@@ -732,7 +773,8 @@
     document.getElementById('f_customer').innerHTML = customerOrgOptions('');
     document.getElementById('f_customerPoRef').innerHTML = customerPoRefOptions('');
     document.getElementById('f_status').value = 'Unpaid';
-    document.getElementById('numberBannerInv').textContent = 'assigned on Save';
+    document.getElementById('f_invoiceNumber').value = '';
+    setNumberFieldEditable(true);
     renderLines();
   }
 
@@ -740,7 +782,7 @@
     editingId = null;
     resetForm();
     document.getElementById('modalTitle').textContent = 'Add Dessimate Invoice';
-    document.getElementById('modalSub').textContent = 'Invoice Number is assigned automatically when you save.';
+    document.getElementById('modalSub').textContent = 'Invoice Number is optional - leave blank to assign automatically when you save, or type your own.';
     document.getElementById('invModalOverlay').classList.add('open');
   }
   function openEditModal(id){
@@ -755,7 +797,8 @@
     }) : [newLineRow()];
     document.getElementById('modalTitle').textContent = 'Edit Dessimate Invoice';
     document.getElementById('modalSub').textContent = 'Invoice Number was assigned when this invoice was created and can\'t change.';
-    document.getElementById('numberBannerInv').textContent = inv.invoiceNumber;
+    document.getElementById('f_invoiceNumber').value = inv.invoiceNumber;
+    setNumberFieldEditable(false);
     document.getElementById('f_invoiceDate').value = inv.invoiceDate || '';
     document.getElementById('f_customer').innerHTML = customerOrgOptions(inv.customer || '');
     document.getElementById('f_customerPoRef').innerHTML = customerPoRefOptions(inv.customerPoRef || '');
@@ -783,6 +826,7 @@
     errEl.textContent = '';
 
     var baseFields = {
+      invoiceNumber: document.getElementById('f_invoiceNumber').value.trim(),
       invoiceDate: document.getElementById('f_invoiceDate').value,
       customer: document.getElementById('f_customer').value,
       customerPoRef: document.getElementById('f_customerPoRef').value,

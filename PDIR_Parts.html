@@ -37,6 +37,12 @@
      page's own cross-links would just duplicate it. Standalone loads (direct
      visit, bookmark, another page's link opening a new tab) are unaffected. */
   html[data-embedded] .homeBtn{ display:none !important; }
+  /* Embedded in the dashboard's iframe: the sidebar already has its own
+     Log out, so a second one here (which would also silently sign the
+     dashboard itself out) is just confusing - hide the button, but keep
+     the "Welcome, X" status text since the outer dashboard doesn't show
+     per-module context like that. */
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
   .addBtn{ color:#fff; background:#1f9254; }
   .addBtn:hover{ background:#187b46; }
 
@@ -133,6 +139,20 @@
   .docLinks button:hover, .docLinks a:hover{ text-decoration:underline; }
   .docLinks .removeLink{ color:#b23b3b; }
 
+  .attachCount{ font-weight:400; font-size:12.5px; color:var(--label); }
+  .modalSectionHint{ font-size:12px; color:var(--label); margin:2px 0 8px; }
+  .attachmentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .attachRow{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:7px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
+  .attachRow .attachName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .attachRow .attachName.pending{ color:#a06a1c; }
+  .attachRow .attachLinks{ display:flex; gap:10px; flex:0 0 auto; }
+  .attachRow .attachLinks button{ font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
+  .attachRow .attachLinks button:hover{ text-decoration:underline; }
+  .attachRow .attachLinks .removeLink{ color:#b23b3b; }
+  .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
+
   .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
   .modalBtns{ display:flex; gap:10px; margin-top:10px; }
   .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
@@ -220,7 +240,7 @@
           <th>Status</th>
           <th>Customer</th>
           <th>Suppliers</th>
-          <th>Drawing</th>
+          <th>Attachments</th>
           <th></th>
         </tr>
       </thead>
@@ -228,7 +248,7 @@
     </table>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Parts</footer>
+  <footer>Dessimate &middot; DSCM &middot; Parts &middot; DSCM v2.0 &middot; Built September 2026</footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
@@ -301,12 +321,13 @@
       </div>
 
       <div class="modalSection">
-        <h3>Drawing / Spec File</h3>
+        <h3>Attachments <span class="attachCount" id="attachCount">(0 / 20)</span></h3>
+        <p class="modalSectionHint">Drawings, specs, photos — up to 20 files per part.</p>
+        <div id="attachmentsList" class="attachmentsList"></div>
         <div class="docRow">
           <div class="docMain">
-            <span class="docStatus" id="drawingDocStatus">No file attached</span>
-            <input type="file" id="drawingDocInput">
-            <div class="docLinks" id="drawingDocLinks"></div>
+            <input type="file" id="attachmentsDocInput" multiple>
+            <div class="modalError" id="attachError" style="margin-top:6px;"></div>
           </div>
         </div>
       </div>
@@ -421,8 +442,10 @@
     }
     return await res.json();
   }
-  function buildDrawingDocPath(partId, filename){
-    return PART_DOC_FOLDER + '/' + partId + '/drawing' + docFileExt(filename);
+  var PART_ATTACHMENTS_MAX = 20;
+  function buildAttachmentDocPath(partId, filename, idx){
+    var safeName = (filename || 'file').replace(/[\\/]/g, '_');
+    return PART_DOC_FOLDER + '/' + partId + '/attachments/' + Date.now() + '-' + idx + '-' + safeName;
   }
   function readFileAsBytes(file){
     return new Promise(function(resolve, reject){
@@ -662,7 +685,8 @@
 
     bodyEl.innerHTML = sorted.map(function(p){
       var suppliersText = (p.suppliers || []).length ? escapeHtml(p.suppliers.join(', ')) : '—';
-      var docHtml = p.drawing ? '<span class="have">' + escapeHtml(p.drawing.filename) + '</span>' : '—';
+      var attCount = (p.attachments || []).length;
+      var docHtml = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '—';
       return '<tr>' +
         '<td class="partNumber">' + escapeHtml(p.partNumber) + '</td>' +
         '<td>' + escapeHtml(p.name) + '</td>' +
@@ -689,7 +713,7 @@
 
   async function deletePart(id){
     var part = lastParts.find(function(p){ return p.id === id; });
-    if (!confirm('Remove part ' + (part ? part.partNumber : '') + '? This can\'t be undone (its drawing file, if any, stays in the repo, just unlinked).')) return;
+    if (!confirm('Remove part ' + (part ? part.partNumber : '') + '? This can\'t be undone (its attachment files, if any, stay in the repo, just unlinked).')) return;
     requireAuthThen(async function(){
       try {
         var res = await apiFetch('parts/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -704,60 +728,92 @@
 
   // ---- Add / Edit modal --------------------------------------------------------
   var editingId = null;
-  var drawingState = { existing: null, pending: null, removed: false };
+  // Each entry is either { kind:'existing', doc:{path,filename,mimeType,size} }
+  // (already on GitHub - a legacy single-"drawing" record is folded in here
+  // too, so the modal only ever deals with one list) or
+  // { kind:'pending', bytes, filename, mimeType } (picked locally, uploaded
+  // only if Save goes through). Removing either kind just splices it out.
+  var attachmentsState = [];
 
-  function renderDrawingRow(){
-    var statusEl = document.getElementById('drawingDocStatus');
-    var linksEl = document.getElementById('drawingDocLinks');
-    var links = '';
-    if (drawingState.pending) {
-      statusEl.textContent = 'Selected: ' + drawingState.pending.filename + ' (will be uploaded on Save)';
-      statusEl.className = 'docStatus ok';
-      links = '<button type="button" id="drawingPreviewPendingBtn">Preview</button>';
-    } else if (drawingState.existing && !drawingState.removed) {
-      statusEl.textContent = 'Attached: ' + drawingState.existing.filename;
-      statusEl.className = 'docStatus ok';
-      links = '<button type="button" id="drawingViewBtn">View</button>' +
-        '<span class="removeLink" style="cursor:pointer;" id="drawingRemoveBtn">Remove</span>';
+  function activeAttachmentCount(){ return attachmentsState.length; }
+
+  function renderAttachmentsList(){
+    var listEl = document.getElementById('attachmentsList');
+    var countEl = document.getElementById('attachCount');
+    var inputEl = document.getElementById('attachmentsDocInput');
+    var count = activeAttachmentCount();
+    countEl.textContent = '(' + count + ' / ' + PART_ATTACHMENTS_MAX + ')';
+    if (!count) {
+      listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>';
     } else {
-      statusEl.textContent = 'No file attached';
-      statusEl.className = 'docStatus';
+      listEl.innerHTML = attachmentsState.map(function(entry, idx){
+        var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
+        var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+        var viewBtn = entry.kind === 'pending'
+          ? '<button type="button" data-preview-idx="' + idx + '">Preview</button>'
+          : '<button type="button" data-view-idx="' + idx + '">View</button>';
+        return '<div class="attachRow">' +
+          '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+          '<div class="attachLinks">' + viewBtn +
+            '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' +
+          '</div></div>';
+      }).join('');
     }
-    linksEl.innerHTML = links;
-    var previewBtn = document.getElementById('drawingPreviewPendingBtn');
-    if (previewBtn) previewBtn.addEventListener('click', function(){
-      openDocViewer({ filename: drawingState.pending.filename, mimeType: drawingState.pending.mimeType, bytes: drawingState.pending.bytes });
+    inputEl.disabled = count >= PART_ATTACHMENTS_MAX;
+    inputEl.title = inputEl.disabled ? 'Maximum of ' + PART_ATTACHMENTS_MAX + ' attachments reached.' : '';
+
+    listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
+        if (entry) openDocViewer({ filename: entry.filename, mimeType: entry.mimeType, bytes: entry.bytes });
+      });
     });
-    var viewBtn = document.getElementById('drawingViewBtn');
-    if (viewBtn) viewBtn.addEventListener('click', function(){
-      openDocViewer({ filename: drawingState.existing.filename, mimeType: drawingState.existing.mimeType, path: drawingState.existing.path });
+    listEl.querySelectorAll('[data-view-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-view-idx'))];
+        if (entry) openDocViewer({ filename: entry.doc.filename, mimeType: entry.doc.mimeType, path: entry.doc.path });
+      });
     });
-    var removeBtn = document.getElementById('drawingRemoveBtn');
-    if (removeBtn) removeBtn.addEventListener('click', function(){
-      drawingState.removed = true;
-      renderDrawingRow();
+    listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        attachmentsState.splice(Number(btn.getAttribute('data-remove-idx')), 1);
+        renderAttachmentsList();
+      });
     });
   }
-  document.getElementById('drawingDocInput').addEventListener('change', async function(){
-    var file = this.files && this.files[0];
+  document.getElementById('attachmentsDocInput').addEventListener('change', async function(){
+    var files = this.files ? Array.from(this.files) : [];
     this.value = '';
-    if (!file) return;
-    try {
-      var bytes = await readFileAsBytes(file);
-      drawingState.pending = { bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' };
-      drawingState.removed = false;
-      renderDrawingRow();
-    } catch (e) {
-      alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+    if (!files.length) return;
+    var errEl = document.getElementById('attachError');
+    errEl.textContent = '';
+    var room = PART_ATTACHMENTS_MAX - activeAttachmentCount();
+    if (files.length > room) {
+      errEl.textContent = room <= 0
+        ? 'Maximum of ' + PART_ATTACHMENTS_MAX + ' attachments reached — remove one before adding another.'
+        : 'Only ' + room + ' more file' + (room === 1 ? '' : 's') + ' can be added (limit ' + PART_ATTACHMENTS_MAX + ').';
+      files = files.slice(0, Math.max(room, 0));
     }
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      try {
+        var bytes = await readFileAsBytes(file);
+        attachmentsState.push({ kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' });
+      } catch (e) {
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      }
+    }
+    renderAttachmentsList();
   });
 
   function resetForm(){
     document.getElementById('partForm').reset();
     document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
     document.getElementById('f_status').value = 'Active';
-    drawingState = { existing: null, pending: null, removed: false };
-    renderDrawingRow();
+    attachmentsState = [];
+    renderAttachmentsList();
     populateCustomerSelect('');
     populateSuppliersChecklist([]);
   }
@@ -775,8 +831,9 @@
     editingId = id;
     document.getElementById('partForm').reset();
     document.getElementById('modalError').textContent = '';
-    drawingState = { existing: p.drawing || null, pending: null, removed: false };
-    renderDrawingRow();
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = (p.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
     document.getElementById('modalTitle').textContent = 'Edit Part';
     document.getElementById('modalSub').textContent = 'Update this part\'s details.';
     document.getElementById('f_partNumber').value = p.partNumber || '';
@@ -830,20 +887,21 @@
         partId = createData.id;
       }
 
-      var drawingPayload;
-      if (drawingState.pending) {
-        var path = buildDrawingDocPath(partId, drawingState.pending.filename);
-        await ghPutFile(path, drawingState.pending.bytes, 'Upload drawing for part ' + baseFields.partNumber);
-        drawingPayload = { path: path, filename: drawingState.pending.filename, mimeType: drawingState.pending.mimeType, size: drawingState.pending.bytes.length };
-      } else if (drawingState.removed) {
-        drawingPayload = null;
-      } else {
-        drawingPayload = drawingState.existing;
+      var attachmentsPayload = [];
+      for (var i = 0; i < attachmentsState.length; i++) {
+        var entry = attachmentsState[i];
+        if (entry.kind === 'existing') {
+          attachmentsPayload.push(entry.doc);
+        } else {
+          var path = buildAttachmentDocPath(partId, entry.filename, i);
+          await ghPutFile(path, entry.bytes, 'Upload attachment for part ' + baseFields.partNumber);
+          attachmentsPayload.push({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length });
+        }
       }
 
       var putRes = await apiFetch('parts/' + encodeURIComponent(partId), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({}, baseFields, { drawing: drawingPayload }))
+        body: JSON.stringify(Object.assign({}, baseFields, { attachments: attachmentsPayload }))
       });
       var putData = {}; try { putData = await putRes.json(); } catch(e){}
       if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));

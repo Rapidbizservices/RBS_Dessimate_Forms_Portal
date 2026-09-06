@@ -37,6 +37,12 @@
      page's own cross-links would just duplicate it. Standalone loads (direct
      visit, bookmark, another page's link opening a new tab) are unaffected. */
   html[data-embedded] .homeBtn{ display:none !important; }
+  /* Embedded in the dashboard's iframe: the sidebar already has its own
+     Log out, so a second one here (which would also silently sign the
+     dashboard itself out) is just confusing - hide the button, but keep
+     the "Welcome, X" status text since the outer dashboard doesn't show
+     per-module context like that. */
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
   .addBtn{ color:#fff; background:#1f9254; }
   .addBtn:hover{ background:#187b46; }
 
@@ -75,6 +81,7 @@
   table.poTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
   table.poTable tr:last-child td{ border-bottom:none; }
   .poNumber{ font-weight:700; }
+  tr.xrefHighlight td{ background:#fff7d6 !important; }
   .rowActions{ display:flex; gap:8px; white-space:nowrap; }
   .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
     border-radius:6px; padding:6px 12px; white-space:nowrap; }
@@ -231,7 +238,7 @@
     </table>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Customer POs</footer>
+  <footer>Dessimate &middot; DSCM &middot; Customer POs &middot; DSCM v2.0 &middot; Built September 2026</footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
@@ -628,6 +635,26 @@
   // ---- List table --------------------------------------------------------------
   var lastPos = [];
 
+  // Linked in from a Dessimate PO's "Customer PO" reference
+  // (PDIR_CustomerPOs.html?poNumber=<value>) - highlights and scrolls to the
+  // matching row rather than filtering the whole list.
+  var highlightPoNumber = null;
+  try {
+    var qp = new URLSearchParams(window.location.search);
+    var hp = qp.get('poNumber');
+    if (hp && hp.trim()) highlightPoNumber = hp.trim();
+  } catch (e) { highlightPoNumber = null; }
+
+  function applyRowHighlight(){
+    if (!highlightPoNumber) return;
+    var bodyEl = document.getElementById('poTableBody');
+    var row = bodyEl.querySelector('tr[data-ponum="' + CSS.escape(String(highlightPoNumber)) + '"]');
+    if (row) {
+      row.classList.add('xrefHighlight');
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
   async function loadPos(){
     var loadingEl = document.getElementById('loadingState');
     var errorEl = document.getElementById('errorState');
@@ -644,6 +671,7 @@
       lastPos = Array.isArray(data.customerPos) ? data.customerPos : [];
       loadingEl.style.display = 'none';
       renderTable();
+      applyRowHighlight();
     } catch (err) {
       console.error(err);
       loadingEl.style.display = 'none';
@@ -665,7 +693,7 @@
       var docHtml = po.sourcePdf
         ? '<button type="button" class="editBtn" style="padding:5px 10px;" data-view-src="' + escapeHtml(po.id) + '">View</button>'
         : '<span style="color:var(--label);">—</span>';
-      return '<tr>' +
+      return '<tr' + (po.poNumber ? ' data-ponum="' + escapeHtml(po.poNumber) + '"' : '') + '>' +
         '<td class="poNumber">' + escapeHtml(po.poNumber) + '</td>' +
         '<td>' + escapeHtml(po.customer) + '</td>' +
         '<td>' + escapeHtml(po.poDate) + '</td>' +

@@ -70,6 +70,7 @@
     padding:8px 10px; cursor:pointer;
   }
   .sideLogoutBtn:hover{ background:#1c3160; color:#fff; }
+  .sideVersion{ margin-top:10px; font-size:11px; color:var(--side-text); opacity:.65; text-align:center; }
 
   .sideToggle{ display:none; }
 
@@ -153,6 +154,7 @@
     <div class="sideFoot">
       <div class="sideUser" id="sideUser">Not signed in</div>
       <button type="button" class="sideLogoutBtn" id="sideLogoutBtn">Log out</button>
+      <div class="sideVersion">DSCM v2.0 &middot; Built September 2026</div>
     </div>
   </nav>
 
@@ -263,7 +265,22 @@
   });
   document.getElementById('sideLogoutBtn').addEventListener('click', function(){
     clearSession();
-    showAuthOverlay();
+    // Clear out the previous person's module content and nav so nothing
+    // stale from their access level lingers behind the login overlay, and
+    // route back through requireAuthThen (not showAuthOverlay directly) so
+    // the sidebar actually re-renders for whoever logs in next - going
+    // straight to showAuthOverlay skipped resolveAccessAndRenderNav entirely,
+    // which is why the sidebar used to need a manual page refresh after a
+    // logout + re-login in the same tab.
+    activeHref = null;
+    try { sessionStorage.removeItem('dscm_last_module'); } catch (e) {}
+    document.getElementById('sideNav').innerHTML = '';
+    document.getElementById('contentFrame').style.display = 'none';
+    document.getElementById('contentFrame').removeAttribute('src');
+    document.getElementById('welcomeState').style.display = 'flex';
+    document.getElementById('openTabLink').style.display = 'none';
+    document.getElementById('mTitle').textContent = 'Welcome';
+    requireAuthThen(resolveAccessAndRenderNav);
   });
   // -------------------------------------------------------------------------
 
@@ -271,30 +288,35 @@
   // Mirrors worker/README.md's access-level table exactly - the backend
   // enforces every one of these for real (403s on the wrong role), this is
   // just so people don't see a dead-end link to something they can't use.
+  // Supplier/Customer don't fit the internal team_member < admin < super_admin
+  // ladder at all (they're a separate, read-only, own-organization-only tier
+  // per module - not "below team_member") - so any item a Supplier or
+  // Customer login can see lists that explicitly in `levels`, checked before
+  // the rank-based minLevel fallback used for the internal staff tiers.
   var ALL_SECTIONS = [
     {
       label: 'Production Modules',
       minLevel: 'team_member',
       items: [
-        { name: 'Dessimate POs', href: 'PDIR_DessimatePOs.html' },
-        { name: 'Supplier Invoices', href: 'PDIR_SupplierInvoices.html' },
-        { name: 'PDIR', href: 'PDIR_Portal.html' },
-        { name: 'Parts', href: 'PDIR_Parts.html' }
+        { name: 'Dessimate POs', href: 'PDIR_DessimatePOs.html', levels: ['team_member', 'admin', 'super_admin', 'supplier'] },
+        { name: 'Supplier Invoices', href: 'PDIR_SupplierInvoices.html', levels: ['team_member', 'admin', 'super_admin', 'supplier'] },
+        { name: 'PDIR', href: 'PDIR_Portal.html', levels: ['team_member', 'admin', 'super_admin', 'supplier'] },
+        { name: 'Parts', href: 'PDIR_Parts.html', levels: ['team_member', 'admin', 'super_admin', 'supplier', 'customer'] }
       ]
     },
     {
       label: 'Pre-Production Modules',
       minLevel: 'team_member',
       items: [
-        { name: 'APQP', href: 'APQP.html' }
+        { name: 'APQP', href: 'APQP.html', levels: ['team_member', 'admin', 'super_admin', 'supplier', 'customer'] }
       ]
     },
     {
       label: 'Admin Modules',
       minLevel: 'admin',
       items: [
-        { name: 'Customer POs', href: 'PDIR_CustomerPOs.html', minLevel: 'admin' },
-        { name: 'Dessimate Invoices', href: 'PDIR_DessimateInvoices.html', minLevel: 'admin' },
+        { name: 'Customer POs', href: 'PDIR_CustomerPOs.html', minLevel: 'admin', levels: ['admin', 'super_admin', 'customer'] },
+        { name: 'Dessimate Invoices', href: 'PDIR_DessimateInvoices.html', minLevel: 'admin', levels: ['admin', 'super_admin', 'customer'] },
         { name: 'Users', href: 'PDIR_Users.html', minLevel: 'super_admin' },
         { name: 'Organizations', href: 'PDIR_Organizations.html', minLevel: 'super_admin' }
       ]
@@ -303,7 +325,7 @@
       label: 'Resources',
       minLevel: 'team_member',
       items: [
-        { name: 'Instructions', href: 'Instructions.html' }
+        { name: 'Instructions', href: 'Instructions.html', levels: ['team_member', 'admin', 'super_admin', 'supplier', 'customer'] }
       ]
     }
   ];
@@ -312,6 +334,12 @@
     var have = LEVEL_RANK[accessLevel] || 0;
     var need = LEVEL_RANK[minLevel] || 0;
     return have >= need;
+  }
+  // An explicit `levels` allowlist (Supplier/Customer items) always wins;
+  // otherwise fall back to the rank-based check the internal staff tiers use.
+  function itemVisible(accessLevel, item, sectionMinLevel){
+    if (item.levels) return item.levels.indexOf(accessLevel) !== -1;
+    return levelMeets(accessLevel, item.minLevel || sectionMinLevel);
   }
 
   var activeHref = null;
@@ -337,9 +365,8 @@
     var navEl = document.getElementById('sideNav');
     navEl.innerHTML = '';
     ALL_SECTIONS.forEach(function(section){
-      if (!levelMeets(accessLevel, section.minLevel)) return;
       var visibleItems = section.items.filter(function(item){
-        return levelMeets(accessLevel, item.minLevel || section.minLevel);
+        return itemVisible(accessLevel, item, section.minLevel);
       });
       if (!visibleItems.length) return;
 

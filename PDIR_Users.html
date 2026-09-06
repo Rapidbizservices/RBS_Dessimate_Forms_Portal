@@ -37,6 +37,12 @@
      page's own cross-links would just duplicate it. Standalone loads (direct
      visit, bookmark, another page's link opening a new tab) are unaffected. */
   html[data-embedded] .homeBtn{ display:none !important; }
+  /* Embedded in the dashboard's iframe: the sidebar already has its own
+     Log out, so a second one here (which would also silently sign the
+     dashboard itself out) is just confusing - hide the button, but keep
+     the "Welcome, X" status text since the outer dashboard doesn't show
+     per-module context like that. */
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
   .addBtn{ color:#fff; background:#1f9254; }
   .addBtn:hover{ background:#187b46; }
 
@@ -201,7 +207,7 @@
     </table>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Users</footer>
+  <footer>Dessimate &middot; DSCM &middot; Users &middot; DSCM v2.0 &middot; Built September 2026</footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
@@ -679,14 +685,16 @@
     }
   }
 
+  // A login can be granted to any relationship now - Dessimate Team member,
+  // Supplier, or Customer alike. What that login can then see is entirely
+  // down to Access Level (Team members) or the account's recorded
+  // Organization (Supplier/Customer), enforced server-side - not to who's
+  // even allowed to have a username at all.
   function updateLoginBlockVisibility(){
-    var rel = document.getElementById('f_relationship').value;
     var loginBlock = document.getElementById('loginBlock');
     var giveLogin = document.getElementById('f_giveLogin');
     var loginFields = document.getElementById('loginFields');
-    var isTeam = rel === 'Dessimate Team member';
-    loginBlock.style.display = isTeam ? 'block' : 'none';
-    if (!isTeam) giveLogin.checked = false;
+    loginBlock.style.display = 'block';
     loginFields.style.display = giveLogin.checked ? 'block' : 'none';
   }
   // Access Level only applies to Dessimate Team members (super_admin/admin/
@@ -838,7 +846,7 @@
     var phone = document.getElementById('f_phone').value.trim();
     var active = document.getElementById('f_active').checked;
 
-    if (relationship === 'Dessimate Team member' && giveLogin && !username) {
+    if (giveLogin && !username) {
       errEl.textContent = 'Enter a username, or turn off "Give this person a login".';
       return;
     }
@@ -853,7 +861,7 @@
     var body = {
       name: name, relationship: relationship,
       organization: organization, role: role, email: email, phone: phone, active: active,
-      username: (relationship === 'Dessimate Team member' && giveLogin) ? username : '',
+      username: giveLogin ? username : '',
       accessLevel: accessLevel, isDemo: isDemo
     };
     if (password) body.password = password;

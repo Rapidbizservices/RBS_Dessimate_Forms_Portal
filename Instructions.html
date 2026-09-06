@@ -33,6 +33,12 @@
   }
   .homeBtn:hover{ background:#eef1fa; }
   html[data-embedded] .homeBtn{ display:none !important; }
+  /* Embedded in the dashboard's iframe: the sidebar already has its own
+     Log out, so a second one here (which would also silently sign the
+     dashboard itself out) is just confusing - hide the button, but keep
+     the "Welcome, X" status text since the outer dashboard doesn't show
+     per-module context like that. */
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
 
   .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
     font-size:12.5px; margin:10px 0 18px; }
@@ -205,8 +211,7 @@
   <div id="guideSupplier" class="guidePanel" data-guide="supplier">
     <div class="guideHead">
       <h2>Supplier — your PO through your invoice</h2>
-      <p>Everything from your side of one shipment, in order.</p>
-      <span class="previewNote">Supplier sign-in isn't turned on yet — this is what you'll see once it is.</span>
+      <p>Everything from your side of one shipment, in order. Signing in shows only your own organization's Dessimate POs, Supplier Invoices, PDIRs, Parts, and APQP — nothing belonging to another supplier.</p>
     </div>
     <div class="stepList">
       <div class="step"><div class="stepNum">1</div><div class="stepBody">
@@ -231,8 +236,7 @@
   <div id="guideCustomer" class="guidePanel" data-guide="customer">
     <div class="guideHead">
       <h2>Customer — your PO through your invoice</h2>
-      <p>What happens to your order after you send it, and what you'll be able to see.</p>
-      <span class="previewNote">Customer sign-in isn't turned on yet — this is what you'll see once it is.</span>
+      <p>What happens to your order after you send it, and what you'll be able to see. Signing in shows only your own organization's Customer POs, Dessimate Invoices, Parts, and APQP — the shipment inspection (PDIR) and Supplier Invoice stay internal to Dessimate and its supplier.</p>
     </div>
     <div class="stepList">
       <div class="step"><div class="stepNum">1</div><div class="stepBody">
@@ -244,8 +248,8 @@
         <p>On your behalf, and manages the shipment through to delivery.</p>
       </div></div>
       <div class="step"><div class="stepNum">3</div><div class="stepBody">
-        <h3>You can review the PDIR</h3>
-        <p>The quality inspection report for your shipment — everything on it except the Supplier Invoice, which stays internal to Dessimate.</p>
+        <h3>You can track Parts and pre-production (APQP) status</h3>
+        <p>For the parts on your order, as Dessimate and its supplier work through them.</p>
       </div></div>
       <div class="step"><div class="stepNum">4</div><div class="stepBody">
         <h3>Dessimate invoices you</h3>
@@ -254,7 +258,7 @@
     </div>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Instructions</footer>
+  <footer>Dessimate &middot; DSCM &middot; Instructions &middot; DSCM v2.0 &middot; Built September 2026</footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
