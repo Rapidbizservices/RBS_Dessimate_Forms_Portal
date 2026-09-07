@@ -201,7 +201,7 @@
     <div id="pdirList"></div>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; PDIR Portal &middot; Form QF-PDIR-01 &middot; DSCM v2.0 &middot; Built September 2026</footer>
+  <footer>Dessimate &middot; DSCM &middot; PDIR Portal &middot; Form QF-PDIR-01 &middot; DSCM v2.1 &middot; Built September 2026</footer>
 </div>
 
 <div id="viewerOverlay" class="viewerOverlay">
@@ -589,16 +589,20 @@
       return data.accessLevel || 'team_member';
     } catch (e) { return 'team_member'; }
   }
-  // A Supplier login is read-only here and only ever sees its own shipments
+  // A Supplier or Customer login (Rev2.1: Customer logins were granted PDIR
+  // read access) is read-only here and only ever sees its own scoped shipments
   // (enforced server-side by GET /pdir-index) - Create/Modify/Delete/Restore
-  // and "Show removed" all assume write access this account doesn't have, so
+  // and "Show removed" all assume write access these accounts don't have, so
   // they're hidden rather than shown and then failing.
+  function isReadOnlyExternal(){
+    return currentAccessLevel === 'supplier' || currentAccessLevel === 'customer';
+  }
   function applyAccessLevelToChrome(){
-    var isSupplier = currentAccessLevel === 'supplier';
+    var readOnly = isReadOnlyExternal();
     var createBtn = document.querySelector('.createBtn');
     var hiddenToggleLabel = document.querySelector('.hiddenToggle');
-    if (createBtn) createBtn.style.display = isSupplier ? 'none' : '';
-    if (hiddenToggleLabel) hiddenToggleLabel.style.display = isSupplier ? 'none' : '';
+    if (createBtn) createBtn.style.display = readOnly ? 'none' : '';
+    if (hiddenToggleLabel) hiddenToggleLabel.style.display = readOnly ? 'none' : '';
   }
 
   function renderList(){
@@ -633,9 +637,10 @@
         : '<span class="pill pill-draft">Draft</span>';
       if (e.hidden) pill += '<span class="pill pill-hidden">Removed</span>';
       var modifyHref = 'PDIR_Form_Filler.html?shipment=' + encodeURIComponent(e.title);
-      // A Supplier login is read-only - it never gets Modify/Delete/Restore,
-      // only the same View PDF action any staff level also gets.
-      var isSupplier = currentAccessLevel === 'supplier';
+      // A Supplier or Customer login is read-only - it never gets
+      // Modify/Delete/Restore, only the same View PDF action any staff level
+      // also gets.
+      var isSupplier = isReadOnlyExternal();
 
       var row = document.createElement('div');
       row.className = 'pdir-row' + (e.hidden ? ' is-hidden' : '');
@@ -688,14 +693,16 @@
       applyAccessLevelToChrome();
 
       var entries;
-      if (currentAccessLevel === 'supplier') {
-        // A Supplier login can't list the pdirs/ or pdir_drafts/ folders
-        // directly (that would expose every other supplier's shipment
-        // titles too) - the backend's own PDIR index is already scoped to
-        // this account's organization, so it's the list source instead.
-        // Every entry is shown with a "View PDF" action; if a title turns
-        // out to be a draft with no finished PDF yet, the viewer below
-        // reports that plainly rather than erroring the whole list.
+      if (isReadOnlyExternal()) {
+        // A Supplier or Customer login can't list the pdirs/ or pdir_drafts/
+        // folders directly (that would expose every other organization's
+        // shipment titles too) - the backend's own PDIR index is already
+        // scoped to this account (by organization for a Supplier, by which
+        // Part Numbers the organization is the customer of for a Customer -
+        // Rev2.1), so it's the list source instead. Every entry is shown
+        // with a "View PDF" action; if a title turns out to be a draft with
+        // no finished PDF yet, the viewer below reports that plainly rather
+        // than erroring the whole list.
         var idxRes = await apiFetch('pdir-index');
         if (!idxRes.ok) throw new Error('HTTP ' + idxRes.status);
         var idxData = await idxRes.json();
@@ -741,7 +748,7 @@
       if (!entries.length) {
         loadingEl.style.display = 'none';
         emptyEl.style.display = 'block';
-        emptyEl.textContent = currentAccessLevel === 'supplier'
+        emptyEl.textContent = isReadOnlyExternal()
           ? 'No PDIRs have been tagged to your organization yet.'
           : 'No PDIRs yet. Click "Create a PDIR" above to make the first one.';
         lastEntries = [];

@@ -129,6 +129,26 @@
   .modalSection{ margin:18px 0 4px; }
   .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
 
+  /* Attachments (Rev2.1) - same standard attachment-list pattern used on the
+     Parts page, minus the "(x / 20)" counter and the "up to 20 files" hint
+     caption (not wanted here per the Rev2.1 brief; the 20-file cap itself
+     still applies quietly server-side - see DESSIMATE_INVOICE_ATTACHMENTS_MAX). */
+  .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    padding:9px 0; font-size:12.5px; }
+  .docRow .docMain{ flex:1 1 auto; min-width:0; }
+  .docRow input[type=file]{ font-size:11.5px; margin-top:2px; }
+  .attachmentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .attachRow{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:7px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
+  .attachRow .attachName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .attachRow .attachName.pending{ color:#a06a1c; }
+  .attachRow .attachLinks{ display:flex; gap:10px; flex:0 0 auto; }
+  .attachRow .attachLinks button{ font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
+  .attachRow .attachLinks button:hover{ text-decoration:underline; }
+  .attachRow .attachLinks .removeLink{ color:#b23b3b; }
+  .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
+
   .linesWrap{ overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
   table.linesTable{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:700px; }
   table.linesTable th{ background:#f7f8fb; color:var(--label); font-size:10.5px; text-transform:uppercase;
@@ -241,7 +261,7 @@
     </table>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Dessimate Invoices &middot; DSCM v2.0 &middot; Built September 2026</footer>
+  <footer>Dessimate &middot; DSCM &middot; Dessimate Invoices &middot; DSCM v2.1 &middot; Built September 2026</footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
@@ -333,6 +353,17 @@
         <div class="poTotalRow"><span class="label">Invoice Total:</span> <span class="amount" id="invTotalDisplay">0.00</span></div>
       </div>
 
+      <div class="modalSection">
+        <h3>Attachments</h3>
+        <div id="attachmentsList" class="attachmentsList"></div>
+        <div class="docRow">
+          <div class="docMain">
+            <input type="file" id="attachmentsDocInput" multiple>
+            <div class="modalError" id="attachError" style="margin-top:6px;"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="modalError" id="modalError"></div>
       <div class="modalBtns">
         <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
@@ -390,6 +421,148 @@
     }
     return res;
   }
+  // -----------------------------------------------------------------------------
+
+  // ---- Attachments (Rev2.1) - file storage helpers, same pattern as Parts.html
+  var DESSIMATE_INVOICE_DOC_FOLDER = 'dessimate_invoice_docs';
+  var DESSIMATE_INVOICE_ATTACHMENTS_MAX = 20;
+  function workerContentsPath(fullPath){
+    return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
+  }
+  function bytesToBase64(bytes){
+    var binary = '', chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+  function base64ToBytes(b64){
+    var bin = atob((b64 || '').replace(/\s+/g, ''));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  function docFileExt(filename){
+    var m = /\.[a-zA-Z0-9]+$/.exec(filename || '');
+    return m ? m[0] : '';
+  }
+  function isInlineViewable(mimeType, filename){
+    var ext = docFileExt(filename).toLowerCase();
+    if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
+    if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    return null;
+  }
+  async function ghGetSha(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status);
+    var data = await res.json();
+    return data.sha;
+  }
+  async function ghGetFileBytes(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status + ' while loading ' + fullPath + '.');
+    var data = await res.json();
+    return base64ToBytes(data.content || '');
+  }
+  async function ghPutFile(fullPath, bytes, commitMessage){
+    var sha = await ghGetSha(fullPath);
+    var body = { message: commitMessage || ('Update ' + fullPath), content: bytesToBase64(bytes) };
+    if (sha) body.sha = sha;
+    var res = await apiFetch(workerContentsPath(fullPath), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+      throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+    }
+    return await res.json();
+  }
+  function buildAttachmentDocPath(invoiceId, filename, idx){
+    var safeName = (filename || 'file').replace(/[\\/]/g, '_');
+    return DESSIMATE_INVOICE_DOC_FOLDER + '/' + invoiceId + '/' + Date.now() + '-' + idx + '-' + safeName;
+  }
+  function readFileAsBytes(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onerror = function(){ reject(new Error('Could not read "' + file.name + '".')); };
+      reader.onload = function(){ resolve(new Uint8Array(reader.result)); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  // Each entry is either { kind:'existing', doc:{path,filename,mimeType,size} }
+  // or { kind:'pending', bytes, filename, mimeType } (picked locally, only
+  // uploaded if Save goes through) - same shape/behavior as Parts.html.
+  var attachmentsState = [];
+  function activeAttachmentCount(){ return attachmentsState.length; }
+  function renderAttachmentsList(){
+    var listEl = document.getElementById('attachmentsList');
+    var inputEl = document.getElementById('attachmentsDocInput');
+    var count = activeAttachmentCount();
+    if (!count) {
+      listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>';
+    } else {
+      listEl.innerHTML = attachmentsState.map(function(entry, idx){
+        var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
+        var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+        var viewBtn = entry.kind === 'pending'
+          ? '<button type="button" data-preview-idx="' + idx + '">Preview</button>'
+          : '<button type="button" data-view-idx="' + idx + '">View</button>';
+        return '<div class="attachRow">' +
+          '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+          '<div class="attachLinks">' + viewBtn +
+            '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' +
+          '</div></div>';
+      }).join('');
+    }
+    inputEl.disabled = count >= DESSIMATE_INVOICE_ATTACHMENTS_MAX;
+    inputEl.title = inputEl.disabled ? 'Maximum of ' + DESSIMATE_INVOICE_ATTACHMENTS_MAX + ' attachments reached.' : '';
+
+    listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
+        if (entry) openDocViewer({ filename: entry.filename, mimeType: entry.mimeType, bytes: entry.bytes });
+      });
+    });
+    listEl.querySelectorAll('[data-view-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-view-idx'))];
+        if (entry) openDocViewer({ filename: entry.doc.filename, mimeType: entry.doc.mimeType, path: entry.doc.path });
+      });
+    });
+    listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        attachmentsState.splice(Number(btn.getAttribute('data-remove-idx')), 1);
+        renderAttachmentsList();
+      });
+    });
+  }
+  document.getElementById('attachmentsDocInput').addEventListener('change', async function(){
+    var files = this.files ? Array.from(this.files) : [];
+    this.value = '';
+    if (!files.length) return;
+    var errEl = document.getElementById('attachError');
+    errEl.textContent = '';
+    var room = DESSIMATE_INVOICE_ATTACHMENTS_MAX - activeAttachmentCount();
+    if (files.length > room) {
+      errEl.textContent = room <= 0
+        ? 'Maximum of ' + DESSIMATE_INVOICE_ATTACHMENTS_MAX + ' attachments reached — remove one before adding another.'
+        : 'Only ' + room + ' more file' + (room === 1 ? '' : 's') + ' can be added (limit ' + DESSIMATE_INVOICE_ATTACHMENTS_MAX + ').';
+      files = files.slice(0, Math.max(room, 0));
+    }
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      try {
+        var bytes = await readFileAsBytes(file);
+        attachmentsState.push({ kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' });
+      } catch (e) {
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      }
+    }
+    renderAttachmentsList();
+  });
   // -----------------------------------------------------------------------------
 
   // ---- Staff login wall -----------------------------------------------------
@@ -503,6 +676,44 @@
     } catch (e) {
       console.error(e);
       stateEl.textContent = 'Could not display this PDF (' + (e && e.message ? e.message : e) + ').';
+    }
+  }
+  // Generic path/bytes-based viewer for Attachments (Rev2.1) - separate from
+  // openPdfInViewer above, which is specific to the already-fetched-bytes
+  // generated invoice PDF. Same pattern as Parts.html's openDocViewer.
+  async function openDocViewer(source){
+    var overlay = document.getElementById('docViewerOverlay');
+    var stateEl = document.getElementById('docViewerState');
+    var frame = document.getElementById('docViewerFrame');
+    var img = document.getElementById('docViewerImg');
+    var downloadBtn = document.getElementById('docViewerDownload');
+    document.getElementById('docViewerTitle').textContent = source.filename || 'Document';
+    frame.style.display = 'none'; img.style.display = 'none'; downloadBtn.style.display = 'none';
+    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var bytes = source.bytes;
+      if (!bytes) {
+        bytes = await ghGetFileBytes(source.path);
+        if (!bytes) throw new Error('File not found.');
+      }
+      var kind = isInlineViewable(source.mimeType, source.filename);
+      if (!kind) {
+        stateEl.textContent = "This file type can't be previewed here — use Download instead.";
+        return;
+      }
+      var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : 'image/jpeg') });
+      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+      docViewerObjectUrl = URL.createObjectURL(blob);
+      if (kind === 'pdf') { frame.src = docViewerObjectUrl; frame.style.display = 'block'; }
+      else { img.src = docViewerObjectUrl; img.style.display = 'block'; }
+      stateEl.style.display = 'none';
+      downloadBtn.href = docViewerObjectUrl;
+      downloadBtn.download = source.filename || 'file';
+      downloadBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
     }
   }
   async function viewGeneratedPdf(id, invoiceNumber, btn){
@@ -769,12 +980,15 @@
   function resetForm(){
     document.getElementById('invForm').reset();
     document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
     lineRows = [newLineRow()];
     document.getElementById('f_customer').innerHTML = customerOrgOptions('');
     document.getElementById('f_customerPoRef').innerHTML = customerPoRefOptions('');
     document.getElementById('f_status').value = 'Unpaid';
     document.getElementById('f_invoiceNumber').value = '';
     setNumberFieldEditable(true);
+    attachmentsState = [];
+    renderAttachmentsList();
     renderLines();
   }
 
@@ -791,6 +1005,9 @@
     editingId = id;
     document.getElementById('invForm').reset();
     document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = (inv.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
     lineRows = (inv.lines && inv.lines.length) ? inv.lines.map(function(l){
       return { partNumber: l.partNumber, description: l.description, revision: l.revision, uom: l.uom,
         qtyShipped: l.qtyShipped, unitPrice: l.unitPrice };
@@ -842,14 +1059,38 @@
 
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
-      var res;
-      if (editingId) {
-        res = await apiFetch('dessimate-invoices/' + encodeURIComponent(editingId), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
-      } else {
-        res = await apiFetch('dessimate-invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
+      var invoiceId = editingId;
+      if (!invoiceId) {
+        // New invoice: create it first (without attachments - none can exist
+        // yet, since attachment file paths are keyed by invoice id) to get
+        // an id, then upload any pending files and follow up with a PUT that
+        // sets everything, attachments included - same two-step pattern
+        // Parts.html uses. invoiceNumber is server-assigned/immutable, so
+        // re-sending baseFields on that follow-up PUT can't clobber it.
+        var createRes = await apiFetch('dessimate-invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
+        var createData = {}; try { createData = await createRes.json(); } catch(e){}
+        if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+        invoiceId = createData.id;
       }
-      var data = {}; try { data = await res.json(); } catch(e){}
-      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+
+      var attachmentsPayload = [];
+      for (var i = 0; i < attachmentsState.length; i++) {
+        var entry = attachmentsState[i];
+        if (entry.kind === 'existing') {
+          attachmentsPayload.push(entry.doc);
+        } else {
+          var path = buildAttachmentDocPath(invoiceId, entry.filename, i);
+          await ghPutFile(path, entry.bytes, 'Upload attachment for Dessimate Invoice ' + (baseFields.invoiceNumber || invoiceId));
+          attachmentsPayload.push({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length });
+        }
+      }
+
+      var putRes = await apiFetch('dessimate-invoices/' + encodeURIComponent(invoiceId), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({}, baseFields, { attachments: attachmentsPayload }))
+      });
+      var putData = {}; try { putData = await putRes.json(); } catch(e){}
+      if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
 
       closeModal();
       await loadInvoices();

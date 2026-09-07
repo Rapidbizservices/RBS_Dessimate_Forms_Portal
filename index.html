@@ -154,7 +154,7 @@
     <div class="sideFoot">
       <div class="sideUser" id="sideUser">Not signed in</div>
       <button type="button" class="sideLogoutBtn" id="sideLogoutBtn">Log out</button>
-      <div class="sideVersion">DSCM v2.0 &middot; Built September 2026</div>
+      <div class="sideVersion">DSCM v2.1 &middot; Built September 2026</div>
     </div>
   </nav>
 
@@ -300,8 +300,16 @@
       items: [
         { name: 'Dessimate POs', href: 'PDIR_DessimatePOs.html', levels: ['team_member', 'admin', 'super_admin', 'supplier'] },
         { name: 'Supplier Invoices', href: 'PDIR_SupplierInvoices.html', levels: ['team_member', 'admin', 'super_admin', 'supplier'] },
-        { name: 'PDIR', href: 'PDIR_Portal.html', levels: ['team_member', 'admin', 'super_admin', 'supplier'] },
-        { name: 'Parts', href: 'PDIR_Parts.html', levels: ['team_member', 'admin', 'super_admin', 'supplier', 'customer'] }
+        { name: 'PDIR', href: 'PDIR_Portal.html', levels: ['team_member', 'admin', 'super_admin', 'supplier', 'customer'] },
+        { name: 'Parts', href: 'PDIR_Parts.html', levels: ['team_member', 'admin', 'super_admin', 'supplier', 'customer'] },
+        // Rev2.1: a Customer login sees Customer POs grouped here, alongside
+        // the other modules relevant to their account, rather than under
+        // "Admin Modules" below (which is Team-Member/Admin-facing wording
+        // and, for Users/Organizations, access they'll never have). Staff
+        // still manage Customer POs from the Admin Modules entry below -
+        // this is purely which group a Customer login sees the same page
+        // under.
+        { name: 'Customer POs', href: 'PDIR_CustomerPOs.html', levels: ['customer'] }
       ]
     },
     {
@@ -315,8 +323,9 @@
       label: 'Admin Modules',
       minLevel: 'admin',
       items: [
-        { name: 'Customer POs', href: 'PDIR_CustomerPOs.html', minLevel: 'admin', levels: ['admin', 'super_admin', 'customer'] },
-        { name: 'Dessimate Invoices', href: 'PDIR_DessimateInvoices.html', minLevel: 'admin', levels: ['admin', 'super_admin', 'customer'] },
+        { name: 'Customer POs', href: 'PDIR_CustomerPOs.html', minLevel: 'admin', levels: ['admin', 'super_admin'] },
+        // Rev2.1: Customer logins no longer see Dessimate Invoices at all.
+        { name: 'Dessimate Invoices', href: 'PDIR_DessimateInvoices.html', minLevel: 'admin', levels: ['admin', 'super_admin'] },
         { name: 'Users', href: 'PDIR_Users.html', minLevel: 'super_admin' },
         { name: 'Organizations', href: 'PDIR_Organizations.html', minLevel: 'super_admin' }
       ]

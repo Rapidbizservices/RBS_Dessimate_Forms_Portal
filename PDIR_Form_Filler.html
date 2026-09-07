@@ -209,12 +209,7 @@
   </div>
 </div>
 
-<h1>Dessimate &ndash; PDIR Form Filler</h1>
-<p class="subtitle">
-  Fill in the fields below. Progress autosaves a few seconds after you type (once you're signed in above and a
-  Shipment Number is entered), so you or anyone else can pick this back up later from the Portal.
-  Click <strong>Create PDF</strong> when you're done to build the finished report and save it.
-</p>
+<h1>Dessimate-PDIR Module</h1>
 <div id="draftStatus" class="draftStatus"></div>
 
 <form id="pdirForm">
@@ -252,7 +247,11 @@
     </div>
     <div class="grid2 row">
       <label class="field">Mode of Shipment <input type="text" name="mode_of_shipment"></label>
-      <label class="field">Invoice / AWB No. <input type="text" name="invoice_awb_no"></label>
+      <label class="field" id="f_invoiceAwbField">Invoice / AWB No.
+        <select name="invoice_awb_no" id="f_pdir_invoice_select">
+          <option value="">— Select Supplier/Organization above first —</option>
+        </select>
+      </label>
     </div>
   </div>
 
@@ -298,7 +297,11 @@
       <div class="signoff-group">
         <h3>Supplier Sign-off</h3>
         <div class="grid3 row">
-          <label class="field">Prepared By (Signature) <input type="text" name="prepared_by_signature"></label>
+          <label class="field">Prepared By
+            <select id="f_preparedBySelect" name="prepared_by_signature">
+              <option value="">— Select Supplier/Organization above first —</option>
+            </select>
+          </label>
           <label class="field">Print Name <input type="text" name="prepared_by_print_name"></label>
         </div>
         <div class="grid3 row">
@@ -316,18 +319,37 @@
       <div class="signoff-group">
         <h3>Dessimate Sign-off</h3>
         <div class="grid3 row">
-          <label class="field">Quality Approval
+          <label class="field">Prepared by
             <select id="f_qualityApprover" name="quality_approval_username">
               <option value="">— Select —</option>
             </select>
           </label>
-          <label class="field">Title <input type="text" name="title"></label>
+          <label class="field">Print Name <input type="text" name="title"></label>
         </div>
         <div class="grid3 row">
           <label class="field">Date <input type="text" name="dessimate_sign_date" placeholder="MM/DD/YY"></label>
         </div>
-        <label class="field" readonly-field>Signature (auto-filled) <input type="text" name="quality_approval_signature" readonly></label>
-        <label class="field" readonly-field style="margin-top:8px;">Print Name (auto-filled) <input type="text" name="quality_approval_print_name" readonly></label>
+        <!-- Rev2.1: the old "Signature (auto-filled)"/"Print Name (auto-filled)"
+             boxes were removed from view per the brief, but generatePdf() still
+             draws data.quality_approval_signature onto the PDF's "PREPARED BY"
+             row - so it keeps being set by resolveQualityApproverStamp's change
+             handler below, just kept off-screen now instead of shown as a
+             readonly box. Left as real type="text" fields (not type="hidden")
+             so they still flow through the same generic 'input[type="text"]'
+             collection every draft-save/restore/autosave path already uses -
+             a type="hidden" field would silently stop being saved everywhere.
+             quality_approval_print_name is kept too, unused by the PDF today,
+             purely so nothing already saved in an existing draft disappears. -->
+        <label class="field" style="display:none;">Prepared By (name) <input type="text" name="quality_approval_signature"></label>
+        <label class="field" style="display:none;">Print Name (name) <input type="text" name="quality_approval_print_name"></label>
+        <label class="field doc-field">Stamp (optional)
+          <input type="file" id="f_dessimateStamp" accept=".png,.jpg,.jpeg,.pdf,image/png,image/jpeg,application/pdf">
+          <span class="docStatus" data-doc-status="dessimate_stamp">No stamp attached</span>
+          <div class="docLinks">
+            <button type="button" class="docView" data-doc-view="dessimate_stamp">View</button>
+            <a href="#" class="docDownload" data-doc-dl="dessimate_stamp">Download current file</a>
+          </div>
+        </label>
         <span class="stampStatus" id="dessimateStampStatus">Select a name above to auto-fill the signature and pull their stamp on file.</span>
       </div>
     </div>
@@ -481,6 +503,122 @@
       var part = partsByNumber[this.value];
       if (descEl && part) descEl.value = part.name || '';
     });
+  }
+
+  // ---- Invoice / AWB No. dropdown (Rev2.1) -----------------------------------
+  // Was free text; now a dropdown of this shipment's Supplier's own invoices,
+  // filtered by whatever's selected in "Supplier / Organization" above (same
+  // load-before-values-are-applied ordering requirement as the other
+  // dropdowns on this form).
+  var allSupplierInvoices = [];
+  async function loadSupplierInvoicesForDropdown(){
+    try {
+      var res = await apiFetch('supplier-invoices');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      allSupplierInvoices = Array.isArray(data.supplierInvoices) ? data.supplierInvoices : [];
+    } catch (e) {
+      console.error('Could not load supplier invoices for the Invoice/AWB dropdown', e);
+      allSupplierInvoices = [];
+    }
+  }
+  function ensureInvoiceSelectHasValue(value){
+    var selectEl = document.getElementById('f_pdir_invoice_select');
+    if (!selectEl || !value) return;
+    var has = Array.prototype.some.call(selectEl.options, function(o){ return o.value === value; });
+    if (!has) {
+      var opt = document.createElement('option');
+      opt.value = value; opt.textContent = value + ' (not in Supplier Invoices list)';
+      selectEl.appendChild(opt);
+    }
+    selectEl.value = value;
+  }
+  function renderInvoiceAwbOptions(orgName, keepValue){
+    var selectEl = document.getElementById('f_pdir_invoice_select');
+    if (!selectEl) return;
+    var currentValue = keepValue !== undefined ? keepValue : selectEl.value;
+    if (!orgName) {
+      selectEl.innerHTML = '<option value="">— Select Supplier/Organization above first —</option>';
+      return;
+    }
+    var matches = allSupplierInvoices.filter(function(inv){ return inv.supplier === orgName; });
+    selectEl.innerHTML = '<option value="">— Select Invoice —</option>' + matches.map(function(inv){
+      return '<option value="' + escapeHtmlLite(inv.invoiceNumber) + '">' + escapeHtmlLite(inv.invoiceNumber) + '</option>';
+    }).join('');
+    if (currentValue) ensureInvoiceSelectHasValue(currentValue);
+  }
+
+  // ---- Supplier Sign-off: "Prepared By" dropdown (Rev2.1) --------------------
+  // Was free text; now a dropdown of Supplier-side user accounts for whichever
+  // organization is selected above (GET /org-contacts, staff-only - see
+  // worker/src/index.js). Picking a name auto-fills Print Name, the same
+  // pairing the Dessimate Sign-off's own dropdown already does below.
+  function ensurePreparedBySelectHasValue(value){
+    var selectEl = document.getElementById('f_preparedBySelect');
+    if (!selectEl || !value) return;
+    var has = Array.prototype.some.call(selectEl.options, function(o){ return o.value === value; });
+    if (!has) {
+      var opt = document.createElement('option');
+      opt.value = value; opt.textContent = value + ' (not in Organizations\' Users list)';
+      selectEl.appendChild(opt);
+    }
+    selectEl.value = value;
+  }
+  async function loadPreparedByOptions(orgName, keepValue){
+    var selectEl = document.getElementById('f_preparedBySelect');
+    if (!selectEl) return;
+    var currentValue = keepValue !== undefined ? keepValue : selectEl.value;
+    if (!orgName) {
+      selectEl.innerHTML = '<option value="">— Select Supplier/Organization above first —</option>';
+      return;
+    }
+    var contacts = [];
+    try {
+      var res = await apiFetch('org-contacts?organization=' + encodeURIComponent(orgName));
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      contacts = Array.isArray(data.contacts) ? data.contacts : [];
+    } catch (e) {
+      console.error('Could not load contacts for ' + orgName, e);
+    }
+    selectEl.innerHTML = '<option value="">— Select —</option>' + contacts.map(function(c){
+      var name = c.name || c.username;
+      var label = c.name ? (c.name + ' (' + c.username + ')') : c.username;
+      return '<option value="' + escapeHtmlLite(name) + '">' + escapeHtmlLite(label) + '</option>';
+    }).join('');
+    if (currentValue) ensurePreparedBySelectHasValue(currentValue);
+  }
+  var preparedBySelectEl = document.getElementById('f_preparedBySelect');
+  if (preparedBySelectEl) {
+    preparedBySelectEl.addEventListener('change', function(){
+      var printEl = form.querySelector('[name="prepared_by_print_name"]');
+      if (printEl) printEl.value = this.value;
+    });
+  }
+
+  // Both dropdowns above refresh whenever the Supplier/Organization changes.
+  var orgSelectEl = document.getElementById('f_pdir_org_select');
+  if (orgSelectEl) {
+    orgSelectEl.addEventListener('change', function(){
+      renderInvoiceAwbOptions(this.value);
+      loadPreparedByOptions(this.value);
+    });
+  }
+
+  // ---- Customer accounts are read-only and never reach this page through
+  // the Portal's own links, but a direct URL visit should still not present
+  // an editable Invoice/AWB box tied to Supplier Invoice data they otherwise
+  // have no access to (Rev2.1).
+  async function hideInvoiceAwbFieldForCustomers(){
+    try {
+      var res = await apiFetch('me');
+      if (!res.ok) return;
+      var data = await res.json();
+      if (data.accessLevel === 'customer') {
+        var fieldEl = document.getElementById('f_invoiceAwbField');
+        if (fieldEl) fieldEl.style.display = 'none';
+      }
+    } catch (e) { /* not signed in yet, or offline - leave the field as-is */ }
   }
 
   // ---- Dessimate Sign-off: Quality Approval dropdown (Rev2) ------------------
@@ -765,23 +903,49 @@
   // memory as soon as it's chosen (docData[key] = {bytes, filename, mimeType})
   // and attached into the finished PDF as a real embedded-file attachment —
   // no separate template or backend file is needed for this.
+  // Rev2.1: "Supplier Invoice" was removed from this list (a supplier-filtered
+  // Invoice/AWB dropdown up in Shipment & Part Information covers that need
+  // instead - see f_pdir_invoice_select below), and a longer list of shipping/
+  // compliance documents replaced it.
   var DOC_FIELDS = [
     ['ctq_report', 'Supplier CTQ Dimensional Inspection Report'],
-    ['invoice', 'Supplier Invoice'],
-    ['mtc_report', 'Supplier MTC Report']
+    ['mtc_report', 'Supplier MTC Report'],
+    ['eway_bill', 'E-way Bill'],
+    ['customs_authority', 'Customs Authority'],
+    ['iec_copy', 'IEC Copy'],
+    ['pancard_of_firm', 'Pancard of Firm'],
+    ['new_authority1_letter', 'New Authority1 Letter'],
+    ['gst_certificate', 'GST Certificate'],
+    ['end_use_letter', 'End Use Letter'],
+    ['pack_list', 'Pack List'],
+    ['tax_invoice', 'Tax Invoice'],
+    ['sco_met', 'SCO MET']
   ];
-  // The Supplier Stamp (Rev2 Sign-Off redesign) lives in the same docData/
-  // pdir_docs/ storage as the three fields above (so it survives drafts and
-  // "Modify PDIR" the same way), but it is NOT one of the DOC_FIELDS above:
-  // it gets drawn as an image into the Sign-Off block instead of attached as
-  // a PDF file attachment, so it's kept out of the DOC_FIELDS attach loop in
-  // generatePdf() and tracked separately here. ALL_DOC_FIELDS is the combined
-  // list used anywhere storage/draft-persistence is generic over "all doc
-  // fields" (collectDraftData, persistDirtyDocs, applyDocsToForm).
+  // A PDIR saved before Rev2.1 may already have a docs.invoice file. It's
+  // deliberately left out of DOC_FIELDS above - never shown, never
+  // re-uploadable, never drawn into a newly-generated PDF's Supporting
+  // Documents or attached as a PDF file - but still listed here (only inside
+  // ALL_DOC_FIELDS, not DOC_FIELDS) purely so collectDraftData/applyDocsToForm
+  // keep carrying any pre-existing value through a load/save round-trip
+  // untouched instead of silently deleting it, per the Rev2.1 brief ("keep
+  // the backend data").
+  var LEGACY_HIDDEN_DOC_FIELDS = [
+    ['invoice', 'Supplier Invoice']
+  ];
+  // The Supplier Stamp and Dessimate Stamp (Rev2 / Rev2.1 Sign-Off redesign)
+  // live in the same docData/pdir_docs/ storage as the fields above (so they
+  // survive drafts and "Modify PDIR" the same way), but neither is one of the
+  // DOC_FIELDS above: each is drawn as an image into the Sign-Off block
+  // instead of attached as a PDF file attachment, so they're kept out of the
+  // DOC_FIELDS attach loop in generatePdf() and tracked separately here.
+  // ALL_DOC_FIELDS is the combined list used anywhere storage/draft-
+  // persistence is generic over "all doc fields" (collectDraftData,
+  // persistDirtyDocs, applyDocsToForm).
   var STAMP_FIELDS = [
-    ['supplier_stamp', 'Supplier Stamp']
+    ['supplier_stamp', 'Supplier Stamp'],
+    ['dessimate_stamp', 'Dessimate Stamp']
   ];
-  var ALL_DOC_FIELDS = DOC_FIELDS.concat(STAMP_FIELDS);
+  var ALL_DOC_FIELDS = DOC_FIELDS.concat(STAMP_FIELDS).concat(LEGACY_HIDDEN_DOC_FIELDS);
   // Each docData[key] is (when present): { bytes, filename, mimeType, path, dirty }.
   // "bytes" is only kept in memory when needed (just chosen, or freshly
   // downloaded for a view/attach); "path" is where it lives under pdir_docs/
@@ -965,6 +1129,13 @@
   });
   var supplierStampInputEl = document.getElementById('f_supplierStamp');
   if (supplierStampInputEl) wireDocFileInput(supplierStampInputEl, 'supplier_stamp');
+  // Rev2.1: manual Stamp upload for the Dessimate Sign-off, matching the
+  // Supplier side's control for visual consistency. If someone uploads one
+  // here, generatePdf() prefers it over the auto-pulled stamp from whoever is
+  // selected in the "Prepared by" dropdown (qualityApproverStamp, sourced
+  // from that person's own Users-page profile) - see dessimateStampImg below.
+  var dessimateStampInputEl = document.getElementById('f_dessimateStamp');
+  if (dessimateStampInputEl) wireDocFileInput(dessimateStampInputEl, 'dessimate_stamp');
 
   // Build the 9 photo upload slots, grouped into 3 sample parts x 3 photo
   // angles each (Rev2 relabel - purely presentational, same data shape as
@@ -1077,6 +1248,10 @@
       });
       if (data.organization_name) ensureOrgSelectHasValue(data.organization_name);
       if (data.part_number) ensurePartSelectHasValue(data.part_number);
+      if (data.organization_name) {
+        loadPreparedByOptions(data.organization_name, data.prepared_by_signature);
+        renderInvoiceAwbOptions(data.organization_name, data.invoice_awb_no);
+      }
     }catch(e){}
   }
   form.addEventListener('input', function(){ save(); scheduleAutosave(); });
@@ -1091,6 +1266,7 @@
     ALL_DOC_FIELDS.forEach(function(item){ updateDocStatus(item[0], 'No file attached', false); updateDocDownloadLink(item[0]); });
     docFieldsRow.querySelectorAll('input[type=file][data-doc]').forEach(function(inp){ inp.value = ''; });
     if (supplierStampInputEl) supplierStampInputEl.value = '';
+    if (dessimateStampInputEl) dessimateStampInputEl.value = '';
     resolveQualityApproverStamp();
     currentDraftTitle = null;
     updateDraftStatus('', '');
@@ -1182,11 +1358,28 @@
         }
       } catch (e) { console.error('Supplier stamp could not be embedded', e); supplierStampImg = null; }
     }
-    // The Dessimate approver's stamp isn't chosen/uploaded here - it's pulled
-    // from whatever they already have on file (Users admin page), by path,
-    // the same way the Dessimate PO PDF pulls an approver's stamp.
+    // Rev2.1: the Dessimate Sign-off now also has its own manual Stamp upload
+    // (dessimate_stamp, same docData/pdir_docs/ mechanism as supplier_stamp)
+    // for visual consistency with the Supplier side. If one was uploaded for
+    // this PDIR, it wins; otherwise fall back to the pre-existing behavior of
+    // pulling whatever stamp the selected approver already has on file (Users
+    // admin page), by path, the same way the Dessimate PO PDF does.
     var dessimateStampImg = null;
-    if (qualityApproverStamp && qualityApproverStamp.path) {
+    var dessimateStampEntry = docData['dessimate_stamp'];
+    if (dessimateStampEntry) {
+      try {
+        var dessimateManualStampBytes = dessimateStampEntry.bytes;
+        if (!dessimateManualStampBytes && dessimateStampEntry.path) {
+          dessimateManualStampBytes = await ghGetDocFileBytes(dessimateStampEntry.path);
+          if (dessimateManualStampBytes) dessimateStampEntry.bytes = dessimateManualStampBytes;
+        }
+        if (dessimateManualStampBytes) {
+          try { dessimateStampImg = await pdfDoc.embedPng(dessimateManualStampBytes); }
+          catch (e) { dessimateStampImg = await pdfDoc.embedJpg(dessimateManualStampBytes); }
+        }
+      } catch (e) { console.error('Dessimate stamp upload could not be embedded', e); dessimateStampImg = null; }
+    }
+    if (!dessimateStampImg && qualityApproverStamp && qualityApproverStamp.path) {
       try {
         var dessimateStampBytes = await ghGetFileBytes(qualityApproverStamp.path);
         if (dessimateStampBytes) {
@@ -1374,14 +1567,14 @@
       }
 
       drawBlock(MARGIN, 'SUPPLIER SIGN-OFF', [
-        ['SIGNATURE', data.prepared_by_signature],
+        ['PREPARED BY', data.prepared_by_signature],
         ['PRINT NAME', data.prepared_by_print_name],
         ['DATE', data.sign_date]
       ], supplierStampImg);
 
       drawBlock(MARGIN + blockW + gap, 'DESSIMATE SIGN-OFF', [
-        ['NAME', data.quality_approval_signature],
-        ['TITLE', data.title],
+        ['PREPARED BY', data.quality_approval_signature],
+        ['PRINT NAME', data.title],
         ['DATE', data.dessimate_sign_date]
       ], dessimateStampImg);
 
@@ -1650,6 +1843,8 @@
     await loadOrgOptions();
     await loadPartOptions();
     await loadPeopleOptions();
+    await loadSupplierInvoicesForDropdown();
+    hideInvoiceAwbFieldForCustomers();
     var params = new URLSearchParams(window.location.search);
     var shipmentParam = params.get('shipment');
     if (shipmentParam) {
@@ -1662,6 +1857,12 @@
           applyPhotosToForm(payload.photos);
           applyDocsToForm(payload.docs);
           currentDraftTitle = shipmentParam;
+          // Both dropdowns need the restored Supplier/Organization value
+          // before they can be filtered - applyFieldsToForm above only sets
+          // the <select>s' raw values, which never fires their own change
+          // event, so these are populated explicitly here instead.
+          await loadPreparedByOptions(payload.fields.organization_name, payload.fields.prepared_by_signature);
+          renderInvoiceAwbOptions(payload.fields.organization_name, payload.fields.invoice_awb_no);
           updateDraftStatus('Loaded saved draft' + (payload.savedAt ? ' (last saved ' + new Date(payload.savedAt).toLocaleString() + ')' : '') + '.', 'ok');
         } else {
           updateDraftStatus('No saved draft found for that shipment yet — starting blank.', 'off');
