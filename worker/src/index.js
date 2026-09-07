@@ -132,7 +132,7 @@
  *                                        Organizations).
  *   GET    /apqp                       - auth required (any signed-in user); full APQP list (one
  *                                        record per Part on the APQP checklist, each with its
- *                                        nine deliverable items - files + a comment log per item).
+ *                                        eleven deliverable items (0. Feasibility Studies covers two named deliverables, plus the numbered 1-9) - files + a comment log per item).
  *   POST   /apqp                       - team_member or above required; add a Part to APQP
  *                                        ({ partNumber }) - rejects a Part already on the list.
  *   DELETE /apqp/<id>                  - team_member or above required; remove a Part from APQP
@@ -203,11 +203,16 @@ const PDIR_INDEX_FILE_PATH = 'data/pdir_index.json';
 
 const APQP_FILE_PATH = 'data/apqp.json';
 const APQP_DOC_FOLDER = 'apqp_docs';
-// Fixed checklist of nine APQP deliverables per part (per the product brief),
-// each with its own files + a running comment log. Order matters - it's the
-// order the Part's checklist is shown in.
-const APQP_ITEM_KEYS = ['designRecord', 'controlPlan', 'dimResults', 'mpTests', 'ips', 'sampleProduct', 'masterSample', 'other', 'psw'];
+// Fixed checklist of APQP deliverables per part (per the product brief), each
+// with its own files + a running comment log. Order matters - it's the order
+// the Part's checklist is shown in. "0. Feasibility Studies" (Rev2.1) is two
+// named deliverables shown together under one "0" heading on the frontend -
+// they're modeled here as two ordinary item keys (reusing the exact same
+// files+comments shape/routes as every other item) rather than a nested
+// sub-structure, so no route or sanitizer below needed to change.
+const APQP_ITEM_KEYS = ['feasibilityPresentation', 'cfdStudies', 'designRecord', 'controlPlan', 'dimResults', 'mpTests', 'ips', 'sampleProduct', 'masterSample', 'other', 'psw'];
 const APQP_ITEM_LABELS = {
+  feasibilityPresentation: 'Feasibility Study Presentation', cfdStudies: 'CFD Studies',
   designRecord: 'Design Record', controlPlan: 'Control Plan', dimResults: 'Dim Results',
   mpTests: 'M/P Tests', ips: 'IPS', sampleProduct: 'Sample Product',
   masterSample: 'Master Sample', other: 'Other', psw: 'PSW'
@@ -221,7 +226,9 @@ const APQP_ITEM_LABELS = {
 // supplier    - read-only, own-organization records only: Parts, Dessimate
 //               POs, Supplier Invoices, APQP, PDIRs (via data/pdir_index.json)
 // customer    - read-only, own-organization records only: Parts, Customer
-//               POs, Dessimate Invoices
+//               POs, APQP, PDIRs (via data/pdir_index.json, scoped by Part
+//               Number rather than organization - see resolveCustomerVisible-
+//               PartNumbers). Rev2.1: no longer sees Dessimate Invoices.
 const ACCESS_LEVELS = ['super_admin', 'admin', 'team_member', 'supplier', 'customer'];
 // Accounts that predate the accessLevel field (or were migrated from the old
 // STAFF_USERS secret before it existed) fall back to this bootstrap list so
@@ -255,6 +262,17 @@ export default {
 
       if (url.pathname === '/users' && request.method === 'GET') {
         return await handleListUsers(env, origin);
+      }
+
+      // Rev2.1: the PDIR Sign-Off's "Prepared By" dropdown (Supplier side) is
+      // filtered by the shipment's Supplier/Organization - a lighter-weight,
+      // staff-only lookup than GET /admin/users (which is super_admin-gated
+      // and returns full PII for every relationship), scoped to just the
+      // Supplier contacts of one named organization.
+      if (url.pathname === '/org-contacts' && request.method === 'GET') {
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleListOrgContacts(env, origin, url.searchParams.get('organization') || '');
       }
 
       if (url.pathname === '/me' && request.method === 'GET') {
@@ -616,6 +634,20 @@ async function handleListUsers(env, origin) {
   people.sort(function (a, b) { return a.username.localeCompare(b.username); });
   const names = people.map(function (p) { return p.username; });
   return json({ usernames: names, people: people }, 200, origin);
+}
+
+// Rev2.1: Supplier-side contacts for one named organization (username + name
+// only, no other PII) - backs the PDIR Sign-Off's "Prepared By" dropdown,
+// which needs to be filtered by whichever Supplier the shipment is for.
+async function handleListOrgContacts(env, origin, organization) {
+  const org = (organization || '').toString().trim();
+  if (!org) return json({ contacts: [] }, 200, origin);
+  const fileState = await readUsersFile(env);
+  const contacts = fileState.users
+    .filter(function (u) { return u.username && u.relationship === 'Supplier' && u.active !== false && (u.organization || '') === org; })
+    .map(function (u) { return { username: u.username, name: u.name || '' }; })
+    .sort(function (a, b) { return (a.name || a.username).localeCompare(b.name || b.username); });
+  return json({ contacts: contacts }, 200, origin);
 }
 
 // ---- admin: user directory --------------------------------------------------
@@ -1235,7 +1267,7 @@ async function handleDeletePart(env, origin, id) {
   return json({ ok: true }, 200, origin);
 }
 
-// ---- APQP (per-Part checklist of 9 deliverables, each with files + a ------
+// ---- APQP (per-Part checklist of deliverables, each with files + a -------
 // running comment log any Team Member can add to - Pre-Production section) -
 
 function emptyApqpItems() {
@@ -1403,7 +1435,12 @@ async function handleListPdirIndex(env, origin, accessLevel, organization) {
   if (accessLevel === 'supplier') {
     entries = entries.filter(function (e) { return organization && e.organization === organization; });
   } else if (accessLevel === 'customer') {
-    entries = [];
+    // Rev2.1: Customer logins were granted read access to PDIR. A Customer
+    // has no direct tie to a PDIR's Supplier organization, so it's scoped
+    // instead through which Part Numbers their organization is the customer
+    // of - the same lookup APQP customer-scoping already uses.
+    const visiblePartNumbers = organization ? await resolveCustomerVisiblePartNumbers(env, organization) : new Set();
+    entries = entries.filter(function (e) { return visiblePartNumbers.has((e.partNumber || '').toLowerCase()); });
   }
   return json({ pdirIndex: entries }, 200, origin);
 }
@@ -1441,25 +1478,41 @@ async function handleUpsertPdirIndexEntry(request, env, origin) {
   return json(sanitizePdirIndexEntry(saved), 200, origin);
 }
 
-// Looks up which organization (if any) a PDIR title is tagged with. Used to
-// gate a Supplier login's raw /contents/ access to that PDIR's own files
-// (pdirs/pdir_drafts/pdir_docs) - see isContentsPathAllowedForExternal.
-async function resolvePdirIndexOrganization(env, title) {
+// Looks up the PDIR index entry (organization + Part Number) a title is
+// tagged with, if any. Used to gate a Supplier/Customer login's raw
+// /contents/ access to that PDIR's own files (pdirs/pdir_drafts/pdir_docs) -
+// see isContentsPathAllowedForExternal - and to scope the PDIR index list
+// itself (handleListPdirIndex).
+async function resolvePdirIndexEntry(env, title) {
   const state = await readJsonArrayFile(env, PDIR_INDEX_FILE_PATH);
-  const entry = state.items.find(function (e) { return (e.title || '').toLowerCase() === title.toLowerCase(); });
+  return state.items.find(function (e) { return (e.title || '').toLowerCase() === title.toLowerCase(); }) || null;
+}
+async function resolvePdirIndexOrganization(env, title) {
+  const entry = await resolvePdirIndexEntry(env, title);
   return entry ? (entry.organization || '') : '';
+}
+// A Customer login has no direct tie to a PDIR's Supplier organization - it's
+// scoped instead through the Part Number the PDIR is for, the same "which
+// Parts is this organization the customer of" lookup APQP customer-scoping
+// uses (scopeParts). Returns the set of Part Numbers (lowercased) a Customer
+// organization is allowed to see PDIRs for.
+async function resolveCustomerVisiblePartNumbers(env, organization) {
+  const partsState = await readJsonArrayFile(env, PARTS_FILE_PATH);
+  const visibleParts = scopeParts(partsState.items.map(sanitizePart), 'customer', organization);
+  return new Set(visibleParts.map(function (p) { return (p.partNumber || '').toLowerCase(); }));
 }
 
 // Gates the generic /contents/ proxy for a Supplier/Customer login (see the
 // comment where this is called). Only the three PDIR file locations - the
 // finished PDF, the resumable draft, and its supporting documents/photos -
-// are ever reachable, and only for a title this Supplier's own organization
-// is tagged as owning in the PDIR index. A Customer login has no PDIR
-// relationship at all and never passes this. Everything else in storage
-// (other organizations' PDIRs, drawings, invoices, org/user documents...)
-// is refused, even though this proxy has no path allowlist of its own.
+// are ever reachable: a Supplier only for a title its own organization is
+// tagged as owning in the PDIR index, a Customer only for a title whose Part
+// Number their organization is the customer of (Rev2.1). Everything else in
+// storage (other organizations' PDIRs, drawings, invoices, org/user
+// documents...) is refused, even though this proxy has no path allowlist of
+// its own.
 async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organization) {
-  if (accessLevel !== 'supplier' || !organization) return false;
+  if ((accessLevel !== 'supplier' && accessLevel !== 'customer') || !organization) return false;
   let decoded;
   try { decoded = ghPath.split('/').map(decodeURIComponent).join('/'); } catch (e) { return false; }
   const m = /^pdirs\/(.+)\.pdf$/.exec(decoded) ||
@@ -1467,8 +1520,11 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
     /^pdir_docs\/([^/]+)\/.+$/.exec(decoded);
   if (!m) return false;
   const title = m[1];
-  const org = await resolvePdirIndexOrganization(env, title);
-  return !!org && org === organization;
+  const entry = await resolvePdirIndexEntry(env, title);
+  if (!entry) return false;
+  if (accessLevel === 'supplier') return !!entry.organization && entry.organization === organization;
+  const visiblePartNumbers = await resolveCustomerVisiblePartNumbers(env, organization);
+  return visiblePartNumbers.has((entry.partNumber || '').toLowerCase());
 }
 
 // ---- customer POs (what a Customer ordered - admin section) ---------------
@@ -2238,6 +2294,9 @@ function sanitizeDessimateInvoice(o) {
     deletedAt: o.deletedAt || null,
     lines: lines,
     invoiceTotal: Math.round(lines.reduce(function (sum, l) { return sum + l.extendedPrice; }, 0) * 100) / 100,
+    // Rev2.1: ability to attach files (e.g. invoices uploaded from a legacy
+    // system) - same {path, filename, mimeType, size} shape/cap as Parts.
+    attachments: sanitizeOrgDocList(o.attachments),
     createdAt: o.createdAt || null
   };
 }
@@ -2276,7 +2335,8 @@ function validateDessimateInvoiceFields(body, origin) {
     paymentTerms: (body.paymentTerms || '').toString().trim(),
     incoterms: (body.incoterms || '').toString().trim(),
     status: status,
-    lines: lines
+    lines: lines,
+    attachments: sanitizeOrgDocList(body.attachments)
   };
 }
 
