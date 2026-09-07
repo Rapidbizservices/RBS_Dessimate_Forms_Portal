@@ -505,7 +505,13 @@ export default {
       if (url.pathname.startsWith('/contents/')) {
         const auth = await requireAuthWithScope(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        const ghPath = url.pathname.slice('/contents/'.length);
+        // url.pathname keeps percent-encoding as-is (e.g. a space or "#" in a
+        // PDIR title comes through as %20/%23) - decode each segment back to
+        // the real characters so this matches the actual R2 key/path, the
+        // same way the frontend built the request (encodeURIComponent per
+        // segment, not the whole path, so a literal "/" here still separates
+        // folders correctly).
+        const ghPath = url.pathname.slice('/contents/'.length).split('/').map(decodeURIComponent).join('/');
         if (ghPath.indexOf('data/') === 0) {
           return json({ message: 'Not accessible via this route.' }, 403, origin);
         }
@@ -2640,11 +2646,12 @@ async function proxyCommits(request, env, origin, path) {
   // result[0].commit.author.date keeps working unchanged.
   const head = await env.FILES.head(path);
   if (head) {
-    return json([{ sha: head.etag, commit: { author: { date: head.uploaded.toISOString() }, message: 'Updated' } }], 200, origin);
+    const iso = head.uploaded.toISOString();
+    return json([{ sha: head.etag, commit: { author: { date: iso }, committer: { date: iso }, message: 'Updated' } }], 200, origin);
   }
   const row = await env.DB.prepare('SELECT version, updated_at FROM documents WHERE path = ?1').bind(path).first();
   if (row) {
-    return json([{ sha: row.version, commit: { author: { date: row.updated_at }, message: 'Updated' } }], 200, origin);
+    return json([{ sha: row.version, commit: { author: { date: row.updated_at }, committer: { date: row.updated_at }, message: 'Updated' } }], 200, origin);
   }
   return json([], 200, origin);
 }
