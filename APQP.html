@@ -125,8 +125,10 @@
   .partHeader .num{ font-size:19px; font-weight:700; }
   .partHeader .name{ font-size:14px; color:var(--label); }
 
-  .itemGroupHeader{ font-size:12.5px; font-weight:700; color:var(--label); text-transform:uppercase; letter-spacing:.03em; margin:14px 0 6px; }
-  .itemGroupHeader:first-child{ margin-top:0; }
+  .feasibilityGroup{ border:1px solid var(--line); border-radius:10px; background:#f0f3f8; padding:14px 14px 4px; margin-bottom:14px; }
+  .feasibilityGroup:first-child{ margin-top:0; }
+  .feasibilityGroupHeader{ font-size:13.5px; font-weight:700; color:var(--ink); margin:0 0 10px 2px; }
+  .itemCard.feasibilityItem{ margin-left:22px; }
   .itemCard{ background:#fff; border:1px solid var(--line); border-radius:10px; margin-bottom:10px; overflow:hidden; }
   .itemHead{ display:flex; align-items:center; gap:12px; padding:14px 18px; cursor:pointer; width:100%;
     background:none; border:none; font-family:inherit; text-align:left; }
@@ -265,7 +267,7 @@
     <div id="itemCardsWrap"></div>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; APQP &middot; DSCM v2.1 &middot; Built September 2026</footer>
+  <footer>Dessimate &middot; DSCM &middot; APQP &middot; <span id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</span></footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
@@ -322,6 +324,16 @@
   // ---- Backend (staff login + GitHub proxy) --------------------------------
   var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
+  // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
+  // worker/README.md) instead of hand-typed here - this fills it in once
+  // fetched, leaving the hardcoded text above as the offline fallback.
+  (function stampAppVersion(){
+    fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg || !cfg.version) return;
+      var el = document.getElementById('appVersionStamp');
+      if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+    }).catch(function(){});
+  })();
   var APQP_DOC_FOLDER = 'apqp_docs';
 
   function getSession(){
@@ -749,8 +761,12 @@
     return lastApqpRecords.find(function(r){ return r.id === currentRecordId; });
   }
 
+  // Rev2.2: the two Feasibility Studies deliverables sit at the same level as
+  // each other, inside "0. Feasibility Studies" - lettered a/b (per the
+  // product brief) instead of both showing a duplicate "0" bubble.
   function itemNumLabel(key){
-    if (FEASIBILITY_KEYS.indexOf(key) !== -1) return '0';
+    var feasibilityIdx = FEASIBILITY_KEYS.indexOf(key);
+    if (feasibilityIdx !== -1) return String.fromCharCode(97 + feasibilityIdx); // 'a', 'b'
     return String(NUMBERED_ITEM_KEYS.indexOf(key) + 1);
   }
   function renderItemCards(record){
@@ -762,13 +778,17 @@
       var pswShortcut = key === 'psw'
         ? '<a class="pswShortcut" href="PSW_Form_Filler.html">Open PSW Form Filler &#8599;</a>'
         : '';
-      // Group header sits above the first Feasibility Studies row only -
-      // both feasibilityPresentation and cfdStudies share the "0" number, so
-      // the shared label goes once above them rather than on each row.
-      var groupHeader = key === FEASIBILITY_KEYS[0]
-        ? '<div class="itemGroupHeader">0. Feasibility Studies</div>'
+      // Rev2.2: the two Feasibility Studies deliverables render nested
+      // inside one shared "0. Feasibility Studies" group container (opened
+      // before the first, closed after the last) - per the product brief,
+      // a./b. are sub-items of 0, "same level" as each other, not their own
+      // standalone top-level rung the way 1-9 are.
+      var isFeasibility = FEASIBILITY_KEYS.indexOf(key) !== -1;
+      var groupOpen = key === FEASIBILITY_KEYS[0]
+        ? '<div class="feasibilityGroup"><div class="feasibilityGroupHeader">0. Feasibility Studies</div>'
         : '';
-      return groupHeader + '<div class="itemCard' + (isOpen ? ' open' : '') + (hasContent ? ' hasContent' : '') + '" data-item="' + key + '">' +
+      var groupClose = key === FEASIBILITY_KEYS[FEASIBILITY_KEYS.length - 1] ? '</div>' : '';
+      return groupOpen + '<div class="itemCard' + (isFeasibility ? ' feasibilityItem' : '') + (isOpen ? ' open' : '') + (hasContent ? ' hasContent' : '') + '" data-item="' + key + '">' +
         '<button type="button" class="itemHead" data-toggle="' + key + '">' +
           '<span class="itemNum">' + itemNumLabel(key) + '</span>' +
           '<span class="itemLabel">' + escapeHtml(ITEM_LABELS[key]) + '</span>' +
@@ -795,7 +815,7 @@
             '<div class="itemErr" data-comment-err></div>' +
           '</div>' +
         '</div>' +
-      '</div>';
+      '</div>' + groupClose;
     }).join('');
 
     ITEM_KEYS.forEach(function(key){

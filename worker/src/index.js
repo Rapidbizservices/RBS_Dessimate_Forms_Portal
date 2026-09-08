@@ -201,6 +201,14 @@ const PART_STATUSES = ['Active', 'Inactive', 'Obsolete'];
 // record itself (still the PDF/draft/docs in R2) - just tags it.
 const PDIR_INDEX_FILE_PATH = 'data/pdir_index.json';
 
+// Rev2.2: the "DSCM vX.X" footer/sidebar stamp used to be hand-typed into
+// every page's HTML - bumping it meant re-uploading all 11 pages just to
+// change one string. Now it's one stored field the frontend fetches, so a
+// version bump is a single PUT /app-config call (see handleUpdateAppConfig
+// below, super_admin-gated), never a frontend edit.
+const APP_CONFIG_FILE_PATH = 'data/app_config.json';
+const DEFAULT_APP_CONFIG = { version: '2.2', builtLabel: 'Built September 2026' };
+
 const APQP_FILE_PATH = 'data/apqp.json';
 const APQP_DOC_FOLDER = 'apqp_docs';
 // Fixed checklist of APQP deliverables per part (per the product brief), each
@@ -250,6 +258,17 @@ export default {
     try {
       if (url.pathname === '/health') {
         return json({ ok: true, service: 'dessimate-forms-backend' }, 200, origin);
+      }
+
+      // Public (like /health) - the version stamp shows in the sidebar/footer
+      // even on the sign-in screen, before any session exists.
+      if (url.pathname === '/app-config') {
+        if (request.method === 'GET') return await handleGetAppConfig(env, origin);
+        if (request.method === 'PUT') {
+          const auth = await requireRole(request, env, ['super_admin']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleUpdateAppConfig(request, env, origin);
+        }
       }
 
       if (url.pathname === '/admin/migrate-from-github' && request.method === 'POST') {
@@ -938,6 +957,29 @@ function sanitizeOrg(o) {
     },
     genericDocs: Array.isArray(o.genericDocs) ? o.genericDocs.map(sanitizeOrgDoc).filter(Boolean) : []
   };
+}
+
+// ---- app config (the "DSCM vX.X" stamp) ------------------------------------
+
+async function handleGetAppConfig(env, origin) {
+  const state = await readJsonObjectFile(env, APP_CONFIG_FILE_PATH, DEFAULT_APP_CONFIG);
+  return json({ version: state.obj.version || DEFAULT_APP_CONFIG.version, builtLabel: state.obj.builtLabel || '' }, 200, origin);
+}
+
+async function handleUpdateAppConfig(request, env, origin) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const version = (body.version || '').toString().trim();
+  if (!version) return json({ message: 'Version is required.' }, 400, origin);
+  const builtLabel = (body.builtLabel || '').toString().trim();
+
+  const result = await mutateJsonObjectFile(env, APP_CONFIG_FILE_PATH, DEFAULT_APP_CONFIG, function (obj) {
+    obj.version = version;
+    obj.builtLabel = builtLabel;
+    return { obj: obj };
+  });
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json({ version: result.obj.version, builtLabel: result.obj.builtLabel || '' }, 200, origin);
 }
 function sanitizeOrgAddress(a) {
   if (!a) return null;
@@ -1671,6 +1713,11 @@ async function handleDeleteCustomerPo(env, origin, id) {
 // built from. This is a Production Module (not Admin-gated): GET is open to
 // any signed-in Dessimate user, writes are Team Member+.
 const DESSIMATE_POS_FILE_PATH = 'data/dessimate_pos.json';
+// Up to 20 attachments per Dessimate PO (packing lists, supplier drawings,
+// anything relevant to the shipment) - same {path, filename, mimeType, size}
+// pointer shape and PART_ATTACHMENTS_MAX cap as Parts attachments, reusing
+// sanitizeOrgDocList below.
+const DESSIMATE_PO_DOC_FOLDER = 'dessimate_po_docs';
 const COUNTERS_FILE_PATH = 'data/counters.json';
 const DEFAULT_COUNTERS = {
   nextDessimatePoNumber: 3013,
@@ -1785,6 +1832,7 @@ function sanitizeDessimatePo(o) {
     approverUsername: o.approverUsername || '',
     approverName: o.approverName || '',
     relatedPoIds: Array.isArray(o.relatedPoIds) ? o.relatedPoIds.filter(Boolean) : [],
+    attachments: sanitizeOrgDocList(o.attachments),
     createdAt: o.createdAt || null
   };
 }
@@ -1894,7 +1942,7 @@ async function handleCreateDessimatePo(request, env, origin) {
 
   const numbers = await reserveDessimatePoNumbers(env, clientPoNumber, clientShipmentNumber);
   const newPo = Object.assign(
-    { id: cryptoRandomId(), createdAt: new Date().toISOString(), poNumber: numbers.poNumber, shipmentNumber: numbers.shipmentNumber },
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), poNumber: numbers.poNumber, shipmentNumber: numbers.shipmentNumber, attachments: sanitizeOrgDocList(body.attachments) },
     fields
   );
 
@@ -1918,6 +1966,7 @@ async function handleUpdateDessimatePo(request, env, origin, id) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
     Object.assign(target, fields); // poNumber/shipmentNumber are never in `fields` - immutable once assigned
+    if (body.attachments !== undefined) target.attachments = sanitizeOrgDocList(body.attachments);
     syncRelatedPoLinks(items, id, fields.relatedPoIds);
     saved = target;
     return { items: items };
@@ -2751,7 +2800,8 @@ const MIGRATION_MANIFEST_PATH = '_migration/manifest.json';
 // touched by this route.
 const MIGRATION_FOLDERS = [
   'data/', 'org_docs/', 'part_docs/', 'apqp_docs/', 'customer_po_docs/',
-  'pdir_docs/', 'pdir_drafts/', 'pdir_meta/', 'pdirs/', 'supplier_invoice_docs/'
+  'pdir_docs/', 'pdir_drafts/', 'pdir_meta/', 'pdirs/', 'supplier_invoice_docs/',
+  'dessimate_po_docs/'
 ];
 
 async function handleMigrateFromGithub(request, env, origin) {

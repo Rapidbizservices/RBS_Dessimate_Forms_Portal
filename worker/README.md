@@ -157,6 +157,33 @@ linked here for a fast overview if you're updating an existing deployment.
   users" below — the same stamp used on Dessimate PO PDFs), it's stamped
   onto the generated PDIR automatically, with no separate upload needed.
 
+## Rev2.2 changes
+
+- **App version stamp is now backend-owned** — the "DSCM vX.X · Built ..."
+  text shown in the sidebar/footer of every page is fetched from
+  `GET /app-config` (public, no login needed - it's cosmetic, not data)
+  instead of being hand-typed into all 11 pages. Bump it with `PUT
+  /app-config` (Super Admin only, body `{"version": "2.3", "builtLabel":
+  "Built ..."}`) — the pages already deployed pick it up on their next
+  load, no frontend redeploy required. Falls back to the hardcoded text
+  baked into each page if the backend is unreachable.
+- **Dessimate POs: Attachments** — up to 20 files per PO (packing lists,
+  supplier drawings, anything relevant to the shipment), same
+  upload/preview/View pattern as Parts and Organizations documents. Stored
+  under `dessimate_po_docs/<id>/` in storage.
+- **Parts: a 3D viewer for `.stp`/`.step` attachments** — clicking **View**
+  on a STEP file now renders it in the same in-page viewer used for
+  PDFs/images (drag to rotate, scroll to zoom, right-drag to pan) instead of
+  falling back to Download-only. Runs entirely client-side: three.js and
+  occt-import-js (a WASM build of OpenCascade's STEP reader) load from a CDN
+  the first time a `.stp`/`.step` file is opened, and the file's bytes never
+  leave the browser.
+- **APQP: Feasibility Studies sub-items lettered a/b** — "0. Feasibility
+  Studies" now renders as one grouped container holding **a. Feasibility
+  Study Presentation** and **b. CFD Studies**, each still with its own
+  independent files/comments, instead of two standalone rows that both
+  showed a duplicate "0".
+
 ## The dashboard (`index.html`)
 
 `index.html` is a persistent left sidebar with a content pane next to it —

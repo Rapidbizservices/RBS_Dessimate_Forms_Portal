@@ -154,7 +154,7 @@
     <div class="sideFoot">
       <div class="sideUser" id="sideUser">Not signed in</div>
       <button type="button" class="sideLogoutBtn" id="sideLogoutBtn">Log out</button>
-      <div class="sideVersion">DSCM v2.1 &middot; Built September 2026</div>
+      <div class="sideVersion" id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</div>
     </div>
   </nav>
 
@@ -200,6 +200,16 @@
   // Worker; it must match the value used in every other HTML file.
   var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
+  // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
+  // worker/README.md) instead of hand-typed here - this fills it in once
+  // fetched, leaving the hardcoded text above as the offline fallback.
+  (function stampAppVersion(){
+    fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg || !cfg.version) return;
+      var el = document.getElementById('appVersionStamp');
+      if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+    }).catch(function(){});
+  })();
 
   function getSession(){
     try{

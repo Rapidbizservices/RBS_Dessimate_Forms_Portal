@@ -191,6 +191,10 @@
     position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
     color:#fff; font-size:13.5px; text-align:center; padding:20px; flex-direction:column; gap:10px;
   }
+  .viewerBody #docViewer3D{ position:absolute; inset:0; width:100%; height:100%; background:#e9ebef; }
+  .viewerBody #docViewer3D canvas{ display:block; width:100%; height:100%; }
+  .viewer3DHint{ position:absolute; left:12px; bottom:10px; background:rgba(20,22,28,.6); color:#fff;
+    font-size:11px; padding:5px 9px; border-radius:5px; pointer-events:none; }
 </style>
 
 <div class="wrap">
@@ -248,7 +252,7 @@
     </table>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Parts &middot; DSCM v2.1 &middot; Built September 2026</footer>
+  <footer>Dessimate &middot; DSCM &middot; Parts &middot; <span id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</span></footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
@@ -358,6 +362,9 @@
       <div id="docViewerState" class="viewerState">Loading&hellip;</div>
       <iframe id="docViewerFrame" title="Document preview" style="display:none;"></iframe>
       <img id="docViewerImg" alt="Document preview" style="display:none;">
+      <div id="docViewer3D" style="display:none;">
+        <div class="viewer3DHint">Drag to rotate &middot; scroll to zoom &middot; right-drag to pan</div>
+      </div>
     </div>
   </div>
 </div>
@@ -368,6 +375,16 @@
   var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
   var PART_DOC_FOLDER = 'part_docs';
+  // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
+  // worker/README.md) instead of hand-typed here - this fills it in once
+  // fetched, leaving the hardcoded text above as the offline fallback.
+  (function stampAppVersion(){
+    fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg || !cfg.version) return;
+      var el = document.getElementById('appVersionStamp');
+      if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+    }).catch(function(){});
+  })();
 
   function getSession(){
     try{
@@ -535,15 +552,136 @@
     var ext = docFileExt(filename).toLowerCase();
     if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
     if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    if (ext === '.stp' || ext === '.step') return 'step';
     return null;
   }
+
+  // ---- .stp/.step 3D viewer (Rev2.2) ------------------------------------------
+  // three.js + occt-import-js (a WASM build of OpenCascade's STEP reader) are
+  // loaded from a CDN on first use, not on every page load - most Part
+  // attachments are drawings/PDFs and will never need either library. This
+  // runs entirely client-side (no backend conversion step): the STEP bytes
+  // already fetched for the viewer are handed straight to the WASM parser.
+  var THREE_CDN_BASE = 'https://cdn.jsdelivr.net/npm/three@0.128.0/';
+  var OCCT_CDN_BASE = 'https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist/';
+  var stepLibsPromise = null;
+  var step3D = null; // { renderer, scene, camera, controls, raf, resizeHandler }
+
+  function loadScriptOnce(src){
+    return new Promise(function(resolve, reject){
+      var existing = document.querySelector('script[data-src="' + src + '"]');
+      if (existing) { existing.addEventListener('load', resolve); if (existing.getAttribute('data-loaded')) resolve(); return; }
+      var s = document.createElement('script');
+      s.src = src; s.setAttribute('data-src', src);
+      s.onload = function(){ s.setAttribute('data-loaded', '1'); resolve(); };
+      s.onerror = function(){ reject(new Error('Could not load ' + src + '.')); };
+      document.head.appendChild(s);
+    });
+  }
+  function loadStepViewerLibs(){
+    if (!stepLibsPromise) {
+      stepLibsPromise = (async function(){
+        if (!window.THREE) await loadScriptOnce(THREE_CDN_BASE + 'build/three.min.js');
+        if (!window.THREE.OrbitControls) await loadScriptOnce(THREE_CDN_BASE + 'examples/js/controls/OrbitControls.js');
+        if (!window.occtimportjs) await loadScriptOnce(OCCT_CDN_BASE + 'occt-import-js.js');
+        if (!window.__occtInstance) {
+          window.__occtInstance = await window.occtimportjs({
+            locateFile: function(path){ return OCCT_CDN_BASE + path; }
+          });
+        }
+      })().catch(function(err){ stepLibsPromise = null; throw err; });
+    }
+    return stepLibsPromise;
+  }
+  function disposeStep3D(){
+    if (!step3D) return;
+    cancelAnimationFrame(step3D.raf);
+    window.removeEventListener('resize', step3D.resizeHandler);
+    step3D.controls.dispose();
+    step3D.scene.traverse(function(obj){
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) (Array.isArray(obj.material) ? obj.material : [obj.material]).forEach(function(m){ m.dispose(); });
+    });
+    step3D.renderer.dispose();
+    if (step3D.renderer.domElement.parentNode) step3D.renderer.domElement.parentNode.removeChild(step3D.renderer.domElement);
+    step3D = null;
+  }
+  async function renderStepModel(container, bytes){
+    await loadStepViewerLibs();
+    var result = window.__occtInstance.ReadStepFile(bytes, null);
+    if (!result || !result.success || !result.meshes || !result.meshes.length) {
+      throw new Error('No viewable geometry found in this STEP file.');
+    }
+    disposeStep3D();
+
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xe9ebef);
+    var group = new THREE.Group();
+    result.meshes.forEach(function(mesh){
+      var geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(mesh.attributes.position.array, 3));
+      if (mesh.attributes.normal) geometry.setAttribute('normal', new THREE.Float32BufferAttribute(mesh.attributes.normal.array, 3));
+      if (mesh.index) geometry.setIndex(Array.prototype.slice.call(mesh.index.array));
+      if (!mesh.attributes.normal) geometry.computeVertexNormals();
+      var color = mesh.color ? new THREE.Color(mesh.color[0], mesh.color[1], mesh.color[2]) : new THREE.Color(0x8296b8);
+      var material = new THREE.MeshStandardMaterial({ color: color, metalness: 0.1, roughness: 0.65, side: THREE.DoubleSide });
+      group.add(new THREE.Mesh(geometry, material));
+    });
+    scene.add(group);
+
+    var box = new THREE.Box3().setFromObject(group);
+    var size = box.getSize(new THREE.Vector3());
+    var center = box.getCenter(new THREE.Vector3());
+    group.position.sub(center);
+    var maxDim = Math.max(size.x, size.y, size.z, 0.001);
+
+    var width = container.clientWidth || 600, height = container.clientHeight || 420;
+    var camera = new THREE.PerspectiveCamera(45, width / height, maxDim / 1000, maxDim * 1000);
+    camera.position.set(maxDim * 1.1, maxDim * 0.9, maxDim * 1.4);
+    camera.lookAt(0, 0, 0);
+
+    var renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(width, height);
+    var existingCanvas = container.querySelector('canvas');
+    if (existingCanvas) existingCanvas.remove();
+    container.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    var key = new THREE.DirectionalLight(0xffffff, 0.7); key.position.set(maxDim, maxDim * 2, maxDim); scene.add(key);
+    var fill = new THREE.DirectionalLight(0xffffff, 0.35); fill.position.set(-maxDim, -maxDim * 0.5, -maxDim); scene.add(fill);
+
+    var controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
+    function resizeHandler(){
+      var w = container.clientWidth, h = container.clientHeight;
+      if (!w || !h) return;
+      camera.aspect = w / h; camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+    window.addEventListener('resize', resizeHandler);
+
+    step3D = { renderer: renderer, scene: scene, camera: camera, controls: controls, raf: 0, resizeHandler: resizeHandler };
+    (function animate(){
+      step3D.raf = requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    })();
+  }
+  // -----------------------------------------------------------------------------
+
   function closeDocViewer(){
     document.getElementById('docViewerOverlay').classList.remove('open');
     document.getElementById('docViewerFrame').src = 'about:blank';
     document.getElementById('docViewerFrame').style.display = 'none';
     document.getElementById('docViewerImg').src = '';
     document.getElementById('docViewerImg').style.display = 'none';
+    document.getElementById('docViewer3D').style.display = 'none';
     document.getElementById('docViewerDownload').style.display = 'none';
+    disposeStep3D();
     if (docViewerObjectUrl) { URL.revokeObjectURL(docViewerObjectUrl); docViewerObjectUrl = null; }
   }
   document.getElementById('docViewerClose').addEventListener('click', closeDocViewer);
@@ -558,9 +696,11 @@
     var stateEl = document.getElementById('docViewerState');
     var frame = document.getElementById('docViewerFrame');
     var img = document.getElementById('docViewerImg');
+    var view3D = document.getElementById('docViewer3D');
     var downloadBtn = document.getElementById('docViewerDownload');
     document.getElementById('docViewerTitle').textContent = source.filename || 'Document';
-    frame.style.display = 'none'; img.style.display = 'none'; downloadBtn.style.display = 'none';
+    frame.style.display = 'none'; img.style.display = 'none'; view3D.style.display = 'none'; downloadBtn.style.display = 'none';
+    disposeStep3D();
     stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
     overlay.classList.add('open');
     try {
@@ -574,6 +714,19 @@
         stateEl.textContent = "This file type can't be previewed here — use Download instead.";
         return;
       }
+      if (kind === 'step') {
+        stateEl.textContent = 'Loading 3D viewer…';
+        view3D.style.display = 'block';
+        await renderStepModel(view3D, bytes);
+        stateEl.style.display = 'none';
+        var stepBlob = new Blob([bytes], { type: 'application/octet-stream' });
+        if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+        docViewerObjectUrl = URL.createObjectURL(stepBlob);
+        downloadBtn.href = docViewerObjectUrl;
+        downloadBtn.download = source.filename || 'file';
+        downloadBtn.style.display = 'inline-block';
+        return;
+      }
       var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : 'image/jpeg') });
       if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
       docViewerObjectUrl = URL.createObjectURL(blob);
@@ -585,6 +738,8 @@
       downloadBtn.style.display = 'inline-block';
     } catch (e) {
       console.error(e);
+      view3D.style.display = 'none';
+      stateEl.style.display = 'flex';
       stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
     }
   }

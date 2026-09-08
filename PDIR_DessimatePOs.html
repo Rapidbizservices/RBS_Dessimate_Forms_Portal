@@ -148,6 +148,25 @@
   .relatedChip a{ color:var(--brand); text-decoration:none; }
   .relatedChip a:hover{ text-decoration:underline; }
 
+  .docCell{ font-size:12px; color:var(--label); }
+  .docCell .have{ color:#187b46; font-weight:600; }
+  .attachCount{ font-weight:400; font-size:12.5px; color:var(--label); }
+  .attachmentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .attachRow{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:7px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
+  .attachRow .attachName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .attachRow .attachName.pending{ color:#a06a1c; }
+  .attachRow .attachLinks{ display:flex; gap:10px; flex:0 0 auto; }
+  .attachRow .attachLinks button{ font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
+  .attachRow .attachLinks button:hover{ text-decoration:underline; }
+  .attachRow .attachLinks .removeLink{ color:#b23b3b; }
+  .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
+  .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    padding:9px 0; font-size:12.5px; }
+  .docRow .docMain{ flex:1 1 auto; min-width:0; }
+  .docRow input[type=file]{ font-size:11.5px; margin-top:2px; }
+
   .linesWrap{ overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
   table.linesTable{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:820px; }
   table.linesTable th{ background:#f7f8fb; color:var(--label); font-size:10.5px; text-transform:uppercase;
@@ -255,6 +274,7 @@
           <th>Lines</th>
           <th>Total</th>
           <th>PDF</th>
+          <th>Files</th>
           <th></th>
         </tr>
       </thead>
@@ -262,7 +282,7 @@
     </table>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Dessimate POs &middot; DSCM v2.1 &middot; Built September 2026</footer>
+  <footer>Dessimate &middot; DSCM &middot; Dessimate POs &middot; <span id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</span></footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
@@ -365,6 +385,18 @@
         <div class="checkList" id="f_relatedPos_list"></div>
       </div>
 
+      <div class="modalSection">
+        <h3>Attachments <span class="attachCount" id="attachCount">(0 / 20)</span></h3>
+        <p class="modalSectionHint">Packing lists, supplier drawings, anything relevant to this PO — up to 20 files.</p>
+        <div id="attachmentsList" class="attachmentsList"></div>
+        <div class="docRow">
+          <div class="docMain">
+            <input type="file" id="attachmentsDocInput" multiple>
+            <div class="modalError" id="attachError" style="margin-top:6px;"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="modalError" id="modalError"></div>
       <div class="modalBtns">
         <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
@@ -396,6 +428,16 @@
   // ---- Backend (staff login + GitHub proxy) --------------------------------
   var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
+  // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
+  // worker/README.md) instead of hand-typed here - this fills it in once
+  // fetched, leaving the hardcoded text above as the offline fallback.
+  (function stampAppVersion(){
+    fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg || !cfg.version) return;
+      var el = document.getElementById('appVersionStamp');
+      if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+    }).catch(function(){});
+  })();
 
   function getSession(){
     try{
@@ -421,6 +463,67 @@
       throw new Error('Your session has expired — please log in again.');
     }
     return res;
+  }
+  function workerContentsPath(fullPath){
+    return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
+  }
+  function bytesToBase64(bytes){
+    var binary = '', chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+  function base64ToBytes(b64){
+    var bin = atob((b64 || '').replace(/\s+/g, ''));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  function docFileExt(filename){
+    var m = /\.[a-zA-Z0-9]+$/.exec(filename || '');
+    return m ? m[0] : '';
+  }
+  async function ghGetSha(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status);
+    var data = await res.json();
+    return data.sha;
+  }
+  async function ghGetFileBytes(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status + ' while loading ' + fullPath + '.');
+    var data = await res.json();
+    return base64ToBytes(data.content || '');
+  }
+  async function ghPutFile(fullPath, bytes, commitMessage){
+    var sha = await ghGetSha(fullPath);
+    var body = { message: commitMessage || ('Update ' + fullPath), content: bytesToBase64(bytes) };
+    if (sha) body.sha = sha;
+    var res = await apiFetch(workerContentsPath(fullPath), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+      throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+    }
+    return await res.json();
+  }
+  var DESSIMATE_PO_DOC_FOLDER = 'dessimate_po_docs';
+  var PO_ATTACHMENTS_MAX = 20;
+  function buildAttachmentDocPath(poId, filename, idx){
+    var safeName = (filename || 'file').replace(/[\\/]/g, '_');
+    return DESSIMATE_PO_DOC_FOLDER + '/' + poId + '/attachments/' + Date.now() + '-' + idx + '-' + safeName;
+  }
+  function readFileAsBytes(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onerror = function(){ reject(new Error('Could not read "' + file.name + '".')); };
+      reader.onload = function(){ resolve(new Uint8Array(reader.result)); };
+      reader.readAsArrayBuffer(file);
+    });
   }
   // -----------------------------------------------------------------------------
 
@@ -535,6 +638,50 @@
     } catch (e) {
       console.error(e);
       stateEl.textContent = 'Could not display this PDF (' + (e && e.message ? e.message : e) + ').';
+    }
+  }
+  // Same overlay, used for an attachment picked from the Attachments list
+  // (as opposed to openPdfInViewer above, which only ever shows the
+  // server-generated PO PDF) - shares docViewerImg, unused until now.
+  function isInlineViewable(mimeType, filename){
+    var ext = docFileExt(filename).toLowerCase();
+    if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
+    if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    return null;
+  }
+  async function openDocViewer(source){
+    var overlay = document.getElementById('docViewerOverlay');
+    var stateEl = document.getElementById('docViewerState');
+    var frame = document.getElementById('docViewerFrame');
+    var img = document.getElementById('docViewerImg');
+    var downloadBtn = document.getElementById('docViewerDownload');
+    document.getElementById('docViewerTitle').textContent = source.filename || 'Document';
+    frame.style.display = 'none'; img.style.display = 'none'; downloadBtn.style.display = 'none';
+    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var bytes = source.bytes;
+      if (!bytes) {
+        bytes = await ghGetFileBytes(source.path);
+        if (!bytes) throw new Error('File not found.');
+      }
+      var kind = isInlineViewable(source.mimeType, source.filename);
+      if (!kind) {
+        stateEl.textContent = "This file type can't be previewed here — use Download instead.";
+        return;
+      }
+      var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : 'image/jpeg') });
+      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+      docViewerObjectUrl = URL.createObjectURL(blob);
+      if (kind === 'pdf') { frame.src = docViewerObjectUrl; frame.style.display = 'block'; }
+      else { img.src = docViewerObjectUrl; img.style.display = 'block'; }
+      stateEl.style.display = 'none';
+      downloadBtn.href = docViewerObjectUrl;
+      downloadBtn.download = source.filename || 'file';
+      downloadBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
     }
   }
   async function viewGeneratedPdf(id, poNumber, btn){
@@ -735,6 +882,8 @@
             return '<span class="relatedChip"><a href="PDIR_DessimatePOs.html?poNumber=' + encodeURIComponent(rp.poNumber) + '">PO ' + escapeHtml(rp.poNumber) + '</a></span>';
           }).join('') + '</div>'
         : '<span style="color:var(--label);">—</span>';
+      var attCount = (po.attachments || []).length;
+      var attCell = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '<span style="color:var(--label);">—</span>';
       return '<tr' + (po.poNumber ? ' data-ponum="' + escapeHtml(po.poNumber) + '"' : '') + '>' +
         '<td class="poNumber">' + escapeHtml(po.poNumber) + '</td>' +
         '<td>' + shipmentCell + '</td>' +
@@ -745,6 +894,7 @@
         '<td>' + (po.lines ? po.lines.length : 0) + '</td>' +
         '<td class="moneyCell">' + escapeHtml(po.currency || '') + ' ' + money(po.poTotal) + '</td>' +
         '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(po.id) + '" data-ponum="' + escapeHtml(po.poNumber) + '">View PDF</button></td>' +
+        '<td class="docCell">' + attCell + '</td>' +
         '<td><div class="rowActions">' +
           '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
           '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>' +
@@ -783,6 +933,82 @@
   // ---- Add / Edit modal --------------------------------------------------------
   var editingId = null;
   var lineRows = []; // { partNumber, description, revision, uom, qtyOrdered, unitPrice, requestedDeliveryDate }
+
+  // Each entry is either { kind:'existing', doc:{path,filename,mimeType,size} }
+  // (already uploaded) or { kind:'pending', bytes, filename, mimeType } (picked
+  // locally, uploaded only if Save goes through) - same shape/behavior as the
+  // Parts page's attachments.
+  var attachmentsState = [];
+  function activeAttachmentCount(){ return attachmentsState.length; }
+  function renderAttachmentsList(){
+    var listEl = document.getElementById('attachmentsList');
+    var countEl = document.getElementById('attachCount');
+    var inputEl = document.getElementById('attachmentsDocInput');
+    var count = activeAttachmentCount();
+    countEl.textContent = '(' + count + ' / ' + PO_ATTACHMENTS_MAX + ')';
+    if (!count) {
+      listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>';
+    } else {
+      listEl.innerHTML = attachmentsState.map(function(entry, idx){
+        var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
+        var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+        var viewBtn = entry.kind === 'pending'
+          ? '<button type="button" data-preview-idx="' + idx + '">Preview</button>'
+          : '<button type="button" data-view-idx="' + idx + '">View</button>';
+        return '<div class="attachRow">' +
+          '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+          '<div class="attachLinks">' + viewBtn +
+            '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' +
+          '</div></div>';
+      }).join('');
+    }
+    inputEl.disabled = count >= PO_ATTACHMENTS_MAX;
+    inputEl.title = inputEl.disabled ? 'Maximum of ' + PO_ATTACHMENTS_MAX + ' attachments reached.' : '';
+
+    listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
+        if (entry) openDocViewer({ filename: entry.filename, mimeType: entry.mimeType, bytes: entry.bytes });
+      });
+    });
+    listEl.querySelectorAll('[data-view-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-view-idx'))];
+        if (entry) openDocViewer({ filename: entry.doc.filename, mimeType: entry.doc.mimeType, path: entry.doc.path });
+      });
+    });
+    listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        attachmentsState.splice(Number(btn.getAttribute('data-remove-idx')), 1);
+        renderAttachmentsList();
+      });
+    });
+  }
+  document.getElementById('attachmentsDocInput').addEventListener('change', async function(){
+    var files = this.files ? Array.from(this.files) : [];
+    this.value = '';
+    if (!files.length) return;
+    var errEl = document.getElementById('attachError');
+    errEl.textContent = '';
+    var room = PO_ATTACHMENTS_MAX - activeAttachmentCount();
+    if (files.length > room) {
+      errEl.textContent = room <= 0
+        ? 'Maximum of ' + PO_ATTACHMENTS_MAX + ' attachments reached — remove one before adding another.'
+        : 'Only ' + room + ' more file' + (room === 1 ? '' : 's') + ' can be added (limit ' + PO_ATTACHMENTS_MAX + ').';
+      files = files.slice(0, Math.max(room, 0));
+    }
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      try {
+        var bytes = await readFileAsBytes(file);
+        attachmentsState.push({ kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' });
+      } catch (e) {
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      }
+    }
+    renderAttachmentsList();
+  });
 
   function newLineRow(){
     return { partNumber: '', description: '', revision: '', uom: '', qtyOrdered: '', unitPrice: '', requestedDeliveryDate: '' };
@@ -898,6 +1124,9 @@
   function resetForm(){
     document.getElementById('poForm').reset();
     document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = [];
+    renderAttachmentsList();
     lineRows = [newLineRow()];
     document.getElementById('f_supplier').innerHTML = supplierOrgOptions('');
     document.getElementById('f_customerPoRef').innerHTML = customerPoRefOptions('');
@@ -922,6 +1151,9 @@
     editingId = id;
     document.getElementById('poForm').reset();
     document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = (po.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
     lineRows = (po.lines && po.lines.length) ? po.lines.map(function(l){
       return { partNumber: l.partNumber, description: l.description, revision: l.revision, uom: l.uom,
         qtyOrdered: l.qtyOrdered, unitPrice: l.unitPrice, requestedDeliveryDate: l.requestedDeliveryDate };
@@ -983,14 +1215,32 @@
 
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
-      var res;
-      if (editingId) {
-        res = await apiFetch('dessimate-pos/' + encodeURIComponent(editingId), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
-      } else {
-        res = await apiFetch('dessimate-pos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
+      var poId = editingId;
+      if (!poId) {
+        var createRes = await apiFetch('dessimate-pos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
+        var createData = {}; try { createData = await createRes.json(); } catch(e){}
+        if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+        poId = createData.id;
       }
-      var data = {}; try { data = await res.json(); } catch(e){}
-      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+
+      var attachmentsPayload = [];
+      for (var i = 0; i < attachmentsState.length; i++) {
+        var entry = attachmentsState[i];
+        if (entry.kind === 'existing') {
+          attachmentsPayload.push(entry.doc);
+        } else {
+          var path = buildAttachmentDocPath(poId, entry.filename, i);
+          await ghPutFile(path, entry.bytes, 'Upload attachment for Dessimate PO ' + (baseFields.poNumber || poId));
+          attachmentsPayload.push({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length });
+        }
+      }
+
+      var putRes = await apiFetch('dessimate-pos/' + encodeURIComponent(poId), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({}, baseFields, { attachments: attachmentsPayload }))
+      });
+      var putData = {}; try { putData = await putRes.json(); } catch(e){}
+      if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
 
       closeModal();
       await loadPos();

@@ -243,7 +243,7 @@
     </table>
   </div>
 
-  <footer>Dessimate &middot; DSCM &middot; Supplier Invoices &middot; DSCM v2.1 &middot; Built September 2026</footer>
+  <footer>Dessimate &middot; DSCM &middot; Supplier Invoices &middot; <span id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</span></footer>
 </div>
 
 <div class="authOverlay" id="authOverlay">
@@ -369,6 +369,16 @@
   var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
   var SUPPLIER_INVOICE_DOC_FOLDER = 'supplier_invoice_docs';
+  // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
+  // worker/README.md) instead of hand-typed here - this fills it in once
+  // fetched, leaving the hardcoded text above as the offline fallback.
+  (function stampAppVersion(){
+    fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg || !cfg.version) return;
+      var el = document.getElementById('appVersionStamp');
+      if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+    }).catch(function(){});
+  })();
 
   function getSession(){
     try{
