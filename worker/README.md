@@ -195,6 +195,12 @@ linked here for a fast overview if you're updating an existing deployment.
   **Locked** pill next to its Active/Inactive status on the Users page, so
   you know who actually needs that reset instead of having to be told the
   username.
+- **Sign-in form: a note and an attempt counter** — the Staff Sign-In box on
+  every page now shows a standing note ("Please check the username and
+  password provided by your Dessimate contact. Your account will be locked
+  after 3 unsuccessful login attempts.") and, after a wrong password, a
+  running "Sign-in attempt N of 3" counter beneath the error message, so
+  someone gets real-time warning before they lock themselves out.
 
 ## The dashboard (`index.html`)
 

@@ -70,6 +70,9 @@
   .authCard button:hover{ background:var(--brand-dark); }
   .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
   .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+  .authNote{ font-size:11.5px; color:var(--label); background:#f7f8fb; border:1px solid var(--line);
+    border-radius:6px; padding:8px 10px; margin:0 0 16px; line-height:1.45; }
+  .authAttempts{ font-size:12px; color:var(--label); min-height:14px; margin-top:4px; }
 
   .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; flex-wrap:wrap; gap:10px; }
   .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
@@ -215,6 +218,7 @@
   <div class="authCard">
     <h2>Staff Sign-In</h2>
     <p class="authSub">Sign in with the username and password you were given to manage users.</p>
+    <p class="authNote">Please check the username and password provided by your Dessimate contact. Your account will be locked after 3 unsuccessful login attempts.</p>
     <form id="authForm">
       <label>Username
         <input type="text" id="authUsername" autocomplete="username" autofocus>
@@ -224,6 +228,7 @@
       </label>
       <button type="submit" id="authSubmitBtn">Log In</button>
       <div class="authError" id="authError"></div>
+      <div class="authAttempts" id="authAttempts"></div>
     </form>
   </div>
 </div>
@@ -470,8 +475,9 @@
       var username = document.getElementById('authUsername').value.trim();
       var password = document.getElementById('authPassword').value;
       var errEl = document.getElementById('authError');
+      var attemptsEl = document.getElementById('authAttempts');
       var btn = document.getElementById('authSubmitBtn');
-      errEl.textContent = '';
+      errEl.textContent = ''; attemptsEl.textContent = '';
       if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
       btn.disabled = true; btn.textContent = 'Logging in…';
       try {
@@ -481,7 +487,11 @@
           body: JSON.stringify({ username: username, password: password })
         });
         var data = await res.json();
-        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+        if (!res.ok) {
+          var loginErr = new Error(data.message || ('HTTP ' + res.status));
+          loginErr.attemptsRemaining = data.attemptsRemaining;
+          throw loginErr;
+        }
         setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
         document.getElementById('authPassword').value = '';
         hideAuthOverlay();
@@ -490,6 +500,9 @@
       } catch (err) {
         console.error(err);
         errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+        attemptsEl.textContent = (err && typeof err.attemptsRemaining === 'number' && err.attemptsRemaining > 0)
+          ? 'Sign-in attempt ' + (3 - err.attemptsRemaining) + ' of 3 — this account locks after 3 failed attempts.'
+          : '';
       } finally {
         btn.disabled = false; btn.textContent = 'Log In';
       }

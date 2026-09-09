@@ -601,20 +601,24 @@ async function isLoginLocked(env, usernameLower) {
   const entry = state.obj[usernameLower];
   return !!(entry && entry.failCount >= LOGIN_LOCKOUT_THRESHOLD);
 }
-// Returns true if this failure is the one that crossed the threshold, so the
-// triggering attempt itself can show the lockout message right away instead
-// of the caller having to fail once more to find out they're locked.
+// Returns { failCount, justLocked } - justLocked is true if this failure is
+// the one that crossed the threshold, so the triggering attempt itself can
+// show the lockout message right away instead of the caller having to fail
+// once more to find out they're locked. failCount lets the caller tell the
+// person how many attempts they have left (see authAttempts on the sign-in
+// form).
 async function recordFailedLogin(env, usernameLower) {
-  let justLocked = false;
+  let failCount = 0, justLocked = false;
   await mutateJsonObjectFile(env, LOGIN_LOCKOUTS_FILE_PATH, {}, function (obj) {
     const entry = obj[usernameLower] || { failCount: 0 };
     entry.failCount = (entry.failCount || 0) + 1;
+    failCount = entry.failCount;
     justLocked = entry.failCount === LOGIN_LOCKOUT_THRESHOLD;
     if (entry.failCount >= LOGIN_LOCKOUT_THRESHOLD) entry.lockedAt = new Date().toISOString();
     obj[usernameLower] = entry;
     return { obj: obj };
   });
-  return justLocked;
+  return { failCount: failCount, justLocked: justLocked };
 }
 // Called on a successful login (starts the count fresh) and by
 // handleAdminUpdateUser whenever a Super Admin resets someone's password
@@ -638,6 +642,11 @@ async function handleLogin(request, env, origin) {
 
   const badCreds = function () { return json({ message: 'Invalid username or password.' }, 401, origin); };
   const lockedOut = function () { return json({ message: LOGIN_LOCKOUT_MESSAGE }, 401, origin); };
+  // Included on a lockable account's failed attempt so the sign-in form can
+  // show a running "N of 3 attempts used" counter, per the product brief.
+  const badCredsWithAttempts = function (attemptsRemaining) {
+    return json({ message: 'Invalid username or password.', attemptsRemaining: attemptsRemaining }, 401, origin);
+  };
 
   // The new user file is authoritative for any username it contains. Only
   // when a username isn't in the file at all do we fall back to the old
@@ -661,7 +670,11 @@ async function handleLogin(request, env, origin) {
     if (lockable && await isLoginLocked(env, usernameLower)) return lockedOut();
     const computedHash = await pbkdf2Hex(password, fileMatch.salt);
     if (computedHash !== fileMatch.hash) {
-      if (lockable && await recordFailedLogin(env, usernameLower)) return lockedOut();
+      if (lockable) {
+        const attempt = await recordFailedLogin(env, usernameLower);
+        if (attempt.justLocked) return lockedOut();
+        return badCredsWithAttempts(LOGIN_LOCKOUT_THRESHOLD - attempt.failCount);
+      }
       return badCreds();
     }
     if (lockable) await clearFailedLogins(env, usernameLower);
@@ -676,7 +689,11 @@ async function handleLogin(request, env, origin) {
   if (legacyLockable && await isLoginLocked(env, usernameLower)) return lockedOut();
   const legacyHash = await pbkdf2Hex(password, legacyMatch.salt);
   if (legacyHash !== legacyMatch.hash) {
-    if (legacyLockable && await recordFailedLogin(env, usernameLower)) return lockedOut();
+    if (legacyLockable) {
+      const attempt = await recordFailedLogin(env, usernameLower);
+      if (attempt.justLocked) return lockedOut();
+      return badCredsWithAttempts(LOGIN_LOCKOUT_THRESHOLD - attempt.failCount);
+    }
     return badCreds();
   }
   if (legacyLockable) await clearFailedLogins(env, usernameLower);
