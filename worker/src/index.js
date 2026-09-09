@@ -585,14 +585,59 @@ export default {
 
 // ---- auth routes -----------------------------------------------------------
 
+// Rev2.2: lock out any non-super_admin account after 3 failed sign-ins in a
+// row, so a guessed/leaked password can't be brute-forced - Super Admin is
+// deliberately exempt, so there's always at least one way into the system
+// even if every other account gets itself locked. Tracked in one small JSON
+// object (like data/counters.json) keyed by lowercased username, separate
+// from data/users.json since it applies to legacy STAFF_USERS-secret logins
+// too, which have no file record to carry the count on.
+const LOGIN_LOCKOUTS_FILE_PATH = 'data/login_lockouts.json';
+const LOGIN_LOCKOUT_THRESHOLD = 3;
+const LOGIN_LOCKOUT_MESSAGE = 'This account has been locked after 3 unsuccessful sign-in attempts. Please contact your Dessimate contact to reset your password.';
+
+async function isLoginLocked(env, usernameLower) {
+  const state = await readJsonObjectFile(env, LOGIN_LOCKOUTS_FILE_PATH, {});
+  const entry = state.obj[usernameLower];
+  return !!(entry && entry.failCount >= LOGIN_LOCKOUT_THRESHOLD);
+}
+// Returns true if this failure is the one that crossed the threshold, so the
+// triggering attempt itself can show the lockout message right away instead
+// of the caller having to fail once more to find out they're locked.
+async function recordFailedLogin(env, usernameLower) {
+  let justLocked = false;
+  await mutateJsonObjectFile(env, LOGIN_LOCKOUTS_FILE_PATH, {}, function (obj) {
+    const entry = obj[usernameLower] || { failCount: 0 };
+    entry.failCount = (entry.failCount || 0) + 1;
+    justLocked = entry.failCount === LOGIN_LOCKOUT_THRESHOLD;
+    if (entry.failCount >= LOGIN_LOCKOUT_THRESHOLD) entry.lockedAt = new Date().toISOString();
+    obj[usernameLower] = entry;
+    return { obj: obj };
+  });
+  return justLocked;
+}
+// Called on a successful login (starts the count fresh) and by
+// handleAdminUpdateUser whenever a Super Admin resets someone's password
+// (the account's promised way out of a lockout - see LOGIN_LOCKOUT_MESSAGE).
+async function clearFailedLogins(env, usernameLower) {
+  const state = await readJsonObjectFile(env, LOGIN_LOCKOUTS_FILE_PATH, {});
+  if (!state.obj[usernameLower]) return; // nothing on file - skip the write
+  await mutateJsonObjectFile(env, LOGIN_LOCKOUTS_FILE_PATH, {}, function (obj) {
+    delete obj[usernameLower];
+    return { obj: obj };
+  });
+}
+
 async function handleLogin(request, env, origin) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const username = (body.username || '').toString().trim();
   const password = (body.password || '').toString();
   if (!username || !password) return json({ message: 'Username and password are required.' }, 400, origin);
+  const usernameLower = username.toLowerCase();
 
   const badCreds = function () { return json({ message: 'Invalid username or password.' }, 401, origin); };
+  const lockedOut = function () { return json({ message: LOGIN_LOCKOUT_MESSAGE }, 401, origin); };
 
   // The new user file is authoritative for any username it contains. Only
   // when a username isn't in the file at all do we fall back to the old
@@ -600,7 +645,7 @@ async function handleLogin(request, env, origin) {
   // other people have been migrated.
   const fileState = await readUsersFile(env);
   const fileMatch = fileState.users.find(function (u) {
-    return (u.username || '').toLowerCase() === username.toLowerCase();
+    return (u.username || '').toLowerCase() === usernameLower;
   });
 
   if (fileMatch) {
@@ -611,16 +656,30 @@ async function handleLogin(request, env, origin) {
     // relationship gating here.
     if (!fileMatch.username || !fileMatch.hash) return badCreds();
     if (fileMatch.active === false) return json({ message: 'This account has been deactivated.' }, 401, origin);
+    const accessLevel = await resolveAccessLevel(env, fileMatch.username);
+    const lockable = accessLevel !== 'super_admin';
+    if (lockable && await isLoginLocked(env, usernameLower)) return lockedOut();
     const computedHash = await pbkdf2Hex(password, fileMatch.salt);
-    if (computedHash !== fileMatch.hash) return badCreds();
+    if (computedHash !== fileMatch.hash) {
+      if (lockable && await recordFailedLogin(env, usernameLower)) return lockedOut();
+      return badCreds();
+    }
+    if (lockable) await clearFailedLogins(env, usernameLower);
     return await issueSession(fileMatch.username, env, origin);
   }
 
   const legacy = readLegacyStaff(env);
-  const legacyMatch = legacy.find(function (u) { return (u.username || '').toLowerCase() === username.toLowerCase(); });
+  const legacyMatch = legacy.find(function (u) { return (u.username || '').toLowerCase() === usernameLower; });
   if (!legacyMatch) return badCreds();
+  const legacyAccessLevel = await resolveAccessLevel(env, legacyMatch.username);
+  const legacyLockable = legacyAccessLevel !== 'super_admin';
+  if (legacyLockable && await isLoginLocked(env, usernameLower)) return lockedOut();
   const legacyHash = await pbkdf2Hex(password, legacyMatch.salt);
-  if (legacyHash !== legacyMatch.hash) return badCreds();
+  if (legacyHash !== legacyMatch.hash) {
+    if (legacyLockable && await recordFailedLogin(env, usernameLower)) return lockedOut();
+    return badCreds();
+  }
+  if (legacyLockable) await clearFailedLogins(env, usernameLower);
   return await issueSession(legacyMatch.username, env, origin);
 }
 
@@ -716,6 +775,14 @@ async function handleAdminListUsers(env, origin) {
     .filter(function (u) { return u.username && fileUsernamesLower.indexOf(u.username.toLowerCase()) === -1; })
     .map(legacyToRow);
   const rows = fileState.users.map(sanitizeFileUser).concat(legacyOnly);
+  // Surface who's currently locked out (see LOGIN_LOCKOUT_MESSAGE) so a
+  // Super Admin knows who's actually asking for a password reset, rather
+  // than having to be told which account name to look for.
+  const lockoutState = await readJsonObjectFile(env, LOGIN_LOCKOUTS_FILE_PATH, {});
+  rows.forEach(function (row) {
+    const entry = row.username ? lockoutState.obj[row.username.toLowerCase()] : null;
+    row.locked = !!(entry && entry.failCount >= LOGIN_LOCKOUT_THRESHOLD);
+  });
   return json({ users: rows }, 200, origin);
 }
 
@@ -850,7 +917,7 @@ async function handleAdminUpdateUser(request, env, origin, id) {
   // writing, so this is only a factual snapshot, not the final write.
   // A login can belong to any relationship now (Dessimate Team member,
   // Supplier, or Customer) - see the matching note in handleAdminCreateUser.
-  let newUsername = null, newSalt = null, newHash = null;
+  let newUsername = null, newSalt = null, newHash = null, passwordChanged = false;
   const requestedUsername = body.username !== undefined ? (body.username || '').toString().trim() : (existingUsername || '');
   if (requestedUsername) {
     newUsername = requestedUsername;
@@ -863,6 +930,7 @@ async function handleAdminUpdateUser(request, env, origin, id) {
     if (requestedPassword) {
       newSalt = randomSaltHex();
       newHash = await pbkdf2Hex(requestedPassword, newSalt);
+      passwordChanged = true;
     } else if (!usernameChanged && existingHash) {
       newSalt = existingSalt; newHash = existingHash;
     } else {
@@ -901,6 +969,10 @@ async function handleAdminUpdateUser(request, env, origin, id) {
 
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
+  // A Super Admin resetting the password is this account's promised way out
+  // of a lockout (see LOGIN_LOCKOUT_MESSAGE) - clear the failed-attempt count
+  // so the new password works immediately instead of still reading as locked.
+  if (passwordChanged && newUsername) await clearFailedLogins(env, newUsername.toLowerCase());
   return json(sanitizeFileUser(savedUser), 200, origin);
 }
 

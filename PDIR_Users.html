@@ -93,6 +93,7 @@
     border-radius:4px; padding:2px 8px; white-space:nowrap; display:inline-block; }
   .pill-active{ background:#e6f4ea; color:#187b46; }
   .pill-inactive{ background:#f1e6e6; color:#a03b3b; }
+  .pill-locked{ background:#fdeaea; color:#b23b3b; }
   .pill-legacy{ background:#fdf1de; color:#a06a1c; }
   .pill-demo{ background:#e6eefc; color:var(--brand); }
   .pill-accesslevel{ background:#f1e6f6; color:#7a3fa0; }
@@ -585,6 +586,10 @@
       statusPills += u.active
         ? '<span class="pill pill-active">Active</span>'
         : '<span class="pill pill-inactive">Inactive</span>';
+      // Rev2.2: locked out after 3 failed sign-ins (see worker/README.md) -
+      // the only way out is a password reset from this page's Edit form,
+      // so a Super Admin needs to be able to spot this at a glance.
+      if (u.locked) statusPills += ' <span class="pill pill-locked" title="Locked after 3 failed sign-in attempts — reset their password to unlock.">Locked</span>';
 
       var accessHtml = u.accessLevel
         ? '<span class="pill pill-accesslevel">' + escapeHtml(ACCESS_LEVEL_LABELS[u.accessLevel] || u.accessLevel) + '</span>'

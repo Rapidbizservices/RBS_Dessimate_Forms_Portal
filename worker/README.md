@@ -183,6 +183,18 @@ linked here for a fast overview if you're updating an existing deployment.
   Study Presentation** and **b. CFD Studies**, each still with its own
   independent files/comments, instead of two standalone rows that both
   showed a duplicate "0".
+- **Sign-in lockout after 3 failed attempts** — any account except a Super
+  Admin is locked after 3 wrong-password sign-ins in a row; the sign-in form
+  then shows "This account has been locked after 3 unsuccessful sign-in
+  attempts. Please contact your Dessimate contact to reset your password."
+  instead of the usual "Invalid username or password", even if the correct
+  password is entered afterward. Super Admin is deliberately exempt, so
+  there's always at least one way in. The only way out is a **Super Admin
+  resetting that person's password** from the Users page's Edit form — doing
+  so clears the lockout automatically. A locked account shows a red
+  **Locked** pill next to its Active/Inactive status on the Users page, so
+  you know who actually needs that reset instead of having to be told the
+  username.
 
 ## The dashboard (`index.html`)
 
