@@ -202,6 +202,26 @@ linked here for a fast overview if you're updating an existing deployment.
   running "Sign-in attempt N of 3" counter beneath the error message, so
   someone gets real-time warning before they lock themselves out.
 
+## Rev2.3 changes
+
+- **Dessimate Invoice PDF redesigned** — backend-only change (no frontend
+  edits): `buildDessimateInvoicePdf` now renders a branded letterhead (logo,
+  light-blue header/footer bands, dark-navy line-items table, a "Ways to
+  Pay" footer, and the standard procurement disclaimer) matching the
+  reference template supplied for this revision. The Dessimate logo is
+  embedded as a base64 constant (`DESSIMATE_LOGO_JPG_BASE64`) so it always
+  renders regardless of whether a logo happens to be uploaded through the
+  Organizations page. The line-item columns are unchanged (Part #,
+  Description, UOM, Qty Shipped, Unit Price, Total Price) — the reference
+  image's Manufacturer/Manufacturer Part # columns aren't in the current
+  data model and adding them would need a frontend change, which this
+  revision deliberately avoided. "Bill To" pulls the matching Customer
+  organization's address (if one exists); "Ship To" is the invoice's
+  existing free-text field. The payment-method row uses plain text badges
+  (Apple Pay/Visa/Mastercard/Discover/Bank/PayPal), not real card-network
+  logos, since no licensed brand assets were available to embed. The
+  Dessimate PO PDF template is untouched.
+
 ## The dashboard (`index.html`)
 
 `index.html` is a persistent left sidebar with a content pane next to it —
