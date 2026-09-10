@@ -153,6 +153,10 @@
 </style>
 
 <div class="wrap">
+  <div id="impersonationBanner" style="display:none; align-items:center; justify-content:space-between; gap:12px; background:#fdf1de; border:1px solid #eecf9e; color:#8a5a10; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:13px; font-weight:600;">
+    <span data-imp-label>Viewing as someone else</span>
+    <button type="button" id="returnToMyAccountBtn" style="font-family:inherit; font-size:12.5px; font-weight:700; color:#fff; background:#8a5a10; border:none; border-radius:6px; padding:7px 12px; cursor:pointer;">Return to my account</button>
+  </div>
   <div class="header">
     <div class="header-left">
       <img src="logo.jpg" alt="Dessimate">
@@ -609,6 +613,13 @@
         : '<span style="color:var(--label); font-style:italic;">default</span>';
 
       var actions = '<button type="button" class="editBtn" data-edit="' + escapeHtml(u.id) + '">Edit</button>';
+      // Rev2.4: "Log in as" (impersonation) - see handleAdminImpersonate in
+      // the Worker. A real session as that person, no password ever seen;
+      // deliberately unavailable for Super Admin accounts (server-enforced
+      // too) and for anyone without an active login of their own.
+      if (u.migrated !== false && u.hasLogin && u.active && u.accessLevel !== 'super_admin') {
+        actions += ' <button type="button" class="editBtn" data-impersonate="' + escapeHtml(u.id) + '">Log in as</button>';
+      }
       if (u.migrated !== false) {
         actions += ' <button type="button" class="deleteBtn" data-delete="' + escapeHtml(u.id) + '">Delete</button>';
       }
@@ -629,10 +640,58 @@
     bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
       btn.addEventListener('click', function(){ openEditModal(this.getAttribute('data-edit')); });
     });
+    bodyEl.querySelectorAll('[data-impersonate]').forEach(function(btn){
+      btn.addEventListener('click', function(){ impersonateUser(this.getAttribute('data-impersonate')); });
+    });
     bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
       btn.addEventListener('click', function(){ deleteUser(this.getAttribute('data-delete')); });
     });
   }
+
+  var IMPERSONATOR_SESSION_KEY = 'dessimate_impersonator_session';
+  async function impersonateUser(id){
+    var u = lastUsers.find(function(x){ return x.id === id; });
+    if (!u) return;
+    var label = u.name || u.username;
+    if (!confirm('Log in as ' + label + '? You\'ll see exactly what they see - come back to Users afterward and use "Return to my account" to switch back.')) return;
+    try {
+      var res = await apiFetch('admin/users/' + encodeURIComponent(id) + '/impersonate', { method: 'POST' });
+      var data = {}; try { data = await res.json(); } catch(e){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      var adminSession = getSession();
+      if (adminSession) { try { localStorage.setItem(IMPERSONATOR_SESSION_KEY, JSON.stringify(adminSession)); } catch(e){} }
+      setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+      window.location.href = 'index.html';
+    } catch (err) {
+      alert('Could not log in as ' + label + ' (' + (err && err.message ? err.message : err) + ').');
+    }
+  }
+  // Rev2.4: shows only while an impersonator session is stashed (i.e. this
+  // browser tab is currently viewing as someone else) - restores the Super
+  // Admin's own session and reloads.
+  function renderImpersonationBanner(){
+    var bannerEl = document.getElementById('impersonationBanner');
+    if (!bannerEl) return;
+    var stashed = null;
+    try { stashed = JSON.parse(localStorage.getItem(IMPERSONATOR_SESSION_KEY) || 'null'); } catch(e){}
+    var session = getSession();
+    if (stashed && session) {
+      bannerEl.style.display = 'flex';
+      bannerEl.querySelector('[data-imp-label]').textContent = 'Viewing as ' + session.username + ' (impersonated)';
+    } else {
+      bannerEl.style.display = 'none';
+    }
+  }
+  var returnBtn = document.getElementById('returnToMyAccountBtn');
+  if (returnBtn) returnBtn.addEventListener('click', function(){
+    var stashed = null;
+    try { stashed = JSON.parse(localStorage.getItem(IMPERSONATOR_SESSION_KEY) || 'null'); } catch(e){}
+    if (stashed) {
+      setSession(stashed);
+      try { localStorage.removeItem(IMPERSONATOR_SESSION_KEY); } catch(e){}
+      window.location.reload();
+    }
+  });
 
   document.getElementById('importBtn').addEventListener('click', function(){
     requireAuthThen(async function(){
@@ -940,6 +999,7 @@
   });
   // -----------------------------------------------------------------------------
 
+  renderImpersonationBanner();
   requireAuthThen(loadUsers);
 })();
 </script>

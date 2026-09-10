@@ -222,6 +222,94 @@ linked here for a fast overview if you're updating an existing deployment.
   logos, since no licensed brand assets were available to embed. The
   Dessimate PO PDF template is untouched.
 
+## Rev2.4 changes
+
+- **Multiple addresses, any organization** — the "+ Add Address" editor
+  (previously Self-org-only) is now on every organization's Edit form,
+  entered on 2 lines (street, then city/state/zip — `{label, line1, line2}`
+  per entry, replacing the old single-string `address` field on each
+  addresses[] entry; a legacy single-line entry still reads fine, its whole
+  value landing in `line1`). A org's saved addresses back the **Ship To**
+  dropdown on the Dessimate Invoice form (Customer's addresses) and the
+  **From** dropdown (Self org's addresses, defaulting to the first one,
+  overridable) — both dropdowns fill a free-text field you can still hand-edit.
+- **Payment Terms is now a managed list** — a new `paymentTerms` array field
+  on Organizations (meaningful on the Self org), edited from the
+  Organizations page. Every "Payment Terms" field system-wide (Customer PO
+  still free-text - out of scope this round; Dessimate PO, Dessimate
+  Invoice) is now a dropdown sourced from that list instead of freehand text.
+- **Notes/Comments** — a plain editable textarea on the Dessimate PO and
+  Dessimate Invoice forms (`notes` field). Printed on the generated Invoice
+  PDF when present; not printed on the PO PDF (data-only there, matching how
+  it wasn't requested to appear on that document).
+- **Super Admin "Log in as" (impersonation)** — replaces the "second
+  password per user" idea from the product brief with the standard-practice
+  alternative: a Super Admin gets a real session as the target user, without
+  ever seeing or handling that person's actual password, and every use is
+  logged (`data/impersonation_log.json` - admin, target, timestamp). Not
+  available for other Super Admin accounts or accounts without an active
+  login. `POST /admin/users/<id>/impersonate` issues the session; the
+  returned token carries who's impersonating (`ib` in the JWT payload, `GET
+  /me`'s `impersonatedBy`). The Users page and the dashboard (`index.html`)
+  show a "Viewing as X (impersonated)" banner with a **Return to my
+  account** button while active (the admin's own session is stashed in
+  `localStorage` under `dessimate_impersonator_session` until then) — other
+  module pages don't show the banner, though the impersonated session works
+  on all of them; navigate back to Users or the dashboard to switch back.
+- **One Dessimate PO/Invoice can bill against multiple Customer POs** —
+  `customerPoRef` (string) is now `customerPoRefs` (array) on both Dessimate
+  POs and Dessimate Invoices, edited as a checklist instead of a single
+  dropdown; a legacy record with only the old field still reads back as a
+  one-item array, and `customerPoRef` is still returned (as the first entry)
+  for any old client. Printed on both PDFs as a comma-joined list.
+- **Related Dessimate POs: searchable** — the picker on the Dessimate PO
+  form is a full checklist of every other PO in the system already; at scale
+  that got unwieldy to scroll, so a search box now filters what's shown by
+  PO number, supplier, or shipment number. The checked set survives
+  filtering (it's tracked separately from what's currently visible), so
+  searching never silently drops a pick.
+- **Dessimate PO as a field on Dessimate Invoices** — a new `dessimatePoRef`
+  field (dropdown of Dessimate POs) for tracing an invoice back to the
+  internal procurement PO, separate from the Customer PO(s) above.
+- **Generate Invoice / Generate Packing Slip buttons, in the Edit modal** —
+  next to the invoice's other fields (only shown once the invoice has been
+  saved once - PDFs are generated from saved data). Both open in the same
+  in-page viewer the row-level "View PDF" button already uses.
+- **Packing Slip** — a new PDF (`GET
+  /dessimate-invoices/<id>/packing-slip`), same letterhead system as the
+  Invoice but no pricing and no "Ways to Pay" footer, matching the supplied
+  reference. Its Customer Part #/Manufacturer/Manufacturer Part # columns
+  come from two new Parts fields (`manufacturer`, `manufacturerPartNumber`,
+  alongside the existing `customerPartNumber`) looked up by Part Number at
+  generation time - nothing new stored per invoice line.
+- **Shipment Number on Dessimate Invoices** — a new `shipmentNumber` field,
+  a dropdown sourced from the PDIR index (`GET /pdir-index`) rather than
+  freehand text, and printed on the generated Invoice PDF.
+- **Invoice Number is editable after creation** — previously immutable once
+  assigned (like the Dessimate PO's PO Number/Shipment Number still are).
+  Nothing else in the system references a Dessimate Invoice by its number
+  (unlike PO Number, which Supplier Invoices and the PDIR Portal link
+  against), so this was safe to change with no cross-references to update -
+  still unique (unless renamed onto an existing invoice), and a numeric
+  value still bumps `data/counters.json`'s counter past itself so a later
+  auto-assigned number can't collide with it. The one thing this doesn't
+  protect against is a customer who already has a copy of the invoice under
+  the old number — that's a process risk, not a technical one, worth being
+  deliberate about before renaming a sent invoice.
+- **Deleted Invoices view** — `GET /dessimate-invoices/deleted` (Admin+)
+  lists what's been soft-deleted; a new **Deleted Invoices** button opens
+  them in a modal with a **Restore** action per row (`POST
+  /dessimate-invoices/<id>/restore`).
+- **Invoice line Part Number is now free-typed** — was a dropdown-only
+  `<select>` (the data layer already accepted any string); now a text input
+  with a Parts-master-backed `<datalist>` for suggestions, matching how
+  Description already worked. Picking or typing an exact Parts match still
+  auto-fills Description.
+- **Duplicate** — a button per row on the Dessimate Invoices list opens the
+  Add modal pre-filled from that invoice's data (a fresh Invoice Number,
+  attachments not carried over since those are files that belong to the
+  original record).
+
 ## The dashboard (`index.html`)
 
 `index.html` is a persistent left sidebar with a content pane next to it —

@@ -304,7 +304,15 @@ export default {
         const auth = await requireAuth(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         const accessLevel = await resolveAccessLevel(env, auth.username);
-        return json({ username: auth.username, accessLevel: accessLevel }, 200, origin);
+        return json({ username: auth.username, accessLevel: accessLevel, impersonatedBy: auth.impersonatedBy || null }, 200, origin);
+      }
+
+      // Rev2.4: Super Admin "Log in as" - see handleAdminImpersonate.
+      if (/^\/admin\/users\/[^/]+\/impersonate$/.test(url.pathname) && request.method === 'POST') {
+        const id = decodeURIComponent(url.pathname.split('/')[3]);
+        const auth = await requireRole(request, env, ['super_admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleAdminImpersonate(env, origin, id, auth.username);
       }
 
       // Users + Organizations write access (and the entire admin user
@@ -527,6 +535,20 @@ export default {
         return await handlePeekDessimateInvoiceNumber(env, origin);
       }
 
+      // Rev2.4: Deleted Invoices view + restore - checked before the generic
+      // '/dessimate-invoices/' handler below (same reason as the /pdf route).
+      if (url.pathname === '/dessimate-invoices/deleted' && request.method === 'GET') {
+        const auth = await requireRole(request, env, ['super_admin', 'admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleListDeletedDessimateInvoices(env, origin);
+      }
+      if (/^\/dessimate-invoices\/[^/]+\/restore$/.test(url.pathname) && request.method === 'POST') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireRole(request, env, ['super_admin', 'admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleRestoreDessimateInvoice(env, origin, id);
+      }
+
       // Checked before the generic '/dessimate-invoices/' handler below,
       // which only reacts to PUT/DELETE - this is a GET and would otherwise
       // fall through to a 404.
@@ -535,6 +557,16 @@ export default {
         const auth = await requireAuthWithScope(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         return await handleGenerateDessimateInvoicePdf(env, origin, id, auth.accessLevel, auth.organization);
+      }
+
+      // Rev2.4: the Packing Slip - a second PDF generated from the same
+      // Dessimate Invoice record (Customer/Manufacturer part columns pulled
+      // from the Parts master), same route shape as /pdf above.
+      if (/^\/dessimate-invoices\/[^/]+\/packing-slip$/.test(url.pathname) && request.method === 'GET') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireAuthWithScope(request, env);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleGenerateDessimatePackingSlipPdf(env, origin, id, auth.accessLevel, auth.organization);
       }
 
       if (url.pathname.startsWith('/dessimate-invoices/')) {
@@ -706,10 +738,54 @@ async function handleLogin(request, env, origin) {
   return await issueSession(legacyMatch.username, env, origin);
 }
 
-async function issueSession(username, env, origin) {
+async function issueSession(username, env, origin, impersonatedBy) {
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  const token = await signToken({ u: username, exp: exp }, env.SESSION_SECRET);
-  return json({ token: token, username: username, expiresAt: exp * 1000 }, 200, origin);
+  const payload = { u: username, exp: exp };
+  if (impersonatedBy) payload.ib = impersonatedBy;
+  const token = await signToken(payload, env.SESSION_SECRET);
+  const resp = { token: token, username: username, expiresAt: exp * 1000 };
+  if (impersonatedBy) resp.impersonatedBy = impersonatedBy;
+  return json(resp, 200, origin);
+}
+
+// ---- Rev2.4: Super Admin impersonation ("Log in as") -----------------------
+// Best-practice alternative to a second, admin-assigned password per user
+// (see worker/README.md) - a Super Admin gets a real session as the target
+// user, without ever seeing or handling that person's actual password, and
+// every use is logged. The issued token carries "ib" (impersonated-by) so
+// GET /me can tell the frontend to show a "Viewing as X — return to your
+// account" banner.
+const IMPERSONATION_LOG_PATH = 'data/impersonation_log.json';
+
+async function handleAdminImpersonate(env, origin, id, adminUsername) {
+  let targetUsername = null;
+  if (id.indexOf('legacy:') === 0) {
+    const legacy = readLegacyStaff(env);
+    const match = legacy.find(function (u) { return u.username && ('legacy:' + u.username.toLowerCase()) === id; });
+    if (match) targetUsername = match.username;
+  } else {
+    const state = await readUsersFile(env);
+    const target = state.users.find(function (u) { return u.id === id; });
+    if (target && target.username && target.hash) {
+      if (target.active === false) return json({ message: 'This account has been deactivated.' }, 400, origin);
+      targetUsername = target.username;
+    }
+  }
+  if (!targetUsername) return json({ message: 'This person has no login to view.' }, 400, origin);
+  if (targetUsername.toLowerCase() === adminUsername.toLowerCase()) {
+    return json({ message: 'That’s already your own account.' }, 400, origin);
+  }
+  const targetLevel = await resolveAccessLevel(env, targetUsername);
+  if (targetLevel === 'super_admin') {
+    return json({ message: 'Super Admin accounts can’t be impersonated — sign in as that person directly if needed.' }, 400, origin);
+  }
+
+  await mutateJsonArrayFile(env, IMPERSONATION_LOG_PATH, function (items) {
+    items.push({ id: cryptoRandomId(), admin: adminUsername, target: targetUsername, at: new Date().toISOString() });
+    return { items: items };
+  });
+
+  return await issueSession(targetUsername, env, origin, adminUsername);
 }
 
 async function handleListUsers(env, origin) {
@@ -1028,6 +1104,16 @@ async function usernameTaken(env, username, excludeId) {
 // ---- organization directory (Suppliers / Customers) ------------------------
 
 function sanitizeOrg(o) {
+  // Rev2.4: any organization (not just Self) can carry multiple addresses -
+  // a Customer/Supplier picks which one applies per PO/Invoice (Ship To
+  // dropdown). A legacy org with only the old flat "address" string still
+  // reads fine - it just shows as a single unlabeled address until someone
+  // adds real entries through the new editor.
+  const addresses = Array.isArray(o.addresses) ? o.addresses.map(sanitizeOrgAddress).filter(Boolean) : [];
+  if (!addresses.length && o.address) {
+    const legacy = sanitizeOrgAddress({ label: 'Address', address: o.address });
+    if (legacy) addresses.push(legacy);
+  }
   return {
     id: o.id,
     name: o.name || '',
@@ -1036,15 +1122,14 @@ function sanitizeOrg(o) {
     phone: o.phone || '',
     website: o.website || '',
     logo: sanitizeOrgDoc(o.logo),
-    // addresses/salesEmail/purchasingEmail are only meaningful for the
-    // Self organization (Dessimate's own record - Delaware registered +
-    // California office, one email for invoices, one for POs), but kept as
-    // plain optional fields on every org rather than a special-cased shape.
-    addresses: Array.isArray(o.addresses)
-      ? o.addresses.map(sanitizeOrgAddress).filter(Boolean)
-      : [],
+    addresses: addresses,
     salesEmail: o.salesEmail || '',
     purchasingEmail: o.purchasingEmail || '',
+    // Self-org-managed list of Payment Terms options (Rev2.4) - every
+    // "Terms" dropdown in the system (Customer PO, Dessimate PO, Dessimate
+    // Invoice) reads from here rather than being freehand text, so the
+    // choices stay consistent system-wide and are edited in one place.
+    paymentTerms: Array.isArray(o.paymentTerms) ? o.paymentTerms.map(function (t) { return (t || '').toString().trim(); }).filter(Boolean) : [],
     docs: {
       companyPresentation: sanitizeOrgDoc(o.docs && o.docs.companyPresentation),
       nda: sanitizeOrgDoc(o.docs && o.docs.nda),
@@ -1076,12 +1161,19 @@ async function handleUpdateAppConfig(request, env, origin) {
   if (!result.ok) return json({ message: result.message }, 500, origin);
   return json({ version: result.obj.version, builtLabel: result.obj.builtLabel || '' }, 200, origin);
 }
+// Rev2.4: addresses are entered on 2 lines (street, then city/state/zip) for
+// cleaner PDF formatting. line1/line2 replace the old single "address"
+// string - a legacy entry with only "address" set still reads back fine,
+// its whole value landing in line1, until it's next saved through the new
+// 2-line editor.
 function sanitizeOrgAddress(a) {
   if (!a) return null;
   const label = (a.label || '').toString().trim();
-  const address = (a.address || '').toString().trim();
-  if (!label && !address) return null;
-  return { label: label, address: address };
+  let line1 = (a.line1 || '').toString().trim();
+  let line2 = (a.line2 || '').toString().trim();
+  if (!line1 && !line2 && a.address) line1 = (a.address || '').toString().trim();
+  if (!label && !line1 && !line2) return null;
+  return { label: label, line1: line1, line2: line2 };
 }
 function sanitizeOrgDoc(d) {
   if (!d || !d.path) return null;
@@ -1125,6 +1217,9 @@ function validateOrgFields(body, origin) {
     return { error: json({ message: 'That purchasing email address doesnâ€™t look valid.' }, 400, origin) };
   }
   const addresses = Array.isArray(body.addresses) ? body.addresses.map(sanitizeOrgAddress).filter(Boolean) : [];
+  const paymentTerms = Array.isArray(body.paymentTerms)
+    ? Array.from(new Set(body.paymentTerms.map(function (t) { return (t || '').toString().trim(); }).filter(Boolean)))
+    : [];
   return {
     name: name,
     relationship: relationship,
@@ -1133,7 +1228,8 @@ function validateOrgFields(body, origin) {
     website: (body.website || '').toString().trim(),
     addresses: addresses,
     salesEmail: salesEmail,
-    purchasingEmail: purchasingEmail
+    purchasingEmail: purchasingEmail,
+    paymentTerms: paymentTerms
   };
 }
 
@@ -1168,6 +1264,7 @@ async function handleCreateOrganization(request, env, origin) {
     address: fields.address, phone: fields.phone, website: fields.website,
     logo: sanitizeOrgDoc(body.logo),
     addresses: fields.addresses, salesEmail: fields.salesEmail, purchasingEmail: fields.purchasingEmail,
+    paymentTerms: fields.paymentTerms,
     docs: {
       companyPresentation: sanitizeOrgDoc(body.docs && body.docs.companyPresentation),
       nda: sanitizeOrgDoc(body.docs && body.docs.nda),
@@ -1209,6 +1306,7 @@ async function handleUpdateOrganization(request, env, origin, id) {
     target.addresses = fields.addresses;
     target.salesEmail = fields.salesEmail;
     target.purchasingEmail = fields.purchasingEmail;
+    target.paymentTerms = fields.paymentTerms;
     if (body.logo !== undefined) {
       target.logo = sanitizeOrgDoc(body.logo);
     }
@@ -1259,6 +1357,11 @@ function sanitizePart(p) {
     id: p.id,
     partNumber: p.partNumber || '',
     customerPartNumber: p.customerPartNumber || '',
+    // Rev2.4: for the Packing Slip PDF's Manufacturer/Manufacturer Part #
+    // columns - looked up by Part Number at generation time rather than
+    // duplicated onto every invoice line.
+    manufacturer: p.manufacturer || '',
+    manufacturerPartNumber: p.manufacturerPartNumber || '',
     name: p.name || '',
     revision: p.revision || '',
     status: p.status || 'Active',
@@ -1305,6 +1408,8 @@ function validatePartFields(body, origin) {
   return {
     partNumber: partNumber,
     customerPartNumber: (body.customerPartNumber || '').toString().trim(),
+    manufacturer: (body.manufacturer || '').toString().trim(),
+    manufacturerPartNumber: (body.manufacturerPartNumber || '').toString().trim(),
     name: (body.name || '').toString().trim(),
     revision: (body.revision || '').toString().trim(),
     status: status,
@@ -1337,6 +1442,7 @@ async function handleCreatePart(request, env, origin) {
 
   const newPart = {
     id: cryptoRandomId(), partNumber: fields.partNumber, customerPartNumber: fields.customerPartNumber,
+    manufacturer: fields.manufacturer, manufacturerPartNumber: fields.manufacturerPartNumber,
     name: fields.name, revision: fields.revision, status: fields.status, drawingNumber: fields.drawingNumber,
     uom: fields.uom, category: fields.category, notes: fields.notes, customer: fields.customer, suppliers: fields.suppliers,
     attachments: sanitizeOrgDocList(body.attachments)
@@ -1366,6 +1472,8 @@ async function handleUpdatePart(request, env, origin, id) {
     if (!target) return null;
     target.partNumber = fields.partNumber;
     target.customerPartNumber = fields.customerPartNumber;
+    target.manufacturer = fields.manufacturer;
+    target.manufacturerPartNumber = fields.manufacturerPartNumber;
     target.name = fields.name;
     target.revision = fields.revision;
     target.status = fields.status;
@@ -1911,17 +2019,24 @@ function sanitizeDessimatePoLine(l) {
 }
 function sanitizeDessimatePo(o) {
   const lines = Array.isArray(o.lines) ? o.lines.map(sanitizeDessimatePoLine) : [];
+  // Rev2.4: customerPoRefs (array) replaces the old single customerPoRef -
+  // one Dessimate PO can now be linked to more than one Customer PO.
+  const customerPoRefs = Array.isArray(o.customerPoRefs)
+    ? Array.from(new Set(o.customerPoRefs.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
+    : (o.customerPoRef ? [String(o.customerPoRef).trim()] : []);
   return {
     id: o.id,
     poNumber: o.poNumber,
     shipmentNumber: o.shipmentNumber || '',
     poDate: o.poDate || '',
     supplier: o.supplier || '',
-    customerPoRef: o.customerPoRef || '',
+    customerPoRef: customerPoRefs[0] || '', // kept for any old client still reading the singular field
+    customerPoRefs: customerPoRefs,
     shipTo: o.shipTo || '',
     currency: o.currency || '',
     paymentTerms: o.paymentTerms || '',
     incoterms: o.incoterms || '',
+    notes: o.notes || '',
     lines: lines,
     poTotal: Math.round(lines.reduce(function (sum, l) { return sum + l.extendedPrice; }, 0) * 100) / 100,
     approverUsername: o.approverUsername || '',
@@ -1979,6 +2094,7 @@ function scopeDessimatePos(pos, accessLevel, organization) {
     return visible.map(function (o) {
       const copy = Object.assign({}, o);
       delete copy.customerPoRef;
+      delete copy.customerPoRefs;
       copy.relatedPoIds = (Array.isArray(o.relatedPoIds) ? o.relatedPoIds : []).filter(function (id) { return visibleIds.has(id); });
       return copy;
     });
@@ -1999,14 +2115,18 @@ function validateDessimatePoFields(body, origin) {
   const linesIn = Array.isArray(body.lines) ? body.lines : [];
   const lines = linesIn.map(sanitizeDessimatePoLine).filter(function (l) { return l.partNumber; });
   if (!lines.length) return { error: json({ message: 'Add at least one line item with a Part Number.' }, 400, origin) };
+  const customerPoRefs = Array.isArray(body.customerPoRefs)
+    ? Array.from(new Set(body.customerPoRefs.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
+    : [];
   return {
     poDate: (body.poDate || '').toString().trim(),
     supplier: supplier,
-    customerPoRef: (body.customerPoRef || '').toString().trim(),
+    customerPoRefs: customerPoRefs,
     shipTo: (body.shipTo || '').toString().trim(),
     currency: (body.currency || '').toString().trim(),
     paymentTerms: (body.paymentTerms || '').toString().trim(),
     incoterms: (body.incoterms || '').toString().trim(),
+    notes: (body.notes || '').toString().trim(),
     lines: lines,
     approverUsername: (body.approverUsername || '').toString().trim(),
     approverName: (body.approverName || '').toString().trim(),
@@ -2126,8 +2246,9 @@ async function buildDessimatePoPdf(po, selfOrg, stampBytes) {
   const headerTop = y;
   text((selfOrg && selfOrg.name) || 'Dessimate LLC', margin, 18, { bold: true });
   y -= 20;
-  const selfAddr = (selfOrg && Array.isArray(selfOrg.addresses) && selfOrg.addresses[0]) ? selfOrg.addresses[0].address : '';
-  if (selfAddr) { text(selfAddr, margin, 9); y -= 12; }
+  const selfAddr0 = (selfOrg && Array.isArray(selfOrg.addresses) && selfOrg.addresses[0]) ? selfOrg.addresses[0] : null;
+  if (selfAddr0 && selfAddr0.line1) { text(selfAddr0.line1, margin, 9); y -= 12; }
+  if (selfAddr0 && selfAddr0.line2) { text(selfAddr0.line2, margin, 9); y -= 12; }
   if (selfOrg && selfOrg.purchasingEmail) { text('Purchasing: ' + selfOrg.purchasingEmail, margin, 9); y -= 12; }
 
   const rightX = pageWidth - margin - 190;
@@ -2136,7 +2257,8 @@ async function buildDessimatePoPdf(po, selfOrg, stampBytes) {
   textAt('PO Number: ' + po.poNumber, rightX, ry, 10, { bold: true }); ry -= 14;
   textAt('Shipment #: ' + po.shipmentNumber, rightX, ry, 10, { bold: true }); ry -= 14;
   textAt('PO Date: ' + (po.poDate || ''), rightX, ry, 10); ry -= 14;
-  if (po.customerPoRef) { textAt('Customer PO Ref: ' + po.customerPoRef, rightX, ry, 9); ry -= 14; }
+  const poRefDisplay = (Array.isArray(po.customerPoRefs) && po.customerPoRefs.length) ? po.customerPoRefs.join(', ') : po.customerPoRef;
+  if (poRefDisplay) { textAt('Customer PO Ref: ' + poRefDisplay, rightX, ry, 9); ry -= 14; }
 
   y = Math.min(y, ry) - 10;
   hr(); y -= 18;
@@ -2423,16 +2545,30 @@ function sanitizeDessimateInvoiceLine(l) {
 }
 function sanitizeDessimateInvoice(o) {
   const lines = Array.isArray(o.lines) ? o.lines.map(sanitizeDessimateInvoiceLine) : [];
+  // Rev2.4: customerPoRefs (array) replaces the old single customerPoRef -
+  // one Dessimate Invoice can now bill against more than one Customer PO. A
+  // legacy record with only the old string field still reads back as a
+  // one-item array.
+  const customerPoRefs = Array.isArray(o.customerPoRefs)
+    ? Array.from(new Set(o.customerPoRefs.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
+    : (o.customerPoRef ? [String(o.customerPoRef).trim()] : []);
   return {
     id: o.id,
     invoiceNumber: o.invoiceNumber,
     invoiceDate: o.invoiceDate || '',
     customer: o.customer || '',
-    customerPoRef: o.customerPoRef || '',
+    customerPoRef: customerPoRefs[0] || '', // kept for any old client still reading the singular field
+    customerPoRefs: customerPoRefs,
+    dessimatePoRef: o.dessimatePoRef || '',
+    shipmentNumber: o.shipmentNumber || '',
     shipTo: o.shipTo || '',
+    fromAddress: o.fromAddress || '',
     currency: o.currency || '',
     paymentTerms: o.paymentTerms || '',
     incoterms: o.incoterms || '',
+    notes: o.notes || '',
+    shipVia: o.shipVia || '',
+    shipDate: o.shipDate || '',
     status: DESSIMATE_INVOICE_STATUSES.indexOf(o.status) !== -1 ? o.status : 'Unpaid',
     deleted: !!o.deleted,
     deletedAt: o.deletedAt || null,
@@ -2470,14 +2606,23 @@ function validateDessimateInvoiceFields(body, origin) {
   const lines = linesIn.map(sanitizeDessimateInvoiceLine).filter(function (l) { return l.partNumber; });
   if (!lines.length) return { error: json({ message: 'Add at least one line item with a Part Number.' }, 400, origin) };
   const status = DESSIMATE_INVOICE_STATUSES.indexOf(body.status) !== -1 ? body.status : 'Unpaid';
+  const customerPoRefs = Array.isArray(body.customerPoRefs)
+    ? Array.from(new Set(body.customerPoRefs.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
+    : [];
   return {
     invoiceDate: (body.invoiceDate || '').toString().trim(),
     customer: customer,
-    customerPoRef: (body.customerPoRef || '').toString().trim(),
+    customerPoRefs: customerPoRefs,
+    dessimatePoRef: (body.dessimatePoRef || '').toString().trim(),
+    shipmentNumber: (body.shipmentNumber || '').toString().trim(),
     shipTo: (body.shipTo || '').toString().trim(),
+    fromAddress: (body.fromAddress || '').toString().trim(),
     currency: (body.currency || '').toString().trim(),
     paymentTerms: (body.paymentTerms || '').toString().trim(),
     incoterms: (body.incoterms || '').toString().trim(),
+    notes: (body.notes || '').toString().trim(),
+    shipVia: (body.shipVia || '').toString().trim(),
+    shipDate: (body.shipDate || '').toString().trim(),
     status: status,
     lines: lines,
     attachments: sanitizeOrgDocList(body.attachments)
@@ -2514,17 +2659,40 @@ async function handleUpdateDessimateInvoice(request, env, origin, id) {
   const fields = validateDessimateInvoiceFields(body, origin);
   if (fields.error) return fields.error;
 
+  // Rev2.4: the Invoice Number can now be changed after creation (product
+  // brief) - still unique, and a numeric value still bumps the counter past
+  // itself so a later auto-assigned number never collides with it, the same
+  // way a voluntary number does at create time (reserveDessimateInvoiceNumber).
+  // Left out of validateDessimateInvoiceFields since it needs its own
+  // uniqueness check (excluding this invoice).
+  let newInvoiceNumber; // undefined = "leave it as-is"
+  if (body.invoiceNumber !== undefined) {
+    const requested = (body.invoiceNumber === null ? '' : String(body.invoiceNumber)).trim();
+    if (!requested) return json({ message: 'Invoice Number is required.' }, 400, origin);
+    if (await dessimateInvoiceNumberTaken(env, requested, id)) {
+      return json({ message: 'That Invoice Number is already in use.' }, 409, origin);
+    }
+    newInvoiceNumber = /^\d+$/.test(requested) ? Number(requested) : requested;
+  }
+
   let saved = null;
   const result = await mutateJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
-    Object.assign(target, fields); // invoiceNumber is never in `fields` - immutable once assigned
+    Object.assign(target, fields);
+    if (newInvoiceNumber !== undefined) target.invoiceNumber = newInvoiceNumber;
     saved = target;
     return { items: items };
   }, { requireFound: true });
 
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
+  if (typeof newInvoiceNumber === 'number') {
+    await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+      if (newInvoiceNumber >= obj.nextDessimateInvoiceNumber) obj.nextDessimateInvoiceNumber = newInvoiceNumber + 1;
+      return { obj: obj };
+    });
+  }
   return json(sanitizeDessimateInvoice(saved), 200, origin);
 }
 
@@ -2541,6 +2709,31 @@ async function handleDeleteDessimateInvoice(env, origin, id) {
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   return json({ ok: true }, 200, origin);
+}
+
+// Rev2.4: Dessimate Invoice delete has always been a soft delete (Invoice
+// Numbers are never reused) but there was previously no way to see what had
+// been deleted. Admin+ only, same access floor as the Dessimate Invoice
+// module's writes - a deleted invoice is billing history, not routine data.
+async function handleListDeletedDessimateInvoices(env, origin) {
+  const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
+  const deleted = state.items.filter(function (o) { return o.deleted; }).map(sanitizeDessimateInvoice);
+  return json({ dessimateInvoices: deleted }, 200, origin);
+}
+
+async function handleRestoreDessimateInvoice(env, origin, id) {
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    target.deleted = false;
+    target.deletedAt = null;
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeDessimateInvoice(saved), 200, origin);
 }
 
 // Rev2.3: redesigned to match the reference letterhead template (product
@@ -2622,12 +2815,14 @@ async function buildDessimateInvoicePdf(inv, selfOrg, customerOrg) {
 
   let ry = hy;
   rightText('INVOICE', pageWidth - margin, ry, 26, { bold: true, color: brandBlue }); ry -= 30;
+  const poRefDisplay = (Array.isArray(inv.customerPoRefs) && inv.customerPoRefs.length) ? inv.customerPoRefs.join(', ') : (inv.customerPoRef || '');
   [
     ['Invoice Number:', inv.invoiceNumber || ''],
-    ['Purchase Order Number:', inv.customerPoRef || ''],
+    ['Purchase Order Number:', poRefDisplay],
     ['Date:', inv.invoiceDate || ''],
     ['Terms:', inv.paymentTerms || ''],
-    ['Due Date:', '']
+    ['Due Date:', ''],
+    ['Shipment #:', inv.shipmentNumber || '']
   ].forEach(function (row) {
     rightText(row[0], pageWidth - margin - 100, ry, 10, { bold: true });
     rightText(row[1], pageWidth - margin, ry, 10);
@@ -2635,10 +2830,17 @@ async function buildDessimateInvoicePdf(inv, selfOrg, customerOrg) {
   });
 
   // ---- Self org name/address/contact (left column under the logo) ----------
+  // Rev2.4: inv.fromAddress overrides the Self org's default (first) address
+  // - set via a dropdown of the org's saved addresses on the invoice form,
+  // left blank to keep following whatever that default address currently is.
   let ly = logoBottom - 16;
   leftText((selfOrg && selfOrg.name) || 'Dessimate LLC', margin, ly, 10, { bold: true }); ly -= 13;
-  const selfAddr = (selfOrg && Array.isArray(selfOrg.addresses) && selfOrg.addresses[0]) ? selfOrg.addresses[0].address : '';
-  wrapLines(selfAddr, colGap - margin - 10, 9).forEach(function (line) { leftText(line, margin, ly, 9); ly -= 12; });
+  let selfAddrText = inv.fromAddress;
+  if (!selfAddrText) {
+    const a0 = (selfOrg && Array.isArray(selfOrg.addresses) && selfOrg.addresses[0]) ? selfOrg.addresses[0] : null;
+    selfAddrText = a0 ? [a0.line1, a0.line2].filter(Boolean).join(', ') : '';
+  }
+  wrapLines(selfAddrText, colGap - margin - 10, 9).forEach(function (line) { leftText(line, margin, ly, 9); ly -= 12; });
 
   let cy = logoBottom - 16;
   [selfOrg && selfOrg.salesEmail, selfOrg && selfOrg.phone, selfOrg && selfOrg.website].filter(Boolean).forEach(function (line) {
@@ -2646,11 +2848,16 @@ async function buildDessimateInvoicePdf(inv, selfOrg, customerOrg) {
   });
 
   // ---- Bill To / Ship To (still inside the header band) --------------------
+  // Rev2.4: Ship To is now populated from a dropdown of the customer
+  // organization's saved addresses (still free-text underneath, so it can be
+  // hand-edited/overridden) rather than typed from scratch every time.
   const by = Math.min(ly, cy) - 18;
   leftText('Bill To:', margin, by, 10, { bold: true });
   leftText('Ship To:', colGap, by, 10, { bold: true });
   let by1 = by - 13;
-  [inv.customer].concat(wrapLines((customerOrg && customerOrg.address) || '', colGap - margin - 10, 9))
+  const billAddr0 = (customerOrg && Array.isArray(customerOrg.addresses) && customerOrg.addresses[0]) ? customerOrg.addresses[0] : null;
+  const billAddrText = billAddr0 ? [billAddr0.line1, billAddr0.line2].filter(Boolean).join(', ') : '';
+  [inv.customer].concat(wrapLines(billAddrText, colGap - margin - 10, 9))
     .filter(Boolean).forEach(function (line) { leftText(line, margin, by1, 9); by1 -= 12; });
   let by2 = by - 13;
   const shipLines = wrapLines(inv.shipTo || '', pageWidth - margin - colGap - 10, 9);
@@ -2703,6 +2910,17 @@ async function buildDessimateInvoicePdf(inv, selfOrg, customerOrg) {
   rightText('Total', tableRight - totalValueWidth - 14, y, 10, { bold: true, color: brandBlue });
   rightText(totalStr, tableRight, y, 13, { bold: true, color: brandBlue });
 
+  // ---- Notes (Rev2.4) --------------------------------------------------------
+  if (inv.notes) {
+    y -= 30;
+    ensureSpace(24);
+    leftText('Notes:', margin, y, 10, { bold: true, color: labelGray }); y -= 13;
+    wrapLines(inv.notes, pageWidth - margin * 2, 9).forEach(function (line) {
+      ensureSpace(12);
+      leftText(line, margin, y, 9); y -= 12;
+    });
+  }
+
   // ---- Footer band: Ways to Pay + the standard procurement disclaimer -------
   // Guard against the footer band overlapping a long line-items table - push
   // to a fresh page if what's left above it is too tight.
@@ -2753,6 +2971,187 @@ async function handleGenerateDessimateInvoicePdf(env, origin, id, accessLevel, o
     return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
   }
   return pdfResponse(pdfBytes, 'Dessimate Invoice ' + clean.invoiceNumber + '.pdf', origin);
+}
+
+// Rev2.4: the Packing Slip - same letterhead system as the Invoice (logo,
+// light-blue header band) but no pricing and no "Ways to Pay" footer, per
+// the reference template. partsByNumber (lowercased Part Number -> sanitized
+// Part) supplies the Customer Part #/Manufacturer/Manufacturer Part #
+// columns, since that data lives on the Parts master, not the invoice line.
+async function buildPackingSlipPdf(inv, selfOrg, customerOrg, partsByNumber) {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const pageWidth = 612, pageHeight = 792;
+  const margin = 44;
+
+  const bandBg = rgb(0.925, 0.941, 0.976);
+  const brandBlue = rgb(0.106, 0.243, 0.706);
+  const navyDark = rgb(0.098, 0.145, 0.298);
+  const ink = rgb(0.1, 0.1, 0.12);
+  const lineGray = rgb(0.85, 0.86, 0.89);
+
+  let page = pdfDoc.addPage([pageWidth, pageHeight]);
+
+  let logoImg = null;
+  try { logoImg = await pdfDoc.embedJpg(base64ToBytes(DESSIMATE_LOGO_JPG_BASE64)); } catch (e) { logoImg = null; }
+
+  function rightText(str, rightEdgeX, yy, size, opts) {
+    opts = opts || {};
+    const f = opts.bold ? fontBold : font;
+    const s = str == null ? '' : String(str);
+    page.drawText(s, { x: rightEdgeX - f.widthOfTextAtSize(s, size), y: yy, size: size, font: f, color: opts.color || ink });
+  }
+  function leftText(str, x, yy, size, opts) {
+    opts = opts || {};
+    page.drawText(str == null ? '' : String(str), { x: x, y: yy, size: size, font: opts.bold ? fontBold : font, color: opts.color || ink });
+  }
+  function wrapLines(str, maxWidth, size) {
+    const words = (str || '').split(/\s+/).filter(Boolean);
+    const lines = [];
+    let cur = '';
+    words.forEach(function (w) {
+      const attempt = cur ? cur + ' ' + w : w;
+      if (cur && font.widthOfTextAtSize(attempt, size) > maxWidth) { lines.push(cur); cur = w; }
+      else cur = attempt;
+    });
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  const headerHeight = 240;
+  const colGap = margin + 230;
+
+  page.drawRectangle({ x: 0, y: pageHeight - headerHeight, width: pageWidth, height: headerHeight, color: bandBg });
+
+  const hy = pageHeight - 40;
+  let logoBottom = hy;
+  if (logoImg) {
+    const dims = logoImg.scaleToFit(108, 60);
+    page.drawImage(logoImg, { x: margin, y: hy - dims.height, width: dims.width, height: dims.height });
+    logoBottom = hy - dims.height;
+  } else {
+    leftText((selfOrg && selfOrg.name) || 'Dessimate LLC', margin, hy - 14, 16, { bold: true, color: brandBlue });
+    logoBottom = hy - 28;
+  }
+
+  let ry = hy;
+  rightText('PACKING SLIP', pageWidth - margin, ry, 22, { bold: true, color: brandBlue }); ry -= 26;
+  [
+    ['Invoice Number:', inv.invoiceNumber || ''],
+    ['Purchase Order Number:', (Array.isArray(inv.customerPoRefs) && inv.customerPoRefs.length) ? inv.customerPoRefs.join(', ') : (inv.customerPoRef || '')],
+    ['Date:', inv.invoiceDate || ''],
+    ['Ship Via:', inv.shipVia || ''],
+    ['Ship Date:', inv.shipDate || '']
+  ].forEach(function (row) {
+    rightText(row[0], pageWidth - margin - 100, ry, 10, { bold: true });
+    rightText(row[1], pageWidth - margin, ry, 10);
+    ry -= 15;
+  });
+
+  let ly = logoBottom - 16;
+  leftText((selfOrg && selfOrg.name) || 'Dessimate LLC', margin, ly, 10, { bold: true }); ly -= 13;
+  let selfAddrText = inv.fromAddress;
+  if (!selfAddrText) {
+    const a0 = (selfOrg && Array.isArray(selfOrg.addresses) && selfOrg.addresses[0]) ? selfOrg.addresses[0] : null;
+    selfAddrText = a0 ? [a0.line1, a0.line2].filter(Boolean).join(', ') : '';
+  }
+  wrapLines(selfAddrText, colGap - margin - 10, 9).forEach(function (line) { leftText(line, margin, ly, 9); ly -= 12; });
+
+  let cy = logoBottom - 16;
+  [selfOrg && selfOrg.salesEmail, selfOrg && selfOrg.phone, selfOrg && selfOrg.website].filter(Boolean).forEach(function (line) {
+    leftText(line, colGap, cy, 9); cy -= 12;
+  });
+
+  const by = Math.min(ly, cy) - 18;
+  leftText('Bill To:', margin, by, 10, { bold: true });
+  leftText('Ship To:', colGap, by, 10, { bold: true });
+  let by1 = by - 13;
+  const billAddr0 = (customerOrg && Array.isArray(customerOrg.addresses) && customerOrg.addresses[0]) ? customerOrg.addresses[0] : null;
+  const billAddrText = billAddr0 ? [billAddr0.line1, billAddr0.line2].filter(Boolean).join(', ') : '';
+  [inv.customer].concat(wrapLines(billAddrText, colGap - margin - 10, 9))
+    .filter(Boolean).forEach(function (line) { leftText(line, margin, by1, 9); by1 -= 12; });
+  let by2 = by - 13;
+  const shipLines = wrapLines(inv.shipTo || '', pageWidth - margin - colGap - 10, 9);
+  (shipLines.length ? shipLines : ['—']).forEach(function (line) { leftText(line, colGap, by2, 9); by2 -= 12; });
+
+  // ---- Line items table (no pricing - Customer/Manufacturer part info from
+  // the Parts master) -----------------------------------------------------
+  let y = pageHeight - headerHeight - 34;
+  const cols = [
+    { key: 'customerPart', label: 'Customer Part #', x: margin, w: 116 },
+    { key: 'mfgPart', label: 'Manufacturer Part #', x: margin + 120, w: 116 },
+    { key: 'customerName', label: 'Customer Part Name', x: margin + 240, w: 150 },
+    { key: 'manufacturer', label: 'Manufacturer', x: margin + 394, w: 90 },
+    { key: 'qty', label: 'Quantity', x: margin + 488, w: 52, right: true }
+  ];
+  const tableRight = margin + 540;
+
+  function ensureSpace(h) {
+    if (y - h < 40) {
+      page = pdfDoc.addPage([pageWidth, pageHeight]);
+      y = pageHeight - 40;
+    }
+  }
+
+  const headerRowH = 22;
+  page.drawRectangle({ x: margin, y: y - headerRowH + 7, width: tableRight - margin, height: headerRowH, color: navyDark });
+  cols.forEach(function (c) {
+    const lx = c.right ? c.x + c.w - fontBold.widthOfTextAtSize(c.label, 8) : c.x;
+    page.drawText(c.label, { x: lx, y: y - 7, size: 8, font: fontBold, color: rgb(1, 1, 1) });
+  });
+  y -= headerRowH + 6;
+
+  inv.lines.forEach(function (l) {
+    ensureSpace(20);
+    const part = partsByNumber[(l.partNumber || '').toLowerCase()] || null;
+    const row = {
+      customerPart: (part && part.customerPartNumber) || l.partNumber || '',
+      mfgPart: (part && part.manufacturerPartNumber) || '',
+      customerName: l.description || '',
+      manufacturer: (part && part.manufacturer) || '',
+      qty: l.qtyShipped
+    };
+    cols.forEach(function (c) {
+      const s = row[c.key] == null || row[c.key] === '' ? '—' : String(row[c.key]);
+      const vx = c.right ? c.x + c.w - font.widthOfTextAtSize(s, 9) : c.x;
+      page.drawText(s, { x: vx, y: y, size: 9, font: font, color: ink });
+    });
+    y -= 8;
+    page.drawLine({ start: { x: margin, y: y }, end: { x: tableRight, y: y }, thickness: 0.5, color: lineGray });
+    y -= 14;
+  });
+
+  return pdfDoc.save();
+}
+
+async function handleGenerateDessimatePackingSlipPdf(env, origin, id, accessLevel, organization) {
+  const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
+  const inv = state.items.find(function (o) { return o.id === id; });
+  if (!inv) return json({ message: 'Not found.' }, 404, origin);
+  const scoped = scopeDessimateInvoices([sanitizeDessimateInvoice(inv)], accessLevel, organization);
+  if (!scoped.length) return json({ message: 'Not found.' }, 404, origin);
+  const clean = scoped[0];
+
+  const orgState = await readJsonArrayFile(env, ORGANIZATIONS_FILE_PATH);
+  const allOrgs = orgState.items.map(sanitizeOrg);
+  const selfOrg = allOrgs.find(function (o) { return o.relationship === 'Self'; }) || null;
+  const customerOrg = allOrgs.find(function (o) { return o.relationship === 'Customer' && o.name === clean.customer; }) || null;
+
+  const partsState = await readJsonArrayFile(env, PARTS_FILE_PATH);
+  const partsByNumber = {};
+  partsState.items.map(sanitizePart).forEach(function (p) {
+    if (p.partNumber) partsByNumber[p.partNumber.toLowerCase()] = p;
+  });
+
+  let pdfBytes;
+  try {
+    pdfBytes = await buildPackingSlipPdf(clean, selfOrg, customerOrg, partsByNumber);
+  } catch (e) {
+    return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
+  }
+  return pdfResponse(pdfBytes, 'Dessimate Invoice ' + clean.invoiceNumber + ' Packing Slip.pdf', origin);
 }
 
 // ---- generic JSON-array-file read/write, with optimistic-concurrency retry -
@@ -3089,7 +3488,7 @@ async function requireAuth(request, env) {
   if (!m) return { ok: false, status: 401, message: 'Not logged in.' };
   const verified = await verifyToken(m[1], env.SESSION_SECRET);
   if (!verified) return { ok: false, status: 401, message: 'Your session has expired â€” please log in again.' };
-  return { ok: true, username: verified.u };
+  return { ok: true, username: verified.u, impersonatedBy: verified.ib || null };
 }
 
 // Resolves a signed-in username to their effective accessLevel. Checks the

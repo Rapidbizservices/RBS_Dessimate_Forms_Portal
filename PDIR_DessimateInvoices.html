@@ -131,6 +131,15 @@
 
   .modalSection{ margin:18px 0 4px; }
   .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
+  .modalSectionHint{ font-size:12px; color:var(--label); margin:2px 0 8px; }
+  .checkList{ max-height:150px; overflow-y:auto; border:1px solid var(--line); border-radius:6px;
+    padding:9px 10px; margin-top:5px; }
+  .checkList label{ display:flex; align-items:center; gap:8px; font-size:13px; font-weight:400;
+    color:var(--ink); margin:0 0 7px; cursor:pointer; }
+  .checkList label:last-child{ margin-bottom:0; }
+  .checkList input[type=checkbox]{ width:auto; margin:0; }
+  .checkList .emptyNote{ color:var(--label); font-style:italic; font-size:12.5px; }
+  textarea#f_notes{ resize:vertical; }
 
   /* Attachments (Rev2.1) - same standard attachment-list pattern used on the
      Parts page, minus the "(x / 20)" counter and the "up to 20 files" hint
@@ -230,6 +239,7 @@
       <a class="homeBtn" href="PDIR_Organizations.html">Organizations</a>
       <a class="homeBtn" href="APQP.html">APQP</a>
       <a class="homeBtn" href="Instructions.html">Instructions</a>
+      <button type="button" class="homeBtn" id="deletedInvBtn">Deleted Invoices</button>
       <button type="button" class="addBtn" id="addInvBtn">Add Dessimate Invoice</button>
     </div>
   </div>
@@ -290,10 +300,14 @@
   <div class="modalCard">
     <h2 id="modalTitle">Add Dessimate Invoice</h2>
     <p class="modalSub" id="modalSub">Invoice Number is assigned automatically when you save.</p>
+    <div class="rowActions" id="modalGenerateBtns" style="display:none; margin-bottom:14px;">
+      <button type="button" class="pdfBtn" id="generateInvoiceBtn">Generate Invoice</button>
+      <button type="button" class="pdfBtn" id="generatePackingSlipBtn">Generate Packing Slip</button>
+    </div>
     <form id="invForm">
       <div class="numberBanner" id="numberBanner">
         <div class="numberField">
-          <label for="f_invoiceNumber">Invoice Number <span style="font-weight:400;">(optional — leave blank to auto-assign)</span></label>
+          <label for="f_invoiceNumber">Invoice Number <span style="font-weight:400;">(leave blank to auto-assign — can be changed later too)</span></label>
           <div class="numberFieldRow">
             <input type="text" id="f_invoiceNumber" placeholder="assigned on Save">
             <button type="button" id="useSystemInvBtn">Use System Number</button>
@@ -307,36 +321,73 @@
         <label>Customer
           <select id="f_customer" required></select>
         </label>
-        <label>Customer PO Ref <span style="font-weight:400;">(optional)</span>
-          <select id="f_customerPoRef"></select>
+        <label>Dessimate PO <span style="font-weight:400;">(optional)</span>
+          <select id="f_dessimatePoRef"></select>
         </label>
       </div>
       <div class="modalGrid3">
-        <label>Ship To
-          <input type="text" id="f_shipTo">
-        </label>
         <label>Currency
           <input type="text" id="f_currency" placeholder="USD">
         </label>
         <label>Payment Terms
-          <input type="text" id="f_paymentTerms" placeholder="Net 30">
+          <select id="f_paymentTerms"></select>
         </label>
-      </div>
-      <div class="modalGrid3">
         <label>Incoterms
           <input type="text" id="f_incoterms" placeholder="FOB">
         </label>
+      </div>
+      <div class="modalGrid3">
         <label>Status
           <select id="f_status">
             <option value="Unpaid">Unpaid</option>
             <option value="Paid">Paid</option>
           </select>
         </label>
+        <label>Shipment Number <span style="font-weight:400;">(optional, from PDIR)</span>
+          <select id="f_shipmentNumber"></select>
+        </label>
         <span></span>
       </div>
 
       <div class="modalSection">
+        <h3>Customer PO(s) <span style="font-weight:400;">(optional — one invoice can bill against more than one)</span></h3>
+        <div class="checkList" id="f_customerPoRefs_list"></div>
+      </div>
+
+      <div class="modalSection">
+        <h3>From (Dessimate address)</h3>
+        <p class="modalSectionHint">Defaults to Dessimate's first saved address — pick a different one, or edit the text directly.</p>
+        <select id="f_fromAddressSelect"></select>
+        <input type="text" id="f_fromAddress" style="margin-top:8px;">
+      </div>
+      <div class="modalSection">
+        <h3>Ship To</h3>
+        <p class="modalSectionHint">Pick one of the customer's saved addresses, or type a different one.</p>
+        <select id="f_shipToSelect"></select>
+        <input type="text" id="f_shipTo" style="margin-top:8px;">
+      </div>
+
+      <div class="modalSection">
+        <h3>Packing Slip fields <span style="font-weight:400;">(optional)</span></h3>
+        <div class="modalGrid3" style="margin-top:0;">
+          <label>Ship Via
+            <input type="text" id="f_shipVia" placeholder="e.g. FedEx">
+          </label>
+          <label>Ship Date
+            <input type="date" id="f_shipDate">
+          </label>
+          <span></span>
+        </div>
+      </div>
+
+      <div class="modalSection">
+        <h3>Notes / Comments <span style="font-weight:400;">(optional)</span></h3>
+        <textarea id="f_notes" rows="3" style="display:block; width:100%; font-family:inherit; font-size:14px; padding:9px 10px; border:1px solid var(--line); border-radius:6px;"></textarea>
+      </div>
+
+      <div class="modalSection">
         <h3>Line Items</h3>
+        <datalist id="partsDatalist_inv"></datalist>
         <div class="linesWrap">
           <table class="linesTable">
             <thead>
@@ -375,6 +426,23 @@
         <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
       </div>
     </form>
+  </div>
+</div>
+
+<div class="modalOverlay" id="deletedModalOverlay">
+  <div class="modalCard" style="max-width:800px;">
+    <h2>Deleted Invoices</h2>
+    <p class="modalSub">Invoice Number is never reused, so a deleted invoice stays here for the record. Restore brings it back onto the main list.</p>
+    <div id="deletedState" class="state">Loading&hellip;</div>
+    <table class="poTable" id="deletedTable" style="display:none;">
+      <thead>
+        <tr><th>Invoice #</th><th>Customer</th><th>Invoice Date</th><th>Total</th><th>Deleted At</th><th></th></tr>
+      </thead>
+      <tbody id="deletedTableBody"></tbody>
+    </table>
+    <div class="modalBtns">
+      <button type="button" class="cancelBtn" id="deletedCloseBtn">Close</button>
+    </div>
   </div>
 </div>
 
@@ -756,6 +824,24 @@
       if (btn) { btn.disabled = false; btn.textContent = originalText; }
     }
   }
+  // Rev2.4: the Packing Slip - a second PDF generated from the same record.
+  async function viewGeneratedPackingSlip(id, invoiceNumber, btn){
+    var originalText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+    try {
+      var res = await apiFetch('dessimate-invoices/' + encodeURIComponent(id) + '/packing-slip');
+      if (!res.ok) {
+        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
+        throw new Error(msg || ('HTTP ' + res.status));
+      }
+      var buf = await res.arrayBuffer();
+      openPdfInViewer('Dessimate Invoice ' + invoiceNumber + ' Packing Slip.pdf', new Uint8Array(buf));
+    } catch (err) {
+      alert('Could not generate the packing slip (' + (err && err.message ? err.message : err) + ').');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+    }
+  }
   // -----------------------------------------------------------------------------
 
   function escapeHtml(s){
@@ -768,10 +854,12 @@
     return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  // ---- Customer / Parts / Customer PO dropdowns -------------------------------
+  // ---- Customer / Parts / Customer PO / Dessimate PO / PDIR dropdowns --------
   var lastOrgs = [];
   var lastParts = [];
   var lastCustomerPos = [];
+  var lastDessimatePos = [];
+  var lastPdirIndex = [];
   async function loadDropdownData(){
     try {
       var orgRes = await apiFetch('organizations');
@@ -788,7 +876,18 @@
       var cpoData = cpoRes.ok ? await cpoRes.json() : { customerPos: [] };
       lastCustomerPos = Array.isArray(cpoData.customerPos) ? cpoData.customerPos : [];
     } catch (e) { console.error('Could not load Customer POs', e); lastCustomerPos = []; }
+    try {
+      var dpoRes = await apiFetch('dessimate-pos');
+      var dpoData = dpoRes.ok ? await dpoRes.json() : { dessimatePos: [] };
+      lastDessimatePos = Array.isArray(dpoData.dessimatePos) ? dpoData.dessimatePos : [];
+    } catch (e) { console.error('Could not load Dessimate POs', e); lastDessimatePos = []; }
+    try {
+      var pdirRes = await apiFetch('pdir-index');
+      var pdirData = pdirRes.ok ? await pdirRes.json() : { pdirIndex: [] };
+      lastPdirIndex = Array.isArray(pdirData.pdirIndex) ? pdirData.pdirIndex : [];
+    } catch (e) { console.error('Could not load PDIR index', e); lastPdirIndex = []; }
   }
+  function selfOrg(){ return lastOrgs.find(function(o){ return o.relationship === 'Self'; }) || null; }
   function customerOrgOptions(currentValue){
     var matching = lastOrgs.filter(function(o){ return o.relationship === 'Customer'; });
     var html = '<option value="">— Select Customer —</option>' + matching.map(function(o){
@@ -800,26 +899,68 @@
     }
     return html;
   }
-  function partOptions(currentValue){
-    var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
-      var sel = (p.partNumber === currentValue) ? ' selected' : '';
-      return '<option value="' + escapeHtml(p.partNumber) + '"' + sel + '>' + escapeHtml(p.partNumber) + '</option>';
+  // Rev2.4: one invoice can bill against more than one Customer PO now - a
+  // checklist (same pattern as Related Dessimate POs) instead of a dropdown.
+  function customerPoRefsChecklistOptions(currentValues){
+    if (!lastCustomerPos.length) return '<div class="emptyNote">No Customer POs on file yet.</div>';
+    return lastCustomerPos.map(function(p){
+      var checked = (currentValues || []).indexOf(p.poNumber) !== -1 ? ' checked' : '';
+      var label = (p.poNumber || '') + (p.customer ? ' — ' + p.customer : '');
+      return '<label><input type="checkbox" value="' + escapeHtml(p.poNumber) + '"' + checked + '> ' + escapeHtml(label) + '</label>';
     }).join('');
-    if (currentValue && !lastParts.some(function(p){ return p.partNumber === currentValue; })) {
-      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Parts list)</option>';
+  }
+  function getSelectedCustomerPoRefs(){
+    return Array.prototype.slice.call(document.querySelectorAll('#f_customerPoRefs_list input[type=checkbox]:checked'))
+      .map(function(el){ return el.value; });
+  }
+  function dessimatePoRefOptions(currentValue){
+    var html = '<option value="">— None —</option>' + lastDessimatePos.map(function(p){
+      var label = (p.poNumber || '') + (p.supplier ? ' — ' + p.supplier : '');
+      var sel = (String(p.poNumber) === String(currentValue)) ? ' selected' : '';
+      return '<option value="' + escapeHtml(p.poNumber) + '"' + sel + '>' + escapeHtml(label) + '</option>';
+    }).join('');
+    if (currentValue && !lastDessimatePos.some(function(p){ return String(p.poNumber) === String(currentValue); })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Dessimate POs list)</option>';
     }
     return html;
   }
-  function customerPoRefOptions(currentValue){
-    var html = '<option value="">— None —</option>' + lastCustomerPos.map(function(p){
-      var label = (p.poNumber || '') + (p.customer ? ' — ' + p.customer : '');
-      var sel = (p.poNumber === currentValue) ? ' selected' : '';
-      return '<option value="' + escapeHtml(p.poNumber) + '"' + sel + '>' + escapeHtml(label) + '</option>';
+  function shipmentNumberOptions(currentValue){
+    var seen = {}, nums = [];
+    lastPdirIndex.forEach(function(e){
+      if (e.shipmentNumber && !seen[e.shipmentNumber]) { seen[e.shipmentNumber] = true; nums.push(e.shipmentNumber); }
+    });
+    nums.sort();
+    var html = '<option value="">— None —</option>' + nums.map(function(n){
+      var sel = (n === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(n) + '"' + sel + '>' + escapeHtml(n) + '</option>';
     }).join('');
-    if (currentValue && !lastCustomerPos.some(function(p){ return p.poNumber === currentValue; })) {
-      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Customer POs list)</option>';
+    if (currentValue && nums.indexOf(currentValue) === -1) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in PDIR)</option>';
     }
     return html;
+  }
+  function paymentTermsOptions(currentValue){
+    var terms = (selfOrg() && selfOrg().paymentTerms) || [];
+    var html = '<option value="">— Select —</option>' + terms.map(function(t){
+      var sel = (t === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(t) + '"' + sel + '>' + escapeHtml(t) + '</option>';
+    }).join('');
+    if (currentValue && terms.indexOf(currentValue) === -1) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Payment Terms list)</option>';
+    }
+    return html;
+  }
+  function addressLine(a){ return a ? [a.line1, a.line2].filter(Boolean).join(', ') : ''; }
+  // Shared by the "From" (Self org) and "Ship To" (Customer org) address
+  // dropdowns - selecting an option fills the paired free-text input, which
+  // stays editable afterward (Rev2.4).
+  function orgAddressOptions(org){
+    var addrs = (org && org.addresses) || [];
+    if (!addrs.length) return '<option value="">— No saved addresses —</option>';
+    return '<option value="">— Pick a saved address —</option>' + addrs.map(function(a){
+      var text = addressLine(a);
+      return '<option value="' + escapeHtml(text) + '">' + escapeHtml((a.label ? a.label + ': ' : '') + text) + '</option>';
+    }).join('');
   }
   // -----------------------------------------------------------------------------
 
@@ -871,6 +1012,7 @@
         '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(inv.id) + '" data-invnum="' + escapeHtml(inv.invoiceNumber) + '">View PDF</button></td>' +
         '<td><div class="rowActions">' +
           '<button type="button" class="editBtn" data-edit="' + escapeHtml(inv.id) + '">Edit</button>' +
+          '<button type="button" class="editBtn" data-duplicate="' + escapeHtml(inv.id) + '">Duplicate</button>' +
           '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(inv.id) + '">Delete</button>' +
         '</div></td>' +
         '</tr>';
@@ -878,6 +1020,11 @@
 
     bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
       btn.addEventListener('click', function(){ requireAuthThen(function(){ openEditModal(this.getAttribute('data-edit')); }.bind(this)); });
+    });
+    bodyEl.querySelectorAll('[data-duplicate]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        requireAuthThen(function(){ openDuplicateModal(this.getAttribute('data-duplicate')); }.bind(this));
+      });
     });
     bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
       btn.addEventListener('click', function(){ deleteInvoice(this.getAttribute('data-delete')); });
@@ -912,12 +1059,20 @@
     return { partNumber: '', description: '', revision: '', uom: '', qtyShipped: '', unitPrice: '' };
   }
 
+  function renderPartsDatalist(){
+    var dl = document.getElementById('partsDatalist_inv');
+    if (dl) dl.innerHTML = lastParts.map(function(p){ return '<option value="' + escapeHtml(p.partNumber) + '">'; }).join('');
+  }
   function renderLines(){
     var bodyEl = document.getElementById('linesTableBody');
+    renderPartsDatalist();
     bodyEl.innerHTML = lineRows.map(function(row, idx){
       var ext = (Number(row.qtyShipped) || 0) * (Number(row.unitPrice) || 0);
       return '<tr data-line-idx="' + idx + '">' +
-        '<td><select data-line-field="partNumber">' + partOptions(row.partNumber) + '</select></td>' +
+        // Rev2.4: free-typed now (was a dropdown-only select), matching
+        // Description - a datalist still offers Parts-master suggestions,
+        // and picking/typing an exact match still auto-fills Description.
+        '<td><input type="text" list="partsDatalist_inv" data-line-field="partNumber" value="' + escapeHtml(row.partNumber) + '"></td>' +
         '<td><input type="text" data-line-field="description" value="' + escapeHtml(row.description) + '"></td>' +
         '<td><input type="text" data-line-field="revision" value="' + escapeHtml(row.revision) + '"></td>' +
         '<td><input type="text" data-line-field="uom" value="' + escapeHtml(row.uom) + '"></td>' +
@@ -1006,10 +1161,18 @@
     document.getElementById('attachError').textContent = '';
     lineRows = [newLineRow()];
     document.getElementById('f_customer').innerHTML = customerOrgOptions('');
-    document.getElementById('f_customerPoRef').innerHTML = customerPoRefOptions('');
+    document.getElementById('f_customerPoRefs_list').innerHTML = customerPoRefsChecklistOptions([]);
+    document.getElementById('f_dessimatePoRef').innerHTML = dessimatePoRefOptions('');
+    document.getElementById('f_shipmentNumber').innerHTML = shipmentNumberOptions('');
+    document.getElementById('f_paymentTerms').innerHTML = paymentTermsOptions('');
+    document.getElementById('f_fromAddressSelect').innerHTML = orgAddressOptions(selfOrg());
+    document.getElementById('f_fromAddress').value = addressLine(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
+    document.getElementById('f_shipToSelect').innerHTML = orgAddressOptions(null);
+    document.getElementById('f_shipTo').value = '';
     document.getElementById('f_status').value = 'Unpaid';
     document.getElementById('f_invoiceNumber').value = '';
     setNumberFieldEditable(true);
+    document.getElementById('modalGenerateBtns').style.display = 'none';
     attachmentsState = [];
     renderAttachmentsList();
     renderLines();
@@ -1022,6 +1185,19 @@
     document.getElementById('modalSub').textContent = 'Invoice Number is optional - leave blank to assign automatically when you save, or type your own.';
     document.getElementById('invModalOverlay').classList.add('open');
   }
+  // Rev2.4: customerOrg's addresses feed the Ship To dropdown, refreshed
+  // whenever the Customer selection changes (Add or Edit).
+  document.getElementById('f_customer').addEventListener('change', function(){
+    var selectedName = this.value;
+    var org = lastOrgs.find(function(o){ return o.name === selectedName; });
+    document.getElementById('f_shipToSelect').innerHTML = orgAddressOptions(org);
+  });
+  document.getElementById('f_shipToSelect').addEventListener('change', function(){
+    if (this.value) document.getElementById('f_shipTo').value = this.value;
+  });
+  document.getElementById('f_fromAddressSelect').addEventListener('change', function(){
+    if (this.value) document.getElementById('f_fromAddress').value = this.value;
+  });
   function openEditModal(id){
     var inv = lastInvoices.find(function(x){ return x.id === id; });
     if (!inv) return;
@@ -1036,17 +1212,56 @@
         qtyShipped: l.qtyShipped, unitPrice: l.unitPrice };
     }) : [newLineRow()];
     document.getElementById('modalTitle').textContent = 'Edit Dessimate Invoice';
-    document.getElementById('modalSub').textContent = 'Invoice Number was assigned when this invoice was created and can\'t change.';
+    document.getElementById('modalSub').textContent = 'Invoice Number was assigned when this invoice was created — you can still change it below if you need to.';
     document.getElementById('f_invoiceNumber').value = inv.invoiceNumber;
-    setNumberFieldEditable(false);
+    setNumberFieldEditable(true);
     document.getElementById('f_invoiceDate').value = inv.invoiceDate || '';
     document.getElementById('f_customer').innerHTML = customerOrgOptions(inv.customer || '');
-    document.getElementById('f_customerPoRef').innerHTML = customerPoRefOptions(inv.customerPoRef || '');
+    document.getElementById('f_customerPoRefs_list').innerHTML = customerPoRefsChecklistOptions(inv.customerPoRefs || []);
+    document.getElementById('f_dessimatePoRef').innerHTML = dessimatePoRefOptions(inv.dessimatePoRef || '');
+    document.getElementById('f_shipmentNumber').innerHTML = shipmentNumberOptions(inv.shipmentNumber || '');
+    document.getElementById('f_paymentTerms').innerHTML = paymentTermsOptions(inv.paymentTerms || '');
+    var custOrg = lastOrgs.find(function(o){ return o.name === inv.customer; });
+    document.getElementById('f_fromAddressSelect').innerHTML = orgAddressOptions(selfOrg());
+    document.getElementById('f_fromAddress').value = inv.fromAddress || addressLine(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
+    document.getElementById('f_shipToSelect').innerHTML = orgAddressOptions(custOrg);
     document.getElementById('f_shipTo').value = inv.shipTo || '';
     document.getElementById('f_currency').value = inv.currency || '';
-    document.getElementById('f_paymentTerms').value = inv.paymentTerms || '';
     document.getElementById('f_incoterms').value = inv.incoterms || '';
+    document.getElementById('f_notes').value = inv.notes || '';
+    document.getElementById('f_shipVia').value = inv.shipVia || '';
+    document.getElementById('f_shipDate').value = inv.shipDate || '';
     document.getElementById('f_status').value = inv.status || 'Unpaid';
+    document.getElementById('modalGenerateBtns').style.display = 'flex';
+    renderLines();
+    document.getElementById('invModalOverlay').classList.add('open');
+  }
+  // Rev2.4: Duplicate - opens the Add modal (a brand new invoice, its own
+  // fresh Invoice Number) pre-filled from an existing one's data. Attachments
+  // aren't carried over - those are files that belong to the original record.
+  function openDuplicateModal(id){
+    var src = lastInvoices.find(function(x){ return x.id === id; });
+    if (!src) return;
+    editingId = null;
+    resetForm();
+    document.getElementById('modalTitle').textContent = 'Add Dessimate Invoice (Duplicated)';
+    document.getElementById('modalSub').textContent = 'Pre-filled from Invoice ' + src.invoiceNumber + ' - Invoice Number is optional, leave blank to assign automatically when you save.';
+    lineRows = (src.lines && src.lines.length) ? src.lines.map(function(l){
+      return { partNumber: l.partNumber, description: l.description, revision: l.revision, uom: l.uom,
+        qtyShipped: l.qtyShipped, unitPrice: l.unitPrice };
+    }) : [newLineRow()];
+    document.getElementById('f_customer').innerHTML = customerOrgOptions(src.customer || '');
+    document.getElementById('f_customerPoRefs_list').innerHTML = customerPoRefsChecklistOptions(src.customerPoRefs || []);
+    document.getElementById('f_dessimatePoRef').innerHTML = dessimatePoRefOptions(src.dessimatePoRef || '');
+    document.getElementById('f_shipmentNumber').innerHTML = shipmentNumberOptions(src.shipmentNumber || '');
+    document.getElementById('f_paymentTerms').innerHTML = paymentTermsOptions(src.paymentTerms || '');
+    var custOrg = lastOrgs.find(function(o){ return o.name === src.customer; });
+    document.getElementById('f_shipToSelect').innerHTML = orgAddressOptions(custOrg);
+    document.getElementById('f_shipTo').value = src.shipTo || '';
+    document.getElementById('f_fromAddress').value = src.fromAddress || addressLine(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
+    document.getElementById('f_currency').value = src.currency || '';
+    document.getElementById('f_incoterms').value = src.incoterms || '';
+    document.getElementById('f_notes').value = src.notes || '';
     renderLines();
     document.getElementById('invModalOverlay').classList.add('open');
   }
@@ -1057,6 +1272,12 @@
   document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
   document.getElementById('invModalOverlay').addEventListener('click', function(e){
     if (e.target.id === 'invModalOverlay') closeModal();
+  });
+  document.getElementById('generateInvoiceBtn').addEventListener('click', function(){
+    if (editingId) viewGeneratedPdf(editingId, document.getElementById('f_invoiceNumber').value, this);
+  });
+  document.getElementById('generatePackingSlipBtn').addEventListener('click', function(){
+    if (editingId) viewGeneratedPackingSlip(editingId, document.getElementById('f_invoiceNumber').value, this);
   });
 
   document.getElementById('invForm').addEventListener('submit', async function(e){
@@ -1069,16 +1290,26 @@
       invoiceNumber: document.getElementById('f_invoiceNumber').value.trim(),
       invoiceDate: document.getElementById('f_invoiceDate').value,
       customer: document.getElementById('f_customer').value,
-      customerPoRef: document.getElementById('f_customerPoRef').value,
+      customerPoRefs: getSelectedCustomerPoRefs(),
+      dessimatePoRef: document.getElementById('f_dessimatePoRef').value,
+      shipmentNumber: document.getElementById('f_shipmentNumber').value,
       shipTo: document.getElementById('f_shipTo').value.trim(),
+      fromAddress: document.getElementById('f_fromAddress').value.trim(),
       currency: document.getElementById('f_currency').value.trim(),
-      paymentTerms: document.getElementById('f_paymentTerms').value.trim(),
+      paymentTerms: document.getElementById('f_paymentTerms').value,
       incoterms: document.getElementById('f_incoterms').value.trim(),
+      notes: document.getElementById('f_notes').value.trim(),
+      shipVia: document.getElementById('f_shipVia').value.trim(),
+      shipDate: document.getElementById('f_shipDate').value,
       status: document.getElementById('f_status').value,
       lines: lineRows.filter(function(r){ return r.partNumber; })
     };
     if (!baseFields.customer) { errEl.textContent = 'Select a Customer.'; return; }
     if (!baseFields.lines.length) { errEl.textContent = 'Add at least one line item with a Part Number.'; return; }
+    // Invoice Number is editable now (Rev2.4), but still required once an
+    // invoice exists - only creating a brand new one can leave it blank
+    // (auto-assign).
+    if (editingId && !baseFields.invoiceNumber) { errEl.textContent = 'Invoice Number is required.'; return; }
 
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
@@ -1088,12 +1319,16 @@
         // yet, since attachment file paths are keyed by invoice id) to get
         // an id, then upload any pending files and follow up with a PUT that
         // sets everything, attachments included - same two-step pattern
-        // Parts.html uses. invoiceNumber is server-assigned/immutable, so
-        // re-sending baseFields on that follow-up PUT can't clobber it.
+        // Parts.html uses.
         var createRes = await apiFetch('dessimate-invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
         var createData = {}; try { createData = await createRes.json(); } catch(e){}
         if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
         invoiceId = createData.id;
+        // The server just assigned (or accepted) the real Invoice Number -
+        // carry it into the follow-up PUT below so that request doesn't
+        // send a blank one (which would now fail: Invoice Number is
+        // editable, but never blank, on an existing invoice).
+        baseFields.invoiceNumber = createData.invoiceNumber;
       }
 
       var attachmentsPayload = [];
@@ -1122,6 +1357,65 @@
     } finally {
       saveBtn.disabled = false; saveBtn.textContent = 'Save';
     }
+  });
+  // -----------------------------------------------------------------------------
+
+  // ---- Deleted Invoices (Rev2.4) -----------------------------------------------
+  async function loadDeletedInvoices(){
+    var stateEl = document.getElementById('deletedState');
+    var tableEl = document.getElementById('deletedTable');
+    stateEl.style.display = 'block'; stateEl.textContent = 'Loading…'; tableEl.style.display = 'none';
+    try {
+      var res = await apiFetch('dessimate-invoices/deleted');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      var deleted = Array.isArray(data.dessimateInvoices) ? data.dessimateInvoices : [];
+      if (!deleted.length) {
+        stateEl.textContent = 'No deleted invoices.';
+        return;
+      }
+      stateEl.style.display = 'none'; tableEl.style.display = 'table';
+      var sorted = deleted.slice().sort(function(a, b){ return (b.invoiceNumber || 0) - (a.invoiceNumber || 0); });
+      document.getElementById('deletedTableBody').innerHTML = sorted.map(function(inv){
+        return '<tr>' +
+          '<td class="poNumber">' + escapeHtml(inv.invoiceNumber) + '</td>' +
+          '<td>' + escapeHtml(inv.customer) + '</td>' +
+          '<td>' + escapeHtml(inv.invoiceDate) + '</td>' +
+          '<td class="moneyCell">' + escapeHtml(inv.currency || '') + ' ' + money(inv.invoiceTotal) + '</td>' +
+          '<td>' + escapeHtml((inv.deletedAt || '').slice(0, 10)) + '</td>' +
+          '<td><button type="button" class="editBtn" data-restore="' + escapeHtml(inv.id) + '">Restore</button></td>' +
+          '</tr>';
+      }).join('');
+      document.getElementById('deletedTableBody').querySelectorAll('[data-restore]').forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          btn.disabled = true; btn.textContent = 'Restoring…';
+          try {
+            var res2 = await apiFetch('dessimate-invoices/' + encodeURIComponent(btn.getAttribute('data-restore')) + '/restore', { method: 'POST' });
+            if (!res2.ok) { var d = {}; try { d = await res2.json(); } catch(e){} throw new Error(d.message || ('HTTP ' + res2.status)); }
+            await loadDeletedInvoices();
+            await loadInvoices();
+          } catch (err) {
+            alert('Could not restore this invoice (' + (err && err.message ? err.message : err) + ').');
+            btn.disabled = false; btn.textContent = 'Restore';
+          }
+        });
+      });
+    } catch (err) {
+      stateEl.style.display = 'block';
+      stateEl.textContent = 'Could not load deleted invoices (' + (err && err.message ? err.message : err) + ').';
+    }
+  }
+  document.getElementById('deletedInvBtn').addEventListener('click', function(){
+    requireAuthThen(async function(){
+      document.getElementById('deletedModalOverlay').classList.add('open');
+      await loadDeletedInvoices();
+    });
+  });
+  document.getElementById('deletedCloseBtn').addEventListener('click', function(){
+    document.getElementById('deletedModalOverlay').classList.remove('open');
+  });
+  document.getElementById('deletedModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'deletedModalOverlay') document.getElementById('deletedModalOverlay').classList.remove('open');
   });
   // -----------------------------------------------------------------------------
 

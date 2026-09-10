@@ -290,6 +290,14 @@
           <input type="text" id="f_customerPartNumber">
         </label>
       </div>
+      <div class="modalGrid">
+        <label>Manufacturer
+          <input type="text" id="f_manufacturer">
+        </label>
+        <label>Manufacturer Part Number
+          <input type="text" id="f_manufacturerPartNumber">
+        </label>
+      </div>
       <label>Description
         <input type="text" id="f_name">
       </label>
@@ -1006,6 +1014,8 @@
     document.getElementById('modalSub').textContent = 'Update this part\'s details.';
     document.getElementById('f_partNumber').value = p.partNumber || '';
     document.getElementById('f_customerPartNumber').value = p.customerPartNumber || '';
+    document.getElementById('f_manufacturer').value = p.manufacturer || '';
+    document.getElementById('f_manufacturerPartNumber').value = p.manufacturerPartNumber || '';
     document.getElementById('f_name').value = p.name || '';
     document.getElementById('f_revision').value = p.revision || '';
     document.getElementById('f_status').value = p.status || 'Active';
@@ -1033,6 +1043,8 @@
     var baseFields = {
       partNumber: document.getElementById('f_partNumber').value.trim(),
       customerPartNumber: document.getElementById('f_customerPartNumber').value.trim(),
+      manufacturer: document.getElementById('f_manufacturer').value.trim(),
+      manufacturerPartNumber: document.getElementById('f_manufacturerPartNumber').value.trim(),
       name: document.getElementById('f_name').value.trim(),
       revision: document.getElementById('f_revision').value.trim(),
       status: document.getElementById('f_status').value,

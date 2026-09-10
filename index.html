@@ -169,6 +169,10 @@
         <a class="openTabLink" id="openTabLink" href="#" target="_blank" rel="noopener" style="display:none;">Open in new tab &#8599;</a>
       </div>
     </div>
+    <div id="impersonationBanner" style="display:none; align-items:center; justify-content:space-between; gap:12px; background:#fdf1de; border-bottom:1px solid #eecf9e; color:#8a5a10; padding:10px 18px; font-size:13px; font-weight:600;">
+      <span data-imp-label>Viewing as someone else</span>
+      <button type="button" id="returnToMyAccountBtn" style="font-family:inherit; font-size:12.5px; font-weight:700; color:#fff; background:#8a5a10; border:none; border-radius:6px; padding:7px 12px; cursor:pointer;">Return to my account</button>
+    </div>
     <div class="content" id="content">
       <div class="welcomeState" id="welcomeState">
         <img src="logo.jpg" alt="">
@@ -228,6 +232,34 @@
   function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
   function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
 
+  // Rev2.4: "Log in as" (Users page) stashes the Super Admin's own session
+  // under this key before swapping in the impersonated one - this banner is
+  // the way back. See handleAdminImpersonate in the Worker.
+  var IMPERSONATOR_SESSION_KEY = 'dessimate_impersonator_session';
+  function renderImpersonationBanner(){
+    var bannerEl = document.getElementById('impersonationBanner');
+    if (!bannerEl) return;
+    var stashed = null;
+    try { stashed = JSON.parse(localStorage.getItem(IMPERSONATOR_SESSION_KEY) || 'null'); } catch(e){}
+    var session = getSession();
+    if (stashed && session) {
+      bannerEl.style.display = 'flex';
+      bannerEl.querySelector('[data-imp-label]').textContent = 'Viewing as ' + session.username + ' (impersonated)';
+    } else {
+      bannerEl.style.display = 'none';
+    }
+  }
+  var returnBtn = document.getElementById('returnToMyAccountBtn');
+  if (returnBtn) returnBtn.addEventListener('click', function(){
+    var stashed = null;
+    try { stashed = JSON.parse(localStorage.getItem(IMPERSONATOR_SESSION_KEY) || 'null'); } catch(e){}
+    if (stashed) {
+      setSession(stashed);
+      try { localStorage.removeItem(IMPERSONATOR_SESSION_KEY); } catch(e){}
+      window.location.reload();
+    }
+  });
+
   var pendingAfterAuth = null;
 
   function refreshSideUser(){
@@ -235,6 +267,7 @@
     var session = getSession();
     if (session) { el.innerHTML = 'Signed in as<strong>' + session.username + '</strong>'; }
     else { el.textContent = 'Not signed in'; }
+    renderImpersonationBanner();
   }
   function showAuthOverlay(){
     document.getElementById('authOverlay').classList.add('open');
