@@ -2241,109 +2241,246 @@ async function handleDeleteDessimatePo(env, origin, id) {
 
 function money2(n) { const v = Number(n) || 0; return v.toFixed(2); }
 
-async function buildDessimatePoPdf(po, selfOrg, stampBytes) {
+// Rev2.5: redesigned to match the customer-supplied reference template -
+// light-blue letterhead band (logo + "PURCHASE ORDER" title + PO identity
+// block + Vendor/Bill To/Ship To three-up), a navy line-items table with
+// zebra striping, and a footer band carrying Terms & Conditions, a Buyer
+// bar, an Approver Signature box (the same stamp image the old layout drew)
+// and a PO Total box - same color palette/typography as
+// buildDessimateInvoicePdf/buildPackingSlipPdf so all three PDFs read as one
+// family. supplierOrg is the Organization record for po.supplier (looked up
+// by name/relationship in handleGenerateDessimatePoPdf) - its saved address
+// fills the "Vendor" box the same way customerOrg fills the Invoice's "Ship
+// To". The reference has a separate "Due Date" from "Terms" that this
+// system has no field for; left blank, same precedent as the Invoice PDF's
+// own blank "Due Date:" row.
+async function buildDessimatePoPdf(po, selfOrg, supplierOrg, stampBytes) {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   const pageWidth = 612, pageHeight = 792; // US Letter
-  const margin = 40;
+  const margin = 44;
+
+  const bandBg = rgb(0.925, 0.941, 0.976);
+  const brandBlue = rgb(0.106, 0.243, 0.706);
+  const navyDark = rgb(0.098, 0.145, 0.298);
+  const ink = rgb(0.1, 0.1, 0.12);
+  const labelGray = rgb(0.42, 0.44, 0.49);
+  const lineGray = rgb(0.85, 0.86, 0.89);
+  const zebra = rgb(0.965, 0.97, 0.985);
+
   let page = pdfDoc.addPage([pageWidth, pageHeight]);
-  let y = pageHeight - margin;
+
+  let logoImg = null;
+  try { logoImg = await pdfDoc.embedJpg(base64ToBytes(DESSIMATE_LOGO_JPG_BASE64)); } catch (e) { logoImg = null; }
+
+  function rightText(str, rightEdgeX, yy, size, opts) {
+    opts = opts || {};
+    const f = opts.bold ? fontBold : font;
+    const s = str == null ? '' : String(str);
+    page.drawText(s, { x: rightEdgeX - f.widthOfTextAtSize(s, size), y: yy, size: size, font: f, color: opts.color || ink });
+  }
+  function leftText(str, x, yy, size, opts) {
+    opts = opts || {};
+    page.drawText(str == null ? '' : String(str), { x: x, y: yy, size: size, font: opts.bold ? fontBold : font, color: opts.color || ink });
+  }
+  function wrapLines(str, maxWidth, size, useFont) {
+    const f = useFont || font;
+    const words = (str || '').split(/\s+/).filter(Boolean);
+    const lines = [];
+    let cur = '';
+    words.forEach(function (w) {
+      const attempt = cur ? cur + ' ' + w : w;
+      if (cur && f.widthOfTextAtSize(attempt, size) > maxWidth) { lines.push(cur); cur = w; }
+      else cur = attempt;
+    });
+    if (cur) lines.push(cur);
+    return lines;
+  }
+  function moneyCommas(n) {
+    const parts = money2(n).split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return parts.join('.');
+  }
+  // Letter-spaced caption, matching the reference title's tracked look.
+  function spaced(str) { return String(str).split('').join(' '); }
+
+  const headerHeight = 270;
+  const footerHeight = 190;
+
+  page.drawRectangle({ x: 0, y: pageHeight - headerHeight, width: pageWidth, height: headerHeight, color: bandBg });
+
+  // ---- Logo (left) + "PURCHASE ORDER" title (right) -------------------------
+  const hy = pageHeight - 40;
+  let logoBottom = hy;
+  if (logoImg) {
+    const dims = logoImg.scaleToFit(108, 60);
+    page.drawImage(logoImg, { x: margin, y: hy - dims.height, width: dims.width, height: dims.height });
+    logoBottom = hy - dims.height;
+  } else {
+    leftText((selfOrg && selfOrg.name) || 'Dessimate LLC', margin, hy - 14, 16, { bold: true, color: brandBlue });
+    logoBottom = hy - 28;
+  }
+  rightText(spaced('PURCHASE ORDER'), pageWidth - margin, hy - 16, 21, { bold: true, color: brandBlue });
+
+  // ---- Self org name/address (left) + contact (center) + PO identity (right) ----
+  let ly = logoBottom - 20;
+  leftText((selfOrg && selfOrg.name) || 'Dessimate LLC', margin, ly, 10, { bold: true }); ly -= 13;
+  const selfAddr0 = (selfOrg && Array.isArray(selfOrg.addresses) && selfOrg.addresses[0]) ? selfOrg.addresses[0] : null;
+  [selfAddr0 && selfAddr0.line1, selfAddr0 && selfAddr0.line2].filter(Boolean).forEach(function (line) {
+    leftText(line, margin, ly, 9); ly -= 12;
+  });
+
+  const contactX = margin + 190;
+  let cy = logoBottom - 20;
+  [selfOrg && selfOrg.purchasingEmail, selfOrg && selfOrg.phone, selfOrg && selfOrg.website].filter(Boolean).forEach(function (line) {
+    leftText(line, contactX, cy, 9); cy -= 12;
+  });
+
+  // Payment Terms (and, rarely, a long Customer PO Ref list) can run well
+  // past a short reference value like "See note" - wrap onto extra lines
+  // right-aligned under the label rather than letting a long value collide
+  // with the row above it.
+  const idValueMaxWidth = 150;
+  const idLabelEdge = pageWidth - margin - idValueMaxWidth - 10;
+  function idRow(label, value, size, bold) {
+    rightText(label, idLabelEdge, ry, size, { bold: true });
+    const valLines = wrapLines(String(value || ''), idValueMaxWidth, size);
+    if (!valLines.length) valLines.push('');
+    valLines.forEach(function (vl, i) { rightText(vl, pageWidth - margin, ry - i * (size + 2), size, { bold: !!bold }); });
+    ry -= (size + 5) + Math.max(0, valLines.length - 1) * (size + 2);
+  }
+  let ry = hy - 44;
+  const poRefDisplay = (Array.isArray(po.customerPoRefs) && po.customerPoRefs.length) ? po.customerPoRefs.join(', ') : (po.customerPoRef || '');
+  idRow('Purchase Order Number:', po.poNumber, 10);
+  idRow('Date:', po.poDate || '', 10);
+  idRow('Terms:', po.paymentTerms || '', 10);
+  idRow('Due Date:', '', 10);
+  idRow('Currency:', po.currency || '', 10);
+  if (poRefDisplay) idRow('Customer PO Ref:', poRefDisplay, 9);
+
+  // ---- Vendor / Bill to / Ship To (still inside the header band) -----------
+  const addrTop = Math.min(ly, cy, ry) - 20;
+  const colW = (pageWidth - margin * 2) / 3;
+  const col1 = margin, col2 = margin + colW, col3 = margin + colW * 2;
+  leftText('Vendor', col1, addrTop, 10, { bold: true });
+  leftText('Bill to', col2, addrTop, 10, { bold: true });
+  leftText('Ship To', col3, addrTop, 10, { bold: true });
+
+  function addrBlock(x, name, addr) {
+    let yy = addrTop - 13;
+    if (name) { leftText(name, x, yy, 9); yy -= 11; }
+    wrapLines(addr, colW - 12, 9).forEach(function (line) { leftText(line, x, yy, 9); yy -= 11; });
+    return yy;
+  }
+  const supplierAddr0 = (supplierOrg && Array.isArray(supplierOrg.addresses) && supplierOrg.addresses[0]) ? supplierOrg.addresses[0] : null;
+  const supplierAddrText = supplierAddr0 ? [supplierAddr0.line1, supplierAddr0.line2].filter(Boolean).join(', ') : '';
+  const y1 = addrBlock(col1, po.supplier || '', supplierAddrText);
+  const billAddrText = selfAddr0 ? [selfAddr0.line1, selfAddr0.line2].filter(Boolean).join(', ') : '';
+  const y2 = addrBlock(col2, (selfOrg && selfOrg.name) || 'Dessimate LLC', billAddrText);
+  const y3 = addrBlock(col3, '', po.shipTo || '—');
+
+  // ---- Line items table -------------------------------------------------------
+  let y = pageHeight - headerHeight - 26;
+  const cols = [
+    { key: 'line', label: 'Line', x: margin, w: 24 },
+    { key: 'combined', label: 'Part Number/Rev/Description', x: margin + 28, w: 196 },
+    { key: 'requestedDeliveryDate', label: 'Promised Delivery Date', x: margin + 228, w: 78 },
+    { key: 'qtyOrdered', label: 'Quantity', x: margin + 310, w: 44, right: true },
+    { key: 'uom', label: 'UOM', x: margin + 358, w: 32 },
+    { key: 'unitPrice', label: 'Unit', x: margin + 394, w: 52, right: true },
+    { key: 'extendedPrice', label: 'Extended Price', x: margin + 450, w: 74, right: true }
+  ];
+  const tableRight = margin + 524;
 
   function ensureSpace(h) {
-    if (y - h < margin + 40) {
+    if (y - h < footerHeight + 20) {
       page = pdfDoc.addPage([pageWidth, pageHeight]);
-      y = pageHeight - margin;
+      y = pageHeight - 40;
     }
   }
-  function text(str, x, size, opts) {
-    opts = opts || {};
-    page.drawText(str == null ? '' : String(str), { x: x, y: y, size: size, font: opts.bold ? fontBold : font, color: rgb(0.1, 0.1, 0.12) });
-  }
-  function textAt(str, x, yy, size, opts) {
-    opts = opts || {};
-    page.drawText(str == null ? '' : String(str), { x: x, y: yy, size: size, font: opts.bold ? fontBold : font, color: rgb(0.1, 0.1, 0.12) });
-  }
-  function hr() {
-    page.drawLine({ start: { x: margin, y: y }, end: { x: pageWidth - margin, y: y }, thickness: 0.75, color: rgb(0.7, 0.7, 0.75) });
-  }
 
-  // ---- Header: Self org letterhead (left) + PO identity block (right) ----
-  const headerTop = y;
-  text((selfOrg && selfOrg.name) || 'Dessimate LLC', margin, 18, { bold: true });
-  y -= 20;
-  const selfAddr0 = (selfOrg && Array.isArray(selfOrg.addresses) && selfOrg.addresses[0]) ? selfOrg.addresses[0] : null;
-  if (selfAddr0 && selfAddr0.line1) { text(selfAddr0.line1, margin, 9); y -= 12; }
-  if (selfAddr0 && selfAddr0.line2) { text(selfAddr0.line2, margin, 9); y -= 12; }
-  if (selfOrg && selfOrg.purchasingEmail) { text('Purchasing: ' + selfOrg.purchasingEmail, margin, 9); y -= 12; }
-
-  const rightX = pageWidth - margin - 190;
-  let ry = headerTop;
-  textAt('PURCHASE ORDER', rightX, ry, 14, { bold: true }); ry -= 18;
-  textAt('PO Number: ' + po.poNumber, rightX, ry, 10, { bold: true }); ry -= 14;
-  textAt('Shipment #: ' + po.shipmentNumber, rightX, ry, 10, { bold: true }); ry -= 14;
-  textAt('PO Date: ' + (po.poDate || ''), rightX, ry, 10); ry -= 14;
-  const poRefDisplay = (Array.isArray(po.customerPoRefs) && po.customerPoRefs.length) ? po.customerPoRefs.join(', ') : po.customerPoRef;
-  if (poRefDisplay) { textAt('Customer PO Ref: ' + poRefDisplay, rightX, ry, 9); ry -= 14; }
-
-  y = Math.min(y, ry) - 10;
-  hr(); y -= 18;
-
-  // ---- Supplier / Ship To / Terms ----
-  text('Supplier:', margin, 10, { bold: true }); text(po.supplier || '', margin + 70, 10); y -= 14;
-  text('Ship To:', margin, 10, { bold: true }); text(po.shipTo || '', margin + 70, 10); y -= 14;
-  text('Currency:', margin, 10, { bold: true }); text(po.currency || '', margin + 70, 10);
-  textAt('Payment Terms:', margin + 220, y + 14, 10, { bold: true }); textAt(po.paymentTerms || '', margin + 320, y + 14, 10);
-  y -= 14;
-  text('Incoterms:', margin, 10, { bold: true }); text(po.incoterms || '', margin + 70, 10); y -= 20;
-  hr(); y -= 16;
-
-  // ---- Line items table ----
-  const cols = [
-    { key: 'partNumber', label: 'Part #', x: margin, w: 88 },
-    { key: 'description', label: 'Description', x: margin + 90, w: 138 },
-    { key: 'uom', label: 'UOM', x: margin + 232, w: 32 },
-    { key: 'qtyOrdered', label: 'Qty', x: margin + 268, w: 40, right: true },
-    { key: 'unitPrice', label: 'Unit Price', x: margin + 310, w: 58, right: true },
-    { key: 'extendedPrice', label: 'Ext. Price', x: margin + 372, w: 58, right: true },
-    { key: 'requestedDeliveryDate', label: 'Requested', x: margin + 434, w: 98 }
-  ];
+  const headerRowH = 28;
+  page.drawRectangle({ x: margin, y: y - headerRowH + 6, width: tableRight - margin, height: headerRowH, color: navyDark });
   cols.forEach(function (c) {
-    const lx = c.right ? c.x + c.w - fontBold.widthOfTextAtSize(c.label, 9) : c.x;
-    textAt(c.label, lx, y, 9, { bold: true });
-  });
-  y -= 6; hr(); y -= 14;
-
-  po.lines.forEach(function (l) {
-    ensureSpace(18);
-    cols.forEach(function (c) {
-      let v = l[c.key];
-      if (c.key === 'unitPrice' || c.key === 'extendedPrice') v = money2(v);
-      const s = v == null ? '' : String(v);
-      const vx = c.right ? c.x + c.w - font.widthOfTextAtSize(s, 9) : c.x;
-      textAt(s, vx, y, 9);
+    const headerLines = wrapLines(c.label, c.w, 7, fontBold);
+    let hyy = y - 6;
+    headerLines.forEach(function (hl) {
+      const lx = c.right ? c.x + c.w - fontBold.widthOfTextAtSize(hl, 7) : c.x;
+      page.drawText(hl, { x: lx, y: hyy, size: 7, font: fontBold, color: rgb(1, 1, 1) });
+      hyy -= 8;
     });
-    y -= 16;
   });
-  y -= 4; hr(); y -= 20;
+  y -= headerRowH + 6;
 
-  textAt('PO Total: ' + (po.currency || '') + ' ' + money2(po.poTotal), pageWidth - margin - 200, y, 12, { bold: true });
-  y -= 46;
+  po.lines.forEach(function (l, idx) {
+    const descLines = l.description ? wrapLines(l.description, cols[1].w, 8) : [];
+    const rowH = 12 + descLines.length * 10 + 6;
+    ensureSpace(rowH);
+    if (idx % 2 === 0) page.drawRectangle({ x: margin, y: y - rowH + 6, width: tableRight - margin, height: rowH, color: zebra });
+    cols.forEach(function (c) {
+      let s;
+      if (c.key === 'line') s = String(idx + 1);
+      else if (c.key === 'combined') s = [l.partNumber, l.revision ? 'Rev ' + l.revision : ''].filter(Boolean).join(' — ');
+      else if (c.key === 'unitPrice' || c.key === 'extendedPrice') s = '$' + moneyCommas(l[c.key]);
+      else if (c.key === 'requestedDeliveryDate') s = l.requestedDeliveryDate || '—';
+      else s = l[c.key] == null || l[c.key] === '' ? '' : String(l[c.key]);
+      const vx = c.right ? c.x + c.w - font.widthOfTextAtSize(s, 8.5) : c.x;
+      page.drawText(s, { x: vx, y: y, size: 8.5, font: font, color: ink });
+    });
+    y -= 12;
+    descLines.forEach(function (dl) {
+      page.drawText(dl, { x: cols[1].x, y: y, size: 8, font: font, color: labelGray });
+      y -= 10;
+    });
+    y -= 6;
+  });
+  page.drawLine({ start: { x: margin, y: y + 2 }, end: { x: tableRight, y: y + 2 }, thickness: 0.75, color: lineGray });
 
-  // ---- Approver + stamp (PO only - never the Dessimate Invoice) ----
-  ensureSpace(90);
-  text('Approved by:', margin, 10, { bold: true });
-  text(po.approverName || po.approverUsername || '', margin + 90, 10);
-  y -= 66;
+  // ---- Footer band: Terms & Conditions + Buyer/Approver + PO Total ---------
+  if (y < footerHeight + 30) {
+    page = pdfDoc.addPage([pageWidth, pageHeight]);
+    y = pageHeight - 40;
+  }
+  page.drawRectangle({ x: 0, y: 0, width: pageWidth, height: footerHeight, color: bandBg });
+
+  const leftColW = 300;
+  let fy = footerHeight - 34;
+  leftText('Terms & Conditions of Purchase', margin, fy, 15, { color: rgb(0.5, 0.58, 0.74) });
+  fy -= 20;
+  const tcText = 'Refer to https://dessimate.com/po-terms-and-conditions for all Terms and Conditions.' +
+    (po.paymentTerms ? ' Payment terms ' + po.paymentTerms + '.' : '');
+  wrapLines(tcText, leftColW, 9).forEach(function (line) { leftText(line, margin, fy, 9); fy -= 12; });
+
+  fy -= 10;
+  const buyerBarH = 20;
+  page.drawRectangle({ x: margin, y: fy - buyerBarH, width: leftColW, height: buyerBarH, color: navyDark });
+  leftText('Buyer', margin + 8, fy - 14, 9, { bold: true, color: rgb(1, 1, 1) });
+  leftText((po.approverName || po.approverUsername || '—'), margin + 90, fy - 14, 9, { color: rgb(1, 1, 1) });
+  fy -= buyerBarH + 8;
+
+  const sigBoxH = 60;
+  page.drawRectangle({ x: margin, y: fy - sigBoxH, width: leftColW, height: sigBoxH, color: rgb(1, 1, 1), borderColor: lineGray, borderWidth: 0.75 });
+  leftText('Approver', margin + 8, fy - 14, 9, { bold: true, color: labelGray });
+  leftText('Signature', margin + 8, fy - 25, 9, { bold: true, color: labelGray });
+  // ---- Approver stamp (PO only - never the Dessimate Invoice) ---------------
   if (stampBytes) {
     try {
       let img;
       try { img = await pdfDoc.embedPng(stampBytes); } catch (e) { img = await pdfDoc.embedJpg(stampBytes); }
-      const dims = img.scaleToFit(120, 60);
-      page.drawImage(img, { x: margin, y: y, width: dims.width, height: dims.height });
+      const dims = img.scaleToFit(120, 42);
+      page.drawImage(img, { x: margin + 80, y: fy - sigBoxH + 8, width: dims.width, height: dims.height });
     } catch (e) { /* stamp image unreadable/unsupported format - leave the PO unstamped rather than fail generation */ }
   }
+
+  const totalBoxX = margin + leftColW + 30;
+  const totalBoxW = tableRight - totalBoxX;
+  const totalBoxY = footerHeight - 110;
+  const totalBoxH = 46;
+  page.drawRectangle({ x: totalBoxX, y: totalBoxY, width: totalBoxW, height: totalBoxH, color: rgb(1, 1, 1), borderColor: lineGray, borderWidth: 0.75 });
+  leftText('PO Total', totalBoxX + 14, totalBoxY + totalBoxH / 2 - 5, 12, { bold: true, color: brandBlue });
+  rightText((po.currency || '') + ' $' + moneyCommas(po.poTotal), totalBoxX + totalBoxW - 14, totalBoxY + totalBoxH / 2 - 5, 14, { bold: true, color: brandBlue });
 
   return pdfDoc.save();
 }
@@ -2361,7 +2498,9 @@ async function handleGenerateDessimatePoPdf(env, origin, id, accessLevel, organi
   clean = scoped[0];
 
   const orgState = await readJsonArrayFile(env, ORGANIZATIONS_FILE_PATH);
-  const selfOrg = orgState.items.map(sanitizeOrg).find(function (o) { return o.relationship === 'Self'; }) || null;
+  const allOrgs = orgState.items.map(sanitizeOrg);
+  const selfOrg = allOrgs.find(function (o) { return o.relationship === 'Self'; }) || null;
+  const supplierOrg = allOrgs.find(function (o) { return o.relationship === 'Supplier' && o.name === clean.supplier; }) || null;
 
   let stampBytes = null;
   if (clean.approverUsername) {
@@ -2374,7 +2513,7 @@ async function handleGenerateDessimatePoPdf(env, origin, id, accessLevel, organi
 
   let pdfBytes;
   try {
-    pdfBytes = await buildDessimatePoPdf(clean, selfOrg, stampBytes);
+    pdfBytes = await buildDessimatePoPdf(clean, selfOrg, supplierOrg, stampBytes);
   } catch (e) {
     return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
   }

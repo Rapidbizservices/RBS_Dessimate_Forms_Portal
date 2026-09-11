@@ -343,6 +343,29 @@ linked here for a fast overview if you're updating an existing deployment.
   above). No new field is exposed in GET /app-config's public response
   beyond `aboutText` alongside the existing two.
 
+## Rev2.7 changes
+
+- **Dessimate PO PDF redesigned** — backend-only change (no frontend
+  edits): `buildDessimatePoPdf` now renders the same letterhead family as
+  the Invoice/Packing Slip (logo, light-blue header/footer bands, dark-navy
+  line-items table with zebra-striped rows), matching the reference
+  template supplied for this revision (logo + tracked "PURCHASE ORDER"
+  title, a Purchase Order Number/Date/Terms/Due Date/Currency identity
+  block, a Vendor/Bill to/Ship To three-up, a "Terms & Conditions of
+  Purchase" footer, a navy "Buyer" bar, an "Approver Signature" box holding
+  the same stamp image the old layout drew, and a boxed "PO Total"). "Vendor"
+  now pulls the matching Supplier organization's saved address (looked up by
+  name in `handleGenerateDessimatePoPdf`, the same pattern the Invoice PDF
+  already uses for its Customer lookup) — `buildDessimatePoPdf`'s signature
+  gained a `supplierOrg` parameter for this. "Bill to" is the Self org's own
+  address; "Ship To" is still the PO's existing free-text field. The
+  reference's "Due Date" has no backing field in this data model and is
+  left blank, same precedent as the Invoice PDF's own blank "Due Date:" row.
+  The line-items table combines Part Number/Revision on one line with
+  Description wrapped beneath it in gray, under one "Part Number/Rev/
+  Description" column per the reference's header, rather than cramming both
+  onto a single line the way the reference's own sample data happened to.
+
 ## The dashboard (`index.html`)
 
 `index.html` is a persistent left sidebar with a content pane next to it —
