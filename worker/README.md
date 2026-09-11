@@ -400,6 +400,26 @@ linked here for a fast overview if you're updating an existing deployment.
   page's "Deleted Invoices" button, and every row's Edit/Delete/Duplicate
   buttons for anyone below Admin — defaulting hidden until that resolves,
   so a slow network never flashes a button a Team Member can't actually use.
+- **Dessimate PO PDF: "Customer PO" block under Ship To** — backend-only
+  (`buildDessimatePoPdf` gained a `customerInfo` parameter,
+  `handleGenerateDessimatePoPdf` builds it). When the PO carries
+  `customerPoRefs`, the first matching Customer PO record is looked up
+  (`data/customer_pos.json`) and its customer organization's saved address
+  is resolved from Organizations, to print the customer's company name,
+  "Attn: [Buyer Name]" (the Customer PO's `buyerName`), that organization's
+  address, and the referenced Customer PO number(s) - directly beneath the
+  Ship To column, per the customer's explicit request that this reference
+  stay visible (a request to remove it entirely was made and then reversed
+  earlier in the same conversation). `clean.customerPoRefs` is already
+  stripped for a Supplier login by `scopeDessimatePos` before this lookup
+  runs, so `customerInfo` stays null and the block doesn't render there -
+  the same protection that already existed for the plain-text "Customer PO
+  Ref:" row in the identity block, extended to this new block with no
+  separate check needed. The header band's height is no longer a fixed
+  guess - the line-items table's start position is now computed from the
+  actual lowest content in the Vendor/Bill to/Ship To (+ Customer PO) row,
+  so this block's variable height (0 lines when absent, up to ~5 when
+  present) never collides with the table.
 
 ## The dashboard (`index.html`)
 

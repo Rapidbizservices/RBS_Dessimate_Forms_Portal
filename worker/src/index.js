@@ -2262,7 +2262,7 @@ function money2(n) { const v = Number(n) || 0; return v.toFixed(2); }
 // To". The reference has a separate "Due Date" from "Terms" that this
 // system has no field for; left blank, same precedent as the Invoice PDF's
 // own blank "Due Date:" row.
-async function buildDessimatePoPdf(po, selfOrg, supplierOrg, stampBytes) {
+async function buildDessimatePoPdf(po, selfOrg, supplierOrg, customerInfo, stampBytes) {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -2328,7 +2328,12 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, stampBytes) {
     return m ? (m[2] + '/' + m[3] + '/' + m[1]) : str;
   }
 
-  const headerHeight = 270;
+  // Generous upper bound for the colored band - the line-items table's
+  // actual start position is computed from real content height just below
+  // (Math.min(y1, y2, y4)), so this only needs to stay large enough that the
+  // Customer PO block (when present) never spills onto the white page below
+  // the band.
+  const headerHeight = 340;
   const footerHeight = 190;
 
   page.drawRectangle({ x: 0, y: pageHeight - headerHeight, width: pageWidth, height: headerHeight, color: bandBg });
@@ -2412,8 +2417,28 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, stampBytes) {
   const y2 = addrBlock(col2, (selfOrg && selfOrg.name) || 'Dessimate LLC', selfAddr0 ? [selfAddr0.line1, selfAddr0.line2].filter(Boolean) : []);
   const y3 = addrBlock(col3, '', po.shipTo ? po.shipTo.split(/\r?\n/) : ['—']);
 
+  // ---- Customer PO (under Ship To) ------------------------------------------
+  // customerInfo is only passed in when this PO actually carries
+  // customerPoRefs - already stripped for a Supplier login by
+  // scopeDessimatePos (the ultimate customer's identity is commercially
+  // sensitive from that side), so this block simply doesn't render there,
+  // same protection as before with no extra check needed here.
+  let y4 = y3;
+  if (customerInfo) {
+    y4 -= 8;
+    leftText('Customer PO', col3, y4, 10, { bold: true }); y4 -= 13;
+    if (customerInfo.name) { leftText(customerInfo.name, col3, y4, 9); y4 -= 11; }
+    if (customerInfo.buyerName) { leftText('Attn: ' + customerInfo.buyerName, col3, y4, 9); y4 -= 11; }
+    [customerInfo.addressLine1, customerInfo.addressLine2].filter(Boolean).forEach(function (line) {
+      wrapLines(line, colW - 12, 9).forEach(function (l) { leftText(l, col3, y4, 9); y4 -= 11; });
+    });
+    if (customerInfo.poNumbers && customerInfo.poNumbers.length) {
+      leftText('PO Number: ' + customerInfo.poNumbers.join(', '), col3, y4, 9, { bold: true }); y4 -= 11;
+    }
+  }
+
   // ---- Line items table -------------------------------------------------------
-  let y = pageHeight - headerHeight - 26;
+  let y = Math.min(y1, y2, y4) - 20;
   const cols = [
     { key: 'line', label: 'Line', x: margin, w: 24 },
     { key: 'combined', label: 'Part Number/Rev/Description', x: margin + 28, w: 196 },
@@ -2533,6 +2558,31 @@ async function handleGenerateDessimatePoPdf(env, origin, id, accessLevel, organi
   const selfOrg = allOrgs.find(function (o) { return o.relationship === 'Self'; }) || null;
   const supplierOrg = allOrgs.find(function (o) { return o.relationship === 'Supplier' && o.name === clean.supplier; }) || null;
 
+  // "Customer PO" block under Ship To - the customer company, a buyer
+  // contact, their saved address, and the referenced Customer PO number(s).
+  // clean.customerPoRefs is already stripped for a Supplier login by
+  // scopeDessimatePos above, so customerInfo simply stays null for that
+  // role and the block doesn't render - no separate access check needed
+  // here.
+  let customerInfo = null;
+  if (Array.isArray(clean.customerPoRefs) && clean.customerPoRefs.length) {
+    const cpoState = await readJsonArrayFile(env, CUSTOMER_POS_FILE_PATH);
+    const cpos = cpoState.items.map(sanitizeCustomerPo);
+    const refsLower = clean.customerPoRefs.map(function (r) { return String(r).toLowerCase(); });
+    const primary = cpos.find(function (c) { return refsLower.indexOf(String(c.poNumber).toLowerCase()) !== -1; }) || null;
+    if (primary) {
+      const customerOrg = allOrgs.find(function (o) { return o.relationship === 'Customer' && o.name === primary.customer; }) || null;
+      const customerAddr0 = (customerOrg && Array.isArray(customerOrg.addresses) && customerOrg.addresses[0]) ? customerOrg.addresses[0] : null;
+      customerInfo = {
+        name: primary.customer || '',
+        buyerName: primary.buyerName || '',
+        addressLine1: customerAddr0 ? customerAddr0.line1 : '',
+        addressLine2: customerAddr0 ? customerAddr0.line2 : '',
+        poNumbers: clean.customerPoRefs
+      };
+    }
+  }
+
   let stampBytes = null;
   if (clean.approverUsername) {
     const usersState = await readUsersFile(env);
@@ -2544,7 +2594,7 @@ async function handleGenerateDessimatePoPdf(env, origin, id, accessLevel, organi
 
   let pdfBytes;
   try {
-    pdfBytes = await buildDessimatePoPdf(clean, selfOrg, supplierOrg, stampBytes);
+    pdfBytes = await buildDessimatePoPdf(clean, selfOrg, supplierOrg, customerInfo, stampBytes);
   } catch (e) {
     return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
   }
