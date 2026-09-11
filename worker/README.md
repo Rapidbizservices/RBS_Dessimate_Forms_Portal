@@ -328,6 +328,21 @@ linked here for a fast overview if you're updating an existing deployment.
   yields a little (a `max-height` safety cap takes over) rather than ever
   overflowing the screen. The other pages' viewers are unchanged.
 
+## Rev2.6 changes
+
+- **About DSCM** — a card on the dashboard's (`index.html`) welcome view,
+  shown to everyone, with a short description of the system pulled from
+  `/app-config`'s new `aboutText` field. A Super Admin sees an **Edit**
+  button (hidden for everyone else, both in the UI and because `PUT
+  /app-config` itself is still Super-Admin-gated server-side) opening a
+  dialog with the About text plus **Current Version** and **Built Label**
+  in their own small boxes — the same `version`/`builtLabel` fields every
+  page's footer/sidebar stamp already reads, so saving here is now the
+  normal way to bump the version (previously only possible via a direct
+  API call - see the Rev2.2 entry above). No new field is exposed in
+  GET /app-config's public response beyond `aboutText` alongside the
+  existing two.
+
 ## The dashboard (`index.html`)
 
 `index.html` is a persistent left sidebar with a content pane next to it —

@@ -213,7 +213,9 @@ const PDIR_INDEX_FILE_PATH = 'data/pdir_index.json';
 // version bump is a single PUT /app-config call (see handleUpdateAppConfig
 // below, super_admin-gated), never a frontend edit.
 const APP_CONFIG_FILE_PATH = 'data/app_config.json';
-const DEFAULT_APP_CONFIG = { version: '2.2', builtLabel: 'Built September 2026' };
+// Rev2.6: aboutText backs the dashboard's "About DSCM" section - editable
+// only by a Super Admin (see handleUpdateAppConfig), shown to everyone.
+const DEFAULT_APP_CONFIG = { version: '2.2', builtLabel: 'Built September 2026', aboutText: '' };
 
 const APQP_FILE_PATH = 'data/apqp.json';
 const APQP_DOC_FOLDER = 'apqp_docs';
@@ -1143,7 +1145,11 @@ function sanitizeOrg(o) {
 
 async function handleGetAppConfig(env, origin) {
   const state = await readJsonObjectFile(env, APP_CONFIG_FILE_PATH, DEFAULT_APP_CONFIG);
-  return json({ version: state.obj.version || DEFAULT_APP_CONFIG.version, builtLabel: state.obj.builtLabel || '' }, 200, origin);
+  return json({
+    version: state.obj.version || DEFAULT_APP_CONFIG.version,
+    builtLabel: state.obj.builtLabel || '',
+    aboutText: state.obj.aboutText || ''
+  }, 200, origin);
 }
 
 async function handleUpdateAppConfig(request, env, origin) {
@@ -1152,14 +1158,16 @@ async function handleUpdateAppConfig(request, env, origin) {
   const version = (body.version || '').toString().trim();
   if (!version) return json({ message: 'Version is required.' }, 400, origin);
   const builtLabel = (body.builtLabel || '').toString().trim();
+  const aboutText = (body.aboutText || '').toString().trim();
 
   const result = await mutateJsonObjectFile(env, APP_CONFIG_FILE_PATH, DEFAULT_APP_CONFIG, function (obj) {
     obj.version = version;
     obj.builtLabel = builtLabel;
+    obj.aboutText = aboutText;
     return { obj: obj };
   });
   if (!result.ok) return json({ message: result.message }, 500, origin);
-  return json({ version: result.obj.version, builtLabel: result.obj.builtLabel || '' }, 200, origin);
+  return json({ version: result.obj.version, builtLabel: result.obj.builtLabel || '', aboutText: result.obj.aboutText || '' }, 200, origin);
 }
 // Rev2.4: addresses are entered on 2 lines (street, then city/state/zip) for
 // cleaner PDF formatting. line1/line2 replace the old single "address"

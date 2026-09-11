@@ -119,6 +119,40 @@
     border-radius:6px; padding:8px 10px; margin:0 0 16px; line-height:1.45; }
   .authAttempts{ font-size:12px; color:var(--label); min-height:14px; margin-top:4px; }
 
+  /* ---- About DSCM (Rev2.6) ---------------------------------------------- */
+  .aboutCard{ margin-top:22px; max-width:480px; width:100%; background:#fff; border:1px solid var(--line);
+    border-radius:10px; padding:16px 18px; text-align:left; }
+  .aboutCardHead{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .aboutCardHead h3{ font-size:13px; margin:0; color:var(--ink); }
+  .aboutCardHead button{ font-family:inherit; font-size:12px; font-weight:600; color:var(--brand); background:#fff;
+    border:1px solid var(--brand); border-radius:6px; padding:5px 10px; cursor:pointer; white-space:nowrap; }
+  .aboutCardHead button:hover{ background:var(--brand-light); }
+  .aboutCardText{ font-size:12.5px; color:var(--label); line-height:1.55; margin:0; white-space:pre-wrap; max-width:none; }
+  .aboutCardText.empty{ font-style:italic; }
+
+  /* ---- Add/Edit modal (same pattern as every other page's) ------------- */
+  .modalOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1500; align-items:center; justify-content:center; padding:20px; }
+  .modalOverlay.open{ display:flex; }
+  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:640px;
+    max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .modalCard h2{ font-size:17px; margin:0 0 4px; color:var(--ink); }
+  .modalCard .modalSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .modalCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .modalCard input, .modalCard textarea{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .modalCard textarea{ resize:vertical; }
+  .modalGrid2{ display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+  .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
+  .modalBtns{ display:flex; gap:10px; margin-top:10px; }
+  .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
+    padding:11px; cursor:pointer; }
+  .saveBtn{ color:#fff; background:var(--brand); border:none; }
+  .saveBtn:hover{ background:var(--brand-dark); }
+  .saveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .cancelBtn:hover{ background:#f4f5f8; }
+
   /* ---- Responsive: sidebar becomes a slide-out drawer below 900px ----- */
   @media (max-width: 900px){
     .sidebar{
@@ -178,6 +212,13 @@
         <img src="logo.jpg" alt="">
         <h2>Welcome to DSCM</h2>
         <p>Pick a module from the left to get started &mdash; each one opens right here, so you can move between them without losing your place.</p>
+        <div class="aboutCard" id="aboutCard">
+          <div class="aboutCardHead">
+            <h3>About DSCM</h3>
+            <button type="button" id="editAboutBtn" style="display:none;">Edit</button>
+          </div>
+          <p class="aboutCardText" id="aboutCardText">Loading&hellip;</p>
+        </div>
       </div>
       <iframe id="contentFrame" title="Module content" style="display:none;"></iframe>
     </div>
@@ -202,6 +243,31 @@
     </div>
   </div>
 
+  <div class="modalOverlay" id="aboutModalOverlay">
+    <div class="modalCard">
+      <h2>Edit About DSCM</h2>
+      <p class="modalSub">The About text is shown to everyone on this dashboard. Version and Built Label are the same fields shown in the footer/sidebar throughout the system.</p>
+      <form id="aboutForm">
+        <div class="modalGrid2">
+          <label>Current Version
+            <input type="text" id="f_aboutVersion" placeholder="e.g. 2.6" required>
+          </label>
+          <label>Built Label <span style="font-weight:400;">(optional)</span>
+            <input type="text" id="f_aboutBuiltLabel" placeholder="e.g. Built September 2026">
+          </label>
+        </div>
+        <label>About DSCM
+          <textarea id="f_aboutText" rows="6" placeholder="A short description of the system, shown on this dashboard."></textarea>
+        </label>
+        <div class="modalError" id="aboutModalError"></div>
+        <div class="modalBtns">
+          <button type="button" class="cancelBtn" id="aboutModalCancelBtn">Cancel</button>
+          <button type="submit" class="saveBtn" id="aboutModalSaveBtn">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
 <script>
   // ---- Backend (staff login) --------------------------------------------
   // Same Worker used by every other page in this system - see
@@ -212,13 +278,27 @@
   // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
   // worker/README.md) instead of hand-typed here - this fills it in once
   // fetched, leaving the hardcoded text above as the offline fallback.
-  (function stampAppVersion(){
-    fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
-      if (!cfg || !cfg.version) return;
+  // Rev2.6: the same /app-config record also carries aboutText, shown in
+  // the "About DSCM" card below and editable only by a Super Admin (see
+  // resolveAccessAndRenderNav, which shows/hides editAboutBtn).
+  var lastAppConfig = { version: '', builtLabel: '', aboutText: '' };
+  function renderAboutCard(){
+    var textEl = document.getElementById('aboutCardText');
+    if (!textEl) return;
+    var text = (lastAppConfig.aboutText || '').trim();
+    if (text) { textEl.textContent = text; textEl.classList.remove('empty'); }
+    else { textEl.textContent = 'No description on file yet.'; textEl.classList.add('empty'); }
+  }
+  function loadAppConfig(){
+    return fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg) return;
+      lastAppConfig = cfg;
       var el = document.getElementById('appVersionStamp');
       if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+      renderAboutCard();
     }).catch(function(){});
-  })();
+  }
+  loadAppConfig();
 
   function getSession(){
     try{
@@ -478,6 +558,9 @@
       } catch (e) { console.error('Could not resolve access level', e); }
     }
     renderNav(accessLevel);
+    // Rev2.6: only a Super Admin can edit the About DSCM section / version.
+    var editAboutBtn = document.getElementById('editAboutBtn');
+    if (editAboutBtn) editAboutBtn.style.display = accessLevel === 'super_admin' ? 'inline-block' : 'none';
   }
   // -------------------------------------------------------------------------
 
@@ -492,6 +575,52 @@
   }
   document.getElementById('hamburgerBtn').addEventListener('click', openSidebarOnMobile);
   document.getElementById('sideScrim').addEventListener('click', closeSidebarOnMobile);
+  // -------------------------------------------------------------------------
+
+  // ---- Edit About DSCM (Rev2.6, Super Admin only) --------------------------
+  function closeAboutModal(){ document.getElementById('aboutModalOverlay').classList.remove('open'); }
+  document.getElementById('editAboutBtn').addEventListener('click', function(){
+    document.getElementById('f_aboutVersion').value = lastAppConfig.version || '';
+    document.getElementById('f_aboutBuiltLabel').value = lastAppConfig.builtLabel || '';
+    document.getElementById('f_aboutText').value = lastAppConfig.aboutText || '';
+    document.getElementById('aboutModalError').textContent = '';
+    document.getElementById('aboutModalOverlay').classList.add('open');
+  });
+  document.getElementById('aboutModalCancelBtn').addEventListener('click', closeAboutModal);
+  document.getElementById('aboutModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'aboutModalOverlay') closeAboutModal();
+  });
+  document.getElementById('aboutForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('aboutModalError');
+    var saveBtn = document.getElementById('aboutModalSaveBtn');
+    errEl.textContent = '';
+    var version = document.getElementById('f_aboutVersion').value.trim();
+    if (!version) { errEl.textContent = 'Version is required.'; return; }
+    var body = {
+      version: version,
+      builtLabel: document.getElementById('f_aboutBuiltLabel').value.trim(),
+      aboutText: document.getElementById('f_aboutText').value.trim()
+    };
+    var session = getSession();
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      var headers = { 'Content-Type': 'application/json' };
+      if (session) headers.Authorization = 'Bearer ' + session.token;
+      var res = await fetch(WORKER_BASE_URL + '/app-config', { method: 'PUT', headers: headers, body: JSON.stringify(body) });
+      var data = {}; try { data = await res.json(); } catch(err){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      lastAppConfig = data;
+      var stampEl = document.getElementById('appVersionStamp');
+      if (stampEl) stampEl.textContent = 'DSCM v' + data.version + (data.builtLabel ? ' · ' + data.builtLabel : '');
+      renderAboutCard();
+      closeAboutModal();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not save this.';
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
   // -------------------------------------------------------------------------
 
   requireAuthThen(resolveAccessAndRenderNav);
