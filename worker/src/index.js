@@ -2430,7 +2430,6 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, customerInfo, stamp
   let y4 = y3;
   if (customerInfo) {
     y4 -= 8;
-    leftText('Customer PO', col3, y4, 10, { bold: true }); y4 -= 13;
     if (customerInfo.name) { leftText(customerInfo.name, col3, y4, 9); y4 -= 11; }
     if (customerInfo.buyerName) { leftText('Attn: ' + customerInfo.buyerName, col3, y4, 9); y4 -= 11; }
     [customerInfo.addressLine1, customerInfo.addressLine2].filter(Boolean).forEach(function (line) {
