@@ -310,6 +310,24 @@ linked here for a fast overview if you're updating an existing deployment.
   attachments not carried over since those are files that belong to the
   original record).
 
+## Rev2.5 changes
+
+- **Customer PO: Attachments** (was a single "Original PO" `sourcePdf`
+  file) — up to 20 files, same upload/preview/View pattern as Parts,
+  Dessimate POs, and Dessimate Invoices. A record saved before this still
+  reads fine (its one `sourcePdf` shows up as the sole entry in
+  `attachments`, the same migration Parts' old single "drawing" field got);
+  `sourcePdf` is never written by new saves.
+- **Customer PO: Notes/Comments** — a plain editable textarea (`notes`
+  field), same as the Dessimate PO and Dessimate Invoice already have.
+- **In-page document viewer enlarged, fixed 1.8:1 landscape aspect ratio**
+  — Customer POs only, per the request. The visible area (`.viewerBody`)
+  now keeps a 1.8 width:height ratio via CSS `aspect-ratio` instead of
+  stretching to fill the overlay, and the panel itself is bigger (`width:
+  min(96vw, 1700px)`, was capped at 980px). On a short viewport the ratio
+  yields a little (a `max-height` safety cap takes over) rather than ever
+  overflowing the screen. The other pages' viewers are unchanged.
+
 ## The dashboard (`index.html`)
 
 `index.html` is a persistent left sidebar with a content pane next to it —

@@ -115,6 +115,7 @@
 
   .modalSection{ margin:18px 0 4px; }
   .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
+  .modalSectionHint{ font-size:12px; color:var(--label); margin:2px 0 8px; }
 
   .linesWrap{ overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
   table.linesTable{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:820px; }
@@ -148,6 +149,23 @@
   .docLinks button:hover, .docLinks a:hover{ text-decoration:underline; }
   .docLinks .removeLink{ color:#b23b3b; }
 
+  /* Attachments (Rev2.5) - up to 20 files, replacing the old single Source
+     PDF field. Same list pattern used on Parts/Dessimate PO/Dessimate Invoice. */
+  .attachCount{ font-weight:400; font-size:12.5px; color:var(--label); }
+  .attachmentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .attachRow{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:7px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
+  .attachRow .attachName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .attachRow .attachName.pending{ color:#a06a1c; }
+  .attachRow .attachLinks{ display:flex; gap:10px; flex:0 0 auto; }
+  .attachRow .attachLinks button{ font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
+  .attachRow .attachLinks button:hover{ text-decoration:underline; }
+  .attachRow .attachLinks .removeLink{ color:#b23b3b; }
+  .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
+  .docCell{ font-size:12px; color:var(--label); }
+  .docCell .have{ color:#187b46; font-weight:600; }
+
   .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
   .modalBtns{ display:flex; gap:10px; margin-top:10px; }
   .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
@@ -159,16 +177,22 @@
   .cancelBtn:hover{ background:#f4f5f8; }
 
   /* In-page document viewer */
+  /* Rev2.5: enlarged, and the visible area (viewerBody) keeps a fixed 1.8:1
+     landscape aspect ratio instead of stretching to fill the overlay - the
+     panel's height comes from the bar's natural height plus the body's
+     ratio-derived height, not the old height:100% fill. max-height on the
+     body is a safety cap for short viewports; the ratio only gives a little
+     when that cap actually binds, rather than ever overflowing the screen. */
   .viewerOverlay{
     display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
     z-index:2200; padding:22px; align-items:center; justify-content:center;
   }
   .viewerOverlay.open{ display:flex; }
   .viewerPanel{
-    background:#fff; border-radius:10px; width:100%; max-width:980px; height:100%;
+    background:#fff; border-radius:10px; width:min(96vw, 1700px); max-height:94vh;
     display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3);
   }
-  .viewerBar{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+  .viewerBar{ flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:12px;
     padding:12px 16px; border-bottom:1px solid var(--line); }
   .viewerTitle{ font-size:14px; font-weight:700; overflow-wrap:anywhere; }
   .viewerBtns{ display:flex; gap:8px; flex:0 0 auto; }
@@ -180,7 +204,7 @@
   #docViewerDownload:hover{ background:#eef1fa; }
   #docViewerClose{ color:#fff; background:#5b5f66; border:1px solid #5b5f66; }
   #docViewerClose:hover{ background:#3f4248; }
-  .viewerBody{ flex:1 1 auto; position:relative; background:#525659; }
+  .viewerBody{ position:relative; background:#525659; width:100%; aspect-ratio:1.8; max-height:calc(94vh - 54px); }
   .viewerBody iframe, .viewerBody img{ position:absolute; inset:0; width:100%; height:100%; border:0; object-fit:contain; background:#525659; }
   .viewerBody .viewerState{
     position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
@@ -233,7 +257,7 @@
           <th>PO Date</th>
           <th>Lines</th>
           <th>Total</th>
-          <th>Source PDF</th>
+          <th>Files</th>
           <th></th>
         </tr>
       </thead>
@@ -327,15 +351,20 @@
       </div>
 
       <div class="modalSection">
-        <h3>Source PDF</h3>
-        <div class="docRow" data-doc-row="sourcePdf">
-          <div class="docLabel">Original PO</div>
+        <h3>Attachments <span class="attachCount" id="attachCount">(0 / 20)</span></h3>
+        <p class="modalSectionHint">The original PO and anything else relevant — up to 20 files.</p>
+        <div id="attachmentsList" class="attachmentsList"></div>
+        <div class="docRow">
           <div class="docMain">
-            <span class="docStatus" data-doc-status="sourcePdf">No file attached</span>
-            <input type="file" data-doc-input="sourcePdf" accept=".pdf,application/pdf">
-            <div class="docLinks" data-doc-links="sourcePdf"></div>
+            <input type="file" id="attachmentsDocInput" multiple>
+            <div class="modalError" id="attachError" style="margin-top:6px;"></div>
           </div>
         </div>
+      </div>
+
+      <div class="modalSection">
+        <h3>Notes / Comments <span style="font-weight:400;">(optional)</span></h3>
+        <textarea id="f_notes" rows="3" style="display:block; width:100%; font-family:inherit; font-size:14px; padding:9px 10px; border:1px solid var(--line); border-radius:6px;"></textarea>
       </div>
 
       <div class="modalError" id="modalError"></div>
@@ -453,8 +482,10 @@
     }
     return await res.json();
   }
-  function buildSourcePdfPath(poId, filename){
-    return CUSTOMER_PO_DOC_FOLDER + '/' + poId + '/source' + docFileExt(filename);
+  var CUSTOMER_PO_ATTACHMENTS_MAX = 20;
+  function buildAttachmentDocPath(poId, filename, idx){
+    var safeName = (filename || 'file').replace(/[\\/]/g, '_');
+    return CUSTOMER_PO_DOC_FOLDER + '/' + poId + '/attachments/' + Date.now() + '-' + idx + '-' + safeName;
   }
   function readFileAsBytes(file){
     return new Promise(function(resolve, reject){
@@ -713,16 +744,15 @@
     var sorted = lastPos.slice().sort(function(a, b){ return (b.poDate || '').localeCompare(a.poDate || ''); });
 
     bodyEl.innerHTML = sorted.map(function(po){
-      var docHtml = po.sourcePdf
-        ? '<button type="button" class="editBtn" style="padding:5px 10px;" data-view-src="' + escapeHtml(po.id) + '">View</button>'
-        : '<span style="color:var(--label);">—</span>';
+      var attCount = (po.attachments || []).length;
+      var docHtml = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '—';
       return '<tr' + (po.poNumber ? ' data-ponum="' + escapeHtml(po.poNumber) + '"' : '') + '>' +
         '<td class="poNumber">' + escapeHtml(po.poNumber) + '</td>' +
         '<td>' + escapeHtml(po.customer) + '</td>' +
         '<td>' + escapeHtml(po.poDate) + '</td>' +
         '<td>' + (po.lines ? po.lines.length : 0) + '</td>' +
         '<td class="moneyCell">' + escapeHtml(po.currency || '') + ' ' + money(po.poTotal) + '</td>' +
-        '<td>' + docHtml + '</td>' +
+        '<td class="docCell">' + docHtml + '</td>' +
         '<td><div class="rowActions">' +
           '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
           '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>' +
@@ -735,12 +765,6 @@
     });
     bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
       btn.addEventListener('click', function(){ deletePo(this.getAttribute('data-delete')); });
-    });
-    bodyEl.querySelectorAll('[data-view-src]').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var po = lastPos.find(function(p){ return p.id === this.getAttribute('data-view-src'); }.bind(this));
-        if (po && po.sourcePdf) openDocViewer({ filename: po.sourcePdf.filename, mimeType: po.sourcePdf.mimeType, path: po.sourcePdf.path });
-      });
     });
   }
 
@@ -761,7 +785,11 @@
 
   // ---- Add / Edit modal --------------------------------------------------------
   var editingId = null;
-  var sourcePdfState = { existing: null, pending: null, removed: false };
+  // Each entry is either { kind:'existing', doc:{path,filename,mimeType,size} }
+  // (already uploaded) or { kind:'pending', bytes, filename, mimeType } (picked
+  // locally, uploaded only if Save goes through) - same shape/behavior as
+  // Parts.html's attachments.
+  var attachmentsState = [];
   var lineRows = []; // { partNumber, description, revision, uom, qtyOrdered, unitPrice, promisedDeliveryDate }
 
   function newLineRow(){
@@ -837,58 +865,84 @@
     renderLines();
   });
 
-  function renderSourcePdfRow(){
-    var statusEl = document.querySelector('[data-doc-status="sourcePdf"]');
-    var linksEl = document.querySelector('[data-doc-links="sourcePdf"]');
-    var links = '';
-    if (sourcePdfState.pending) {
-      statusEl.textContent = 'Selected: ' + sourcePdfState.pending.filename + ' (will be uploaded on Save)';
-      statusEl.className = 'docStatus ok';
-      links = '<button type="button" id="srcPreviewPendingBtn">Preview</button>';
-    } else if (sourcePdfState.existing && !sourcePdfState.removed) {
-      statusEl.textContent = 'Attached: ' + sourcePdfState.existing.filename;
-      statusEl.className = 'docStatus ok';
-      links = '<button type="button" id="srcViewBtn">View</button>' +
-        '<span class="removeLink" style="cursor:pointer;" id="srcRemoveLink">Remove</span>';
+  function activeAttachmentCount(){ return attachmentsState.length; }
+  function renderAttachmentsList(){
+    var listEl = document.getElementById('attachmentsList');
+    var countEl = document.getElementById('attachCount');
+    var inputEl = document.getElementById('attachmentsDocInput');
+    var count = activeAttachmentCount();
+    countEl.textContent = '(' + count + ' / ' + CUSTOMER_PO_ATTACHMENTS_MAX + ')';
+    if (!count) {
+      listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>';
     } else {
-      statusEl.textContent = 'No file attached';
-      statusEl.className = 'docStatus';
+      listEl.innerHTML = attachmentsState.map(function(entry, idx){
+        var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
+        var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+        var viewBtn = entry.kind === 'pending'
+          ? '<button type="button" data-preview-idx="' + idx + '">Preview</button>'
+          : '<button type="button" data-view-idx="' + idx + '">View</button>';
+        return '<div class="attachRow">' +
+          '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+          '<div class="attachLinks">' + viewBtn +
+            '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' +
+          '</div></div>';
+      }).join('');
     }
-    linksEl.innerHTML = links;
-    var previewBtn = document.getElementById('srcPreviewPendingBtn');
-    if (previewBtn) previewBtn.addEventListener('click', function(){
-      openDocViewer({ filename: sourcePdfState.pending.filename, mimeType: sourcePdfState.pending.mimeType, bytes: sourcePdfState.pending.bytes });
+    inputEl.disabled = count >= CUSTOMER_PO_ATTACHMENTS_MAX;
+    inputEl.title = inputEl.disabled ? 'Maximum of ' + CUSTOMER_PO_ATTACHMENTS_MAX + ' attachments reached.' : '';
+
+    listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
+        if (entry) openDocViewer({ filename: entry.filename, mimeType: entry.mimeType, bytes: entry.bytes });
+      });
     });
-    var viewBtn = document.getElementById('srcViewBtn');
-    if (viewBtn) viewBtn.addEventListener('click', function(){
-      openDocViewer({ filename: sourcePdfState.existing.filename, mimeType: sourcePdfState.existing.mimeType, path: sourcePdfState.existing.path });
+    listEl.querySelectorAll('[data-view-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-view-idx'))];
+        if (entry) openDocViewer({ filename: entry.doc.filename, mimeType: entry.doc.mimeType, path: entry.doc.path });
+      });
     });
-    var removeLink = document.getElementById('srcRemoveLink');
-    if (removeLink) removeLink.addEventListener('click', function(){
-      sourcePdfState.removed = true;
-      renderSourcePdfRow();
+    listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        attachmentsState.splice(Number(btn.getAttribute('data-remove-idx')), 1);
+        renderAttachmentsList();
+      });
     });
   }
-  document.querySelector('[data-doc-input="sourcePdf"]').addEventListener('change', async function(){
-    var file = this.files && this.files[0];
+  document.getElementById('attachmentsDocInput').addEventListener('change', async function(){
+    var files = this.files ? Array.from(this.files) : [];
     this.value = '';
-    if (!file) return;
-    try {
-      var bytes = await readFileAsBytes(file);
-      sourcePdfState.pending = { bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' };
-      sourcePdfState.removed = false;
-      renderSourcePdfRow();
-    } catch (e) {
-      alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+    if (!files.length) return;
+    var errEl = document.getElementById('attachError');
+    errEl.textContent = '';
+    var room = CUSTOMER_PO_ATTACHMENTS_MAX - activeAttachmentCount();
+    if (files.length > room) {
+      errEl.textContent = room <= 0
+        ? 'Maximum of ' + CUSTOMER_PO_ATTACHMENTS_MAX + ' attachments reached — remove one before adding another.'
+        : 'Only ' + room + ' more file' + (room === 1 ? '' : 's') + ' can be added (limit ' + CUSTOMER_PO_ATTACHMENTS_MAX + ').';
+      files = files.slice(0, Math.max(room, 0));
     }
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      try {
+        var bytes = await readFileAsBytes(file);
+        attachmentsState.push({ kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' });
+      } catch (e) {
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      }
+    }
+    renderAttachmentsList();
   });
 
   function resetForm(){
     document.getElementById('poForm').reset();
     document.getElementById('modalError').textContent = '';
-    sourcePdfState = { existing: null, pending: null, removed: false };
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = [];
     lineRows = [newLineRow()];
-    renderSourcePdfRow();
+    renderAttachmentsList();
     document.getElementById('f_customer').innerHTML = customerOrgOptions('');
     renderLines();
   }
@@ -906,12 +960,13 @@
     editingId = id;
     document.getElementById('poForm').reset();
     document.getElementById('modalError').textContent = '';
-    sourcePdfState = { existing: po.sourcePdf || null, pending: null, removed: false };
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = (po.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
     lineRows = (po.lines && po.lines.length) ? po.lines.map(function(l){
       return { partNumber: l.partNumber, description: l.description, revision: l.revision, uom: l.uom,
         qtyOrdered: l.qtyOrdered, unitPrice: l.unitPrice, promisedDeliveryDate: l.promisedDeliveryDate };
     }) : [newLineRow()];
-    renderSourcePdfRow();
+    renderAttachmentsList();
     document.getElementById('modalTitle').textContent = 'Edit Customer PO';
     document.getElementById('modalSub').textContent = 'Update this Customer PO\'s details.';
     document.getElementById('f_poNumber').value = po.poNumber || '';
@@ -923,6 +978,7 @@
     document.getElementById('f_currency').value = po.currency || '';
     document.getElementById('f_paymentTerms').value = po.paymentTerms || '';
     document.getElementById('f_incoterms').value = po.incoterms || '';
+    document.getElementById('f_notes').value = po.notes || '';
     renderLines();
     document.getElementById('poModalOverlay').classList.add('open');
   }
@@ -951,6 +1007,7 @@
       currency: document.getElementById('f_currency').value.trim(),
       paymentTerms: document.getElementById('f_paymentTerms').value.trim(),
       incoterms: document.getElementById('f_incoterms').value.trim(),
+      notes: document.getElementById('f_notes').value.trim(),
       lines: lineRows.filter(function(r){ return r.partNumber; })
     };
     if (!baseFields.poNumber) { errEl.textContent = 'PO Number is required.'; return; }
@@ -967,20 +1024,21 @@
         poId = createData.id;
       }
 
-      var sourcePayload;
-      if (sourcePdfState.pending) {
-        var path = buildSourcePdfPath(poId, sourcePdfState.pending.filename);
-        await ghPutFile(path, sourcePdfState.pending.bytes, 'Upload source PDF for Customer PO ' + baseFields.poNumber);
-        sourcePayload = { path: path, filename: sourcePdfState.pending.filename, mimeType: sourcePdfState.pending.mimeType, size: sourcePdfState.pending.bytes.length };
-      } else if (sourcePdfState.removed) {
-        sourcePayload = null;
-      } else {
-        sourcePayload = sourcePdfState.existing;
+      var attachmentsPayload = [];
+      for (var i = 0; i < attachmentsState.length; i++) {
+        var entry = attachmentsState[i];
+        if (entry.kind === 'existing') {
+          attachmentsPayload.push(entry.doc);
+        } else {
+          var path = buildAttachmentDocPath(poId, entry.filename, i);
+          await ghPutFile(path, entry.bytes, 'Upload attachment for Customer PO ' + baseFields.poNumber);
+          attachmentsPayload.push({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length });
+        }
       }
 
       var putRes = await apiFetch('customer-pos/' + encodeURIComponent(poId), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({}, baseFields, { sourcePdf: sourcePayload }))
+        body: JSON.stringify(Object.assign({}, baseFields, { attachments: attachmentsPayload }))
       });
       var putData = {}; try { putData = await putRes.json(); } catch(e){}
       if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));

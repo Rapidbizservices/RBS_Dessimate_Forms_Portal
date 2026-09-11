@@ -1801,6 +1801,15 @@ function sanitizeCustomerPoLine(l) {
 }
 function sanitizeCustomerPo(o) {
   const lines = Array.isArray(o.lines) ? o.lines.map(sanitizeCustomerPoLine) : [];
+  // Rev2.5: up to 20 attachments (was a single "Original PO" sourcePdf file)
+  // - same migration pattern as Parts' old single "drawing" field: a record
+  // saved before this still has only sourcePdf, surfaced here as the sole
+  // entry of "attachments" so every client only ever needs to look at one
+  // field. sourcePdf itself is kept in the response for any old client still
+  // reading it, but is never written to by new saves (see handleUpdateCustomerPo).
+  const attachments = Array.isArray(o.attachments)
+    ? sanitizeOrgDocList(o.attachments)
+    : (o.sourcePdf ? sanitizeOrgDocList([o.sourcePdf]) : []);
   return {
     id: o.id,
     poNumber: o.poNumber || '',
@@ -1812,9 +1821,11 @@ function sanitizeCustomerPo(o) {
     currency: o.currency || '',
     paymentTerms: o.paymentTerms || '',
     incoterms: o.incoterms || '',
+    notes: o.notes || '',
     lines: lines,
     poTotal: Math.round(lines.reduce(function (sum, l) { return sum + l.extendedPrice; }, 0) * 100) / 100,
     sourcePdf: sanitizeOrgDoc(o.sourcePdf),
+    attachments: attachments,
     createdAt: o.createdAt || null
   };
 }
@@ -1851,6 +1862,7 @@ function validateCustomerPoFields(body, origin) {
     currency: (body.currency || '').toString().trim(),
     paymentTerms: (body.paymentTerms || '').toString().trim(),
     incoterms: (body.incoterms || '').toString().trim(),
+    notes: (body.notes || '').toString().trim(),
     lines: lines
   };
 }
@@ -1861,7 +1873,7 @@ async function handleCreateCustomerPo(request, env, origin) {
   const fields = validateCustomerPoFields(body, origin);
   if (fields.error) return fields.error;
 
-  const newPo = Object.assign({ id: cryptoRandomId(), createdAt: new Date().toISOString(), sourcePdf: sanitizeOrgDoc(body.sourcePdf) }, fields);
+  const newPo = Object.assign({ id: cryptoRandomId(), createdAt: new Date().toISOString(), attachments: sanitizeOrgDocList(body.attachments) }, fields);
 
   const result = await mutateJsonArrayFile(env, CUSTOMER_POS_FILE_PATH, function (items) {
     items.push(newPo);
@@ -1882,7 +1894,14 @@ async function handleUpdateCustomerPo(request, env, origin, id) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
     Object.assign(target, fields);
-    if (body.sourcePdf !== undefined) target.sourcePdf = sanitizeOrgDoc(body.sourcePdf);
+    if (body.attachments !== undefined) {
+      target.attachments = sanitizeOrgDocList(body.attachments);
+      // A record moving from the old single-sourcePdf shape to the new
+      // array now has both fields; "attachments" always wins in
+      // sanitizeCustomerPo, so the stale sourcePdf is just dead weight.
+      // Drop it so the record doesn't carry two conflicting sources of truth.
+      delete target.sourcePdf;
+    }
     saved = target;
     return { items: items };
   }, { requireFound: true });
