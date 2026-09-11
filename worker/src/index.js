@@ -2415,7 +2415,11 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, customerInfo, stamp
   const supplierAddr0 = (supplierOrg && Array.isArray(supplierOrg.addresses) && supplierOrg.addresses[0]) ? supplierOrg.addresses[0] : null;
   const y1 = addrBlock(col1, po.supplier || '', supplierAddr0 ? [supplierAddr0.line1, supplierAddr0.line2].filter(Boolean) : []);
   const y2 = addrBlock(col2, (selfOrg && selfOrg.name) || 'Dessimate LLC', selfAddr0 ? [selfAddr0.line1, selfAddr0.line2].filter(Boolean) : []);
-  const y3 = addrBlock(col3, '', po.shipTo ? po.shipTo.split(/\r?\n/) : ['—']);
+  // The "Ship To" heading stays, but per customer markup on the rendered
+  // sample, its address value is dropped here - the Customer PO block right
+  // below already carries the customer's address, so printing po.shipTo
+  // too was a redundant duplicate of the same address.
+  const y3 = addrTop - 13;
 
   // ---- Customer PO (under Ship To) ------------------------------------------
   // customerInfo is only passed in when this PO actually carries
