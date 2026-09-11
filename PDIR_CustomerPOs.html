@@ -232,7 +232,7 @@
       <a class="homeBtn" href="PDIR_DessimateInvoices.html">Dessimate Invoices</a>
       <a class="homeBtn" href="APQP.html">APQP</a>
       <a class="homeBtn" href="Instructions.html">Instructions</a>
-      <button type="button" class="addBtn" id="addPoBtn">Add Customer PO</button>
+      <button type="button" class="addBtn" id="addPoBtn" style="display:none;">Add Customer PO</button>
     </div>
   </div>
 
@@ -421,6 +421,25 @@
   }
   function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
   function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  // Rev2.7: creating/editing/deleting a Customer PO is already Admin+ only
+  // on the backend - resolved once per page load so the Add button and
+  // per-row Edit/Delete can be hidden for a Team Member rather than shown
+  // and then failing with a 403 on click.
+  var currentAccessLevel = null;
+  function canManageRecords(){ return currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
+  async function resolveAccessLevel(){
+    var session = getSession();
+    if (!session) { currentAccessLevel = null; return; }
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+      if (res.ok) { var data = await res.json(); currentAccessLevel = data.accessLevel || 'team_member'; }
+    } catch (e) { console.error('Could not resolve access level', e); }
+  }
+  function applyAccessLevelUI(){
+    var addBtn = document.getElementById('addPoBtn');
+    if (addBtn) addBtn.style.display = canManageRecords() ? '' : 'none';
+  }
 
   async function apiFetch(path, opts){
     opts = opts || {};
@@ -753,10 +772,10 @@
         '<td>' + (po.lines ? po.lines.length : 0) + '</td>' +
         '<td class="moneyCell">' + escapeHtml(po.currency || '') + ' ' + money(po.poTotal) + '</td>' +
         '<td class="docCell">' + docHtml + '</td>' +
-        '<td><div class="rowActions">' +
+        '<td>' + (canManageRecords() ? '<div class="rowActions">' +
           '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
           '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>' +
-        '</div></td>' +
+        '</div>' : '') + '</td>' +
         '</tr>';
     }).join('');
 
@@ -1053,6 +1072,6 @@
   });
   // -----------------------------------------------------------------------------
 
-  requireAuthThen(async function(){ await loadDropdownData(); await loadPos(); });
+  requireAuthThen(async function(){ await resolveAccessLevel(); applyAccessLevelUI(); await loadDropdownData(); await loadPos(); });
 })();
 </script>

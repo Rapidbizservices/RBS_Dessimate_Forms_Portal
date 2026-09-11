@@ -248,7 +248,7 @@
       <a class="homeBtn" href="PDIR_DessimateInvoices.html">Dessimate Invoices</a>
       <a class="homeBtn" href="APQP.html">APQP</a>
       <a class="homeBtn" href="Instructions.html">Instructions</a>
-      <button type="button" class="addBtn" id="addPoBtn">Add Dessimate PO</button>
+      <button type="button" class="addBtn" id="addPoBtn" style="display:none;">Add Dessimate PO</button>
     </div>
   </div>
 
@@ -335,8 +335,8 @@
         <label>Supplier
           <select id="f_supplier" required></select>
         </label>
-        <label>Ship To
-          <input type="text" id="f_shipTo">
+        <label>Ship To <span style="font-weight:400;">(street on one line, city/state/zip on the next)</span>
+          <textarea id="f_shipTo" rows="2" style="display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px; padding:9px 10px; border:1px solid var(--line); border-radius:6px; resize:vertical;"></textarea>
         </label>
       </div>
       <div class="modalGrid3">
@@ -464,6 +464,25 @@
   }
   function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
   function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  // Rev2.7: creating/editing/deleting a Dessimate PO is Admin+ only on the
+  // backend now (see worker/README.md) - resolved once per page load so the
+  // Add button and per-row Edit/Delete can be hidden for a Team Member
+  // rather than shown and then failing with a 403 on click.
+  var currentAccessLevel = null;
+  function canManageRecords(){ return currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
+  async function resolveAccessLevel(){
+    var session = getSession();
+    if (!session) { currentAccessLevel = null; return; }
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+      if (res.ok) { var data = await res.json(); currentAccessLevel = data.accessLevel || 'team_member'; }
+    } catch (e) { console.error('Could not resolve access level', e); }
+  }
+  function applyAccessLevelUI(){
+    var addBtn = document.getElementById('addPoBtn');
+    if (addBtn) addBtn.style.display = canManageRecords() ? '' : 'none';
+  }
 
   async function apiFetch(path, opts){
     opts = opts || {};
@@ -965,10 +984,10 @@
         '<td class="moneyCell">' + escapeHtml(po.currency || '') + ' ' + money(po.poTotal) + '</td>' +
         '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(po.id) + '" data-ponum="' + escapeHtml(po.poNumber) + '">View PDF</button></td>' +
         '<td class="docCell">' + attCell + '</td>' +
-        '<td><div class="rowActions">' +
+        '<td>' + (canManageRecords() ? '<div class="rowActions">' +
           '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
           '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>' +
-        '</div></td>' +
+        '</div>' : '') + '</td>' +
         '</tr>';
     }).join('');
 
@@ -1326,6 +1345,6 @@
   });
   // -----------------------------------------------------------------------------
 
-  requireAuthThen(async function(){ await loadDropdownData(); await loadPos(); });
+  requireAuthThen(async function(){ await resolveAccessLevel(); applyAccessLevelUI(); await loadDropdownData(); await loadPos(); });
 })();
 </script>

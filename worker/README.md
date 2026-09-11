@@ -365,6 +365,41 @@ linked here for a fast overview if you're updating an existing deployment.
   Description wrapped beneath it in gray, under one "Part Number/Rev/
   Description" column per the reference's header, rather than cramming both
   onto a single line the way the reference's own sample data happened to.
+- **Dessimate PO PDF: alignment/formatting follow-up** — customer feedback
+  on the redesign above, all in `buildDessimatePoPdf` (backend-only): (1)
+  the Purchase Order Number/Date/Terms/Due Date/Currency identity block now
+  starts level with the self-org address/contact columns instead of higher
+  up near the title, all three "next to each other" as requested — its
+  label/value column had to narrow (`idValueMaxWidth` 150 → 68) so long
+  values like Payment Terms still clear the purchasing-email line at the
+  same row rather than colliding with it. (2) `Date:` and the line-items'
+  `Promised Delivery Date` now format an ISO `YYYY-MM-DD` value as
+  MM/DD/YYYY (`fmtDateMDY`); anything else passes through unchanged. (3)
+  Vendor/Bill to/Ship To addresses print each line as its own forced line
+  (word-wrapped only if that one line is itself too wide) instead of
+  merging line1+line2 into one comma-joined, width-wrapped string — street
+  and city/state/zip now reliably land on separate lines, matching the
+  self-org letterhead block's existing behavior. Ship To specifically was
+  free text with no way to force that break, so its field on the
+  Dessimate PO form (`PDIR_DessimatePOs.html`, `f_shipTo`) changed from a
+  single-line `<input>` to a 2-row `<textarea>`; the PDF splits on the
+  literal `\n` before wrapping (`wrapLines` now honors embedded newlines
+  everywhere it's used, not just here).
+- **Dessimate PO create/update/delete tightened to Admin+** — was
+  team_member+ (an inconsistency with Customer PO and Dessimate Invoice,
+  which were already admin-gated); `POST /dessimate-pos`, `PUT`/`DELETE
+  /dessimate-pos/<id>`, and the `peek-numbers` preview now all require
+  `['super_admin', 'admin']`, closing the gap the product owner flagged
+  ("no access to create Dessimate PO, Dessimate invoice, Customer PO to
+  any one other than Admin and Super Admin ... no access if they find a
+  workaround"). Frontend follow-up on all three pages
+  (`PDIR_DessimatePOs.html`, `PDIR_DessimateInvoices.html`,
+  `PDIR_CustomerPOs.html`): each resolves the signed-in user's
+  `accessLevel` via `GET /me` on load and now hides (rather than showing
+  and then failing on click) the "Add ..." button, the Dessimate Invoice
+  page's "Deleted Invoices" button, and every row's Edit/Delete/Duplicate
+  buttons for anyone below Admin — defaulting hidden until that resolves,
+  so a slow network never flashes a button a Team Member can't actually use.
 
 ## The dashboard (`index.html`)
 

@@ -461,7 +461,15 @@ export default {
           return await handleListDessimatePos(env, origin, auth.accessLevel, auth.organization);
         }
         if (request.method === 'POST') {
-          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          // Rev2.7: tightened from team_member+ to admin+, matching the
+          // Customer PO and Dessimate Invoice write gates - a Dessimate PO is
+          // just as commercially sensitive as those, and leaving it open to
+          // Team Member was an inconsistency the product owner flagged
+          // ("no access to create ... to any one other than Admin and Super
+          // Admin"). PUT/DELETE and the peek-numbers preview below were
+          // tightened the same way so there's no leftover route a Team
+          // Member could still reach.
+          const auth = await requireRole(request, env, ['super_admin', 'admin']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
           return await handleCreateDessimatePo(request, env, origin);
         }
@@ -472,7 +480,7 @@ export default {
       // Checked before the generic '/dessimate-pos/' handler below, same
       // reason as the PDF route just below it.
       if (url.pathname === '/dessimate-pos/peek-numbers' && request.method === 'GET') {
-        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         return await handlePeekDessimatePoNumbers(env, origin);
       }
@@ -489,7 +497,7 @@ export default {
 
       if (url.pathname.startsWith('/dessimate-pos/')) {
         const id = decodeURIComponent(url.pathname.slice('/dessimate-pos/'.length));
-        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         if (request.method === 'PUT') return await handleUpdateDessimatePo(request, env, origin, id);
         if (request.method === 'DELETE') return await handleDeleteDessimatePo(env, origin, id);
@@ -2285,18 +2293,24 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, stampBytes) {
     opts = opts || {};
     page.drawText(str == null ? '' : String(str), { x: x, y: yy, size: size, font: opts.bold ? fontBold : font, color: opts.color || ink });
   }
+  // A user-typed "\n" (e.g. Ship To's street/city-state-zip break) is always
+  // honored as a forced line break; each resulting line is then word-wrapped
+  // to maxWidth same as before.
   function wrapLines(str, maxWidth, size, useFont) {
     const f = useFont || font;
-    const words = (str || '').split(/\s+/).filter(Boolean);
-    const lines = [];
-    let cur = '';
-    words.forEach(function (w) {
-      const attempt = cur ? cur + ' ' + w : w;
-      if (cur && f.widthOfTextAtSize(attempt, size) > maxWidth) { lines.push(cur); cur = w; }
-      else cur = attempt;
+    const out = [];
+    (str || '').split(/\r?\n/).forEach(function (raw) {
+      const words = raw.split(/\s+/).filter(Boolean);
+      if (!words.length) return;
+      let cur = '';
+      words.forEach(function (w) {
+        const attempt = cur ? cur + ' ' + w : w;
+        if (cur && f.widthOfTextAtSize(attempt, size) > maxWidth) { out.push(cur); cur = w; }
+        else cur = attempt;
+      });
+      if (cur) out.push(cur);
     });
-    if (cur) lines.push(cur);
-    return lines;
+    return out;
   }
   function moneyCommas(n) {
     const parts = money2(n).split('.');
@@ -2305,6 +2319,14 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, stampBytes) {
   }
   // Letter-spaced caption, matching the reference title's tracked look.
   function spaced(str) { return String(str).split('').join(' '); }
+  // ISO date input ("YYYY-MM-DD") -> MM/DD/YYYY for display, per the
+  // reference; anything else (already-formatted, free text, blank) passes
+  // through unchanged rather than risk mangling it.
+  function fmtDateMDY(s) {
+    const str = (s || '').toString().trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    return m ? (m[2] + '/' + m[3] + '/' + m[1]) : str;
+  }
 
   const headerHeight = 270;
   const footerHeight = 190;
@@ -2338,11 +2360,15 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, stampBytes) {
     leftText(line, contactX, cy, 9); cy -= 12;
   });
 
-  // Payment Terms (and, rarely, a long Customer PO Ref list) can run well
-  // past a short reference value like "See note" - wrap onto extra lines
-  // right-aligned under the label rather than letting a long value collide
-  // with the row above it.
-  const idValueMaxWidth = 150;
+  // Purchase Order Number/Date/Terms/... starts level with the self-org
+  // address and contact columns (all three "next to each other", per
+  // customer feedback) rather than up near the title - so the label/value
+  // gap has to stay narrow enough to clear the contact column's longest
+  // real line (the purchasing email) at the same row. Payment Terms (and,
+  // rarely, a long Customer PO Ref list) can still run past its narrow
+  // value width - wraps onto extra lines right-aligned under the label
+  // rather than colliding with the row above it.
+  const idValueMaxWidth = 68;
   const idLabelEdge = pageWidth - margin - idValueMaxWidth - 10;
   function idRow(label, value, size, bold) {
     rightText(label, idLabelEdge, ry, size, { bold: true });
@@ -2351,10 +2377,10 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, stampBytes) {
     valLines.forEach(function (vl, i) { rightText(vl, pageWidth - margin, ry - i * (size + 2), size, { bold: !!bold }); });
     ry -= (size + 5) + Math.max(0, valLines.length - 1) * (size + 2);
   }
-  let ry = hy - 44;
+  let ry = logoBottom - 20;
   const poRefDisplay = (Array.isArray(po.customerPoRefs) && po.customerPoRefs.length) ? po.customerPoRefs.join(', ') : (po.customerPoRef || '');
   idRow('Purchase Order Number:', po.poNumber, 10);
-  idRow('Date:', po.poDate || '', 10);
+  idRow('Date:', fmtDateMDY(po.poDate), 10);
   idRow('Terms:', po.paymentTerms || '', 10);
   idRow('Due Date:', '', 10);
   idRow('Currency:', po.currency || '', 10);
@@ -2368,18 +2394,23 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, stampBytes) {
   leftText('Bill to', col2, addrTop, 10, { bold: true });
   leftText('Ship To', col3, addrTop, 10, { bold: true });
 
-  function addrBlock(x, name, addr) {
+  // Each address line is drawn on its own forced line (word-wrapped only if
+  // that one line is itself too wide) - never merged into one comma-joined,
+  // width-wrapped blob, so "street" and "city, state zip" reliably land on
+  // separate lines the way they're entered (matching the self-org
+  // letterhead block above, and per customer feedback for this row).
+  function addrBlock(x, name, lines) {
     let yy = addrTop - 13;
     if (name) { leftText(name, x, yy, 9); yy -= 11; }
-    wrapLines(addr, colW - 12, 9).forEach(function (line) { leftText(line, x, yy, 9); yy -= 11; });
+    (lines || []).forEach(function (raw) {
+      wrapLines(raw, colW - 12, 9).forEach(function (line) { leftText(line, x, yy, 9); yy -= 11; });
+    });
     return yy;
   }
   const supplierAddr0 = (supplierOrg && Array.isArray(supplierOrg.addresses) && supplierOrg.addresses[0]) ? supplierOrg.addresses[0] : null;
-  const supplierAddrText = supplierAddr0 ? [supplierAddr0.line1, supplierAddr0.line2].filter(Boolean).join(', ') : '';
-  const y1 = addrBlock(col1, po.supplier || '', supplierAddrText);
-  const billAddrText = selfAddr0 ? [selfAddr0.line1, selfAddr0.line2].filter(Boolean).join(', ') : '';
-  const y2 = addrBlock(col2, (selfOrg && selfOrg.name) || 'Dessimate LLC', billAddrText);
-  const y3 = addrBlock(col3, '', po.shipTo || '—');
+  const y1 = addrBlock(col1, po.supplier || '', supplierAddr0 ? [supplierAddr0.line1, supplierAddr0.line2].filter(Boolean) : []);
+  const y2 = addrBlock(col2, (selfOrg && selfOrg.name) || 'Dessimate LLC', selfAddr0 ? [selfAddr0.line1, selfAddr0.line2].filter(Boolean) : []);
+  const y3 = addrBlock(col3, '', po.shipTo ? po.shipTo.split(/\r?\n/) : ['—']);
 
   // ---- Line items table -------------------------------------------------------
   let y = pageHeight - headerHeight - 26;
@@ -2424,7 +2455,7 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, stampBytes) {
       if (c.key === 'line') s = String(idx + 1);
       else if (c.key === 'combined') s = [l.partNumber, l.revision ? 'Rev ' + l.revision : ''].filter(Boolean).join(' — ');
       else if (c.key === 'unitPrice' || c.key === 'extendedPrice') s = '$' + moneyCommas(l[c.key]);
-      else if (c.key === 'requestedDeliveryDate') s = l.requestedDeliveryDate || '—';
+      else if (c.key === 'requestedDeliveryDate') s = fmtDateMDY(l.requestedDeliveryDate) || '—';
       else s = l[c.key] == null || l[c.key] === '' ? '' : String(l[c.key]);
       const vx = c.right ? c.x + c.w - font.widthOfTextAtSize(s, 8.5) : c.x;
       page.drawText(s, { x: vx, y: y, size: 8.5, font: font, color: ink });
