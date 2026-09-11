@@ -1,0 +1,382 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>About DSCM &mdash; DSCM</title>
+<script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --brand-light:#eef1fa;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:900px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+
+  .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .homeBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
+    border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
+    color:var(--brand); background:#fff; border:1px solid var(--brand);
+  }
+  .homeBtn:hover{ background:#eef1fa; }
+  html[data-embedded] .homeBtn{ display:none !important; }
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
+    font-size:12.5px; margin:10px 0 18px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  /* Staff login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+  .authNote{ font-size:11.5px; color:var(--label); background:#f7f8fb; border:1px solid var(--line);
+    border-radius:6px; padding:8px 10px; margin:0 0 16px; line-height:1.45; }
+  .authAttempts{ font-size:12px; color:var(--label); min-height:14px; margin-top:4px; }
+
+  /* About panel */
+  .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; padding:28px 30px; }
+  .panelHead{ display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:14px; }
+  .panelHead h2{ font-size:17px; margin:0 0 4px; }
+  .panelHead .versionLine{ font-size:12.5px; color:var(--label); }
+  .editBtn{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand); background:#fff;
+    border:1px solid var(--brand); border-radius:6px; padding:7px 14px; cursor:pointer; white-space:nowrap; }
+  .editBtn:hover{ background:var(--brand-light); }
+  .aboutText{ font-size:14px; color:var(--ink); line-height:1.65; white-space:pre-wrap; margin:0; max-width:70ch; }
+  .aboutText.empty{ color:var(--label); font-style:italic; }
+
+  /* Add/Edit modal (same pattern as every other page's) */
+  .modalOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1500; align-items:center; justify-content:center; padding:20px; }
+  .modalOverlay.open{ display:flex; }
+  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:640px;
+    max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .modalCard h2{ font-size:17px; margin:0 0 4px; color:var(--ink); }
+  .modalCard .modalSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .modalCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .modalCard input, .modalCard textarea{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .modalCard textarea{ resize:vertical; }
+  .modalGrid2{ display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+  .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
+  .modalBtns{ display:flex; gap:10px; margin-top:10px; }
+  .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
+    padding:11px; cursor:pointer; }
+  .saveBtn{ color:#fff; background:var(--brand); border:none; }
+  .saveBtn:hover{ background:var(--brand-dark); }
+  .saveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .cancelBtn:hover{ background:#f4f5f8; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>About DSCM</h1>
+        <p class="sub">What this system is and where it stands.</p>
+      </div>
+    </div>
+    <div class="headerBtns">
+      <a class="homeBtn" href="index.html">Home</a>
+      <a class="homeBtn" href="PDIR_Portal.html">PDIR Portal</a>
+      <a class="homeBtn" href="PDIR_Users.html">Users</a>
+      <a class="homeBtn" href="PDIR_Organizations.html">Organizations</a>
+      <a class="homeBtn" href="PDIR_Parts.html">Parts</a>
+      <a class="homeBtn" href="PDIR_DessimatePOs.html">Dessimate POs</a>
+      <a class="homeBtn" href="PDIR_SupplierInvoices.html">Supplier Invoices</a>
+      <a class="homeBtn" href="PDIR_CustomerPOs.html">Customer POs</a>
+      <a class="homeBtn" href="PDIR_DessimateInvoices.html">Dessimate Invoices</a>
+      <a class="homeBtn" href="APQP.html">APQP</a>
+      <a class="homeBtn" href="Instructions.html">Instructions</a>
+    </div>
+  </div>
+
+  <div class="ghbar">
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
+  </div>
+
+  <div class="panel">
+    <div class="panelHead">
+      <div>
+        <h2>About DSCM</h2>
+        <div class="versionLine" id="versionLine">Loading&hellip;</div>
+      </div>
+      <button type="button" class="editBtn" id="editAboutBtn" style="display:none;">Edit</button>
+    </div>
+    <p class="aboutText" id="aboutText">Loading&hellip;</p>
+  </div>
+
+  <footer>Dessimate &middot; DSCM &middot; About DSCM &middot; <span id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</span></footer>
+</div>
+
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Staff Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to use the DSCM system.</p>
+    <p class="authNote">Please check the username and password provided by your Dessimate contact. Your account will be locked after 3 unsuccessful login attempts.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+      <div class="authAttempts" id="authAttempts"></div>
+    </form>
+  </div>
+</div>
+
+<div class="modalOverlay" id="aboutModalOverlay">
+  <div class="modalCard">
+    <h2>Edit About DSCM</h2>
+    <p class="modalSub">The About text is shown to everyone on this page. Version and Built Label are the same fields shown in the footer/sidebar throughout the system.</p>
+    <form id="aboutForm">
+      <div class="modalGrid2">
+        <label>Current Version
+          <input type="text" id="f_aboutVersion" placeholder="e.g. 2.6" required>
+        </label>
+        <label>Built Label <span style="font-weight:400;">(optional)</span>
+          <input type="text" id="f_aboutBuiltLabel" placeholder="e.g. Built September 2026">
+        </label>
+      </div>
+      <label>About DSCM
+        <textarea id="f_aboutText" rows="8" placeholder="A short description of the system, shown on this page."></textarea>
+      </label>
+      <div class="modalError" id="aboutModalError"></div>
+      <div class="modalBtns">
+        <button type="button" class="cancelBtn" id="aboutModalCancelBtn">Cancel</button>
+        <button type="submit" class="saveBtn" id="aboutModalSaveBtn">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ---- Backend (staff login only - this page has no data of its own beyond
+  // /app-config) --------------------------------------------------------------
+  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
+
+  // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
+  // worker/README.md) instead of hand-typed here - this fills it in once
+  // fetched, leaving the hardcoded text above as the offline fallback.
+  // Rev2.6: the same /app-config record carries aboutText, shown below and
+  // editable only by a Super Admin (see resolveAccessAndRender, which
+  // shows/hides editAboutBtn - the backend enforces this independently too).
+  var lastAppConfig = { version: '', builtLabel: '', aboutText: '' };
+  function renderAbout(){
+    var textEl = document.getElementById('aboutText');
+    var versionEl = document.getElementById('versionLine');
+    var text = (lastAppConfig.aboutText || '').trim();
+    if (text) { textEl.textContent = text; textEl.classList.remove('empty'); }
+    else { textEl.textContent = 'No description on file yet.'; textEl.classList.add('empty'); }
+    versionEl.textContent = 'Version ' + (lastAppConfig.version || '—') + (lastAppConfig.builtLabel ? ' · ' + lastAppConfig.builtLabel : '');
+  }
+  function loadAppConfig(){
+    return fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg) return;
+      lastAppConfig = cfg;
+      var el = document.getElementById('appVersionStamp');
+      if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+      renderAbout();
+    }).catch(function(){});
+  }
+  loadAppConfig();
+
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+  // -----------------------------------------------------------------------------
+
+  // ---- Staff login wall -----------------------------------------------------
+  var pendingAfterAuth = null;
+
+  function refreshGhStatus(){
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Welcome, ' + session.username;
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Log out';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Log out';
+    }
+  }
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
+    refreshGhStatus();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var attemptsEl = document.getElementById('authAttempts');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = ''; attemptsEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) {
+          var loginErr = new Error(data.message || ('HTTP ' + res.status));
+          loginErr.attemptsRemaining = data.attemptsRemaining;
+          throw loginErr;
+        }
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+        document.getElementById('authPassword').value = '';
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+        attemptsEl.textContent = (err && typeof err.attemptsRemaining === 'number' && err.attemptsRemaining > 0)
+          ? 'Sign-in attempt ' + (3 - err.attemptsRemaining) + ' of 3 — this account locks after 3 failed attempts.'
+          : '';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  refreshGhStatus();
+  // -----------------------------------------------------------------------------
+
+  // ---- Resolve access level (Super Admin sees the Edit button) --------------
+  async function resolveAccessAndRender(){
+    var session = getSession();
+    var accessLevel = 'team_member';
+    if (session) {
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+        if (res.ok) {
+          var data = await res.json();
+          accessLevel = data.accessLevel || 'team_member';
+        }
+      } catch (e) { console.error('Could not resolve access level', e); }
+    }
+    document.getElementById('editAboutBtn').style.display = accessLevel === 'super_admin' ? 'inline-block' : 'none';
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Edit About DSCM (Super Admin only) ------------------------------------
+  function closeAboutModal(){ document.getElementById('aboutModalOverlay').classList.remove('open'); }
+  document.getElementById('editAboutBtn').addEventListener('click', function(){
+    document.getElementById('f_aboutVersion').value = lastAppConfig.version || '';
+    document.getElementById('f_aboutBuiltLabel').value = lastAppConfig.builtLabel || '';
+    document.getElementById('f_aboutText').value = lastAppConfig.aboutText || '';
+    document.getElementById('aboutModalError').textContent = '';
+    document.getElementById('aboutModalOverlay').classList.add('open');
+  });
+  document.getElementById('aboutModalCancelBtn').addEventListener('click', closeAboutModal);
+  document.getElementById('aboutModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'aboutModalOverlay') closeAboutModal();
+  });
+  document.getElementById('aboutForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('aboutModalError');
+    var saveBtn = document.getElementById('aboutModalSaveBtn');
+    errEl.textContent = '';
+    var version = document.getElementById('f_aboutVersion').value.trim();
+    if (!version) { errEl.textContent = 'Version is required.'; return; }
+    var body = {
+      version: version,
+      builtLabel: document.getElementById('f_aboutBuiltLabel').value.trim(),
+      aboutText: document.getElementById('f_aboutText').value.trim()
+    };
+    var session = getSession();
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      var headers = { 'Content-Type': 'application/json' };
+      if (session) headers.Authorization = 'Bearer ' + session.token;
+      var res = await fetch(WORKER_BASE_URL + '/app-config', { method: 'PUT', headers: headers, body: JSON.stringify(body) });
+      var data = {}; try { data = await res.json(); } catch(err){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      lastAppConfig = data;
+      var stampEl = document.getElementById('appVersionStamp');
+      if (stampEl) stampEl.textContent = 'DSCM v' + data.version + (data.builtLabel ? ' · ' + data.builtLabel : '');
+      renderAbout();
+      closeAboutModal();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not save this.';
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+  // -----------------------------------------------------------------------------
+
+  requireAuthThen(resolveAccessAndRender);
+})();
+</script>
