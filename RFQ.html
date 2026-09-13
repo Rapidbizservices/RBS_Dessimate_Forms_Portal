@@ -1,0 +1,1539 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>RFQ &mdash; DSCM</title>
+<script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:1220px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+
+  .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .homeBtn, .addBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
+    border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
+  }
+  .homeBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .homeBtn:hover{ background:#eef1fa; }
+  html[data-embedded] .homeBtn{ display:none !important; }
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
+  .addBtn{ color:#fff; background:#1f9254; }
+  .addBtn:hover{ background:#187b46; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
+    font-size:12.5px; margin:10px 0 18px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  /* Staff login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+  .authNote{ font-size:11.5px; color:var(--label); background:#f7f8fb; border:1px solid var(--line);
+    border-radius:6px; padding:8px 10px; margin:0 0 16px; line-height:1.45; }
+  .authAttempts{ font-size:12px; color:var(--label); min-height:14px; margin-top:4px; }
+
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:12px; flex-wrap:wrap; }
+  .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
+  .toolbarRight{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .quietLink{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand); background:#fff;
+    border:1px solid var(--brand); border-radius:7px; padding:8px 14px; cursor:pointer; text-decoration:none; white-space:nowrap; }
+  .quietLink:hover{ background:#eef1fa; }
+
+  /* Quote-format template card (Admin+ only) */
+  .templateCard{ background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px 16px;
+    margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  .templateCard .templateInfo h3{ font-size:13px; margin:0 0 3px; color:var(--ink); }
+  .templateCard .templateInfo p{ font-size:12px; color:var(--label); margin:0; }
+  .templateCard .templateActions{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .templateCard input[type=file]{ font-size:12px; }
+
+  .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; overflow-x:auto; }
+  table.rfqTable{ width:100%; border-collapse:collapse; font-size:13px; min-width:760px; }
+  table.rfqTable th{ background:#eef1f7; color:var(--label); font-size:11px; text-transform:uppercase;
+    letter-spacing:.02em; text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.rfqTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  table.rfqTable tr:last-child td{ border-bottom:none; }
+  .rfqNumber{ font-weight:700; font-variant-numeric:tabular-nums; }
+  .rowActions{ display:flex; gap:8px; white-space:nowrap; }
+  .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:6px 12px; white-space:nowrap; }
+  .editBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .editBtn:hover{ background:#eef1fa; }
+  .deleteBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
+  .deleteBtn:hover{ background:#fbeaea; border-color:#b23b3b; }
+  .statusPill{ display:inline-block; font-size:11.5px; font-weight:700; border-radius:12px; padding:3px 10px; white-space:nowrap; }
+  .statusPill.notStarted{ color:var(--label); background:#eef0f4; }
+  .statusPill.submitted{ color:#187b46; background:#e5f5ec; }
+
+  .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
+  .state.error{ color:#b23b3b; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+
+  /* Add/Edit modal */
+  .modalOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1500; align-items:center; justify-content:center; padding:20px; }
+  .modalOverlay.open{ display:flex; }
+  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:960px;
+    max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .modalCard h2{ font-size:17px; margin:0 0 4px; color:var(--ink); }
+  .modalCard .modalSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .modalCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .modalCard input, .modalCard select{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .modalGrid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 14px; }
+  .modalGrid2{ display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+
+  .numberBanner{ display:flex; gap:20px; flex-wrap:wrap; background:#f7f8fb; border:1px solid var(--line);
+    border-radius:8px; padding:12px 14px; margin-bottom:16px; font-size:12.5px; color:var(--label); }
+  .numberField{ flex:1 1 220px; min-width:200px; }
+  .numberField label{ display:block; margin-bottom:4px; }
+  .numberFieldRow{ display:flex; gap:8px; align-items:center; }
+  .numberFieldRow input{ flex:1 1 auto; min-width:0; font-variant-numeric:tabular-nums; margin-top:0; }
+  .numberFieldRow button{ flex:0 0 auto; font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:7px 10px; white-space:nowrap; color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .numberFieldRow button:hover{ background:#eef1fa; }
+  .numberFieldRow button:disabled{ opacity:.5; cursor:default; background:#fff; }
+
+  .modalSection{ margin:18px 0 4px; }
+  .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
+  .modalSectionHint{ font-size:12px; color:var(--label); margin:2px 0 8px; }
+
+  .checkList{ max-height:150px; overflow-y:auto; border:1px solid var(--line); border-radius:6px;
+    padding:9px 10px; margin-top:5px; }
+  .checkList label{ display:flex; align-items:center; gap:8px; font-size:13px; font-weight:400;
+    color:var(--ink); margin:0 0 7px; cursor:pointer; }
+  .checkList label:last-child{ margin-bottom:0; }
+  .checkList input[type=checkbox]{ width:auto; margin:0; }
+  .checkList .emptyNote{ color:var(--label); font-style:italic; font-size:12.5px; }
+  .unshareWarning{ font-size:11.5px; color:#a06a1c; background:#fdf3e2; border:1px solid #f0d9a8;
+    border-radius:6px; padding:6px 9px; margin-top:6px; }
+
+  .docCell{ font-size:12px; color:var(--label); }
+  .docCell .have{ color:#187b46; font-weight:600; }
+  .attachCount{ font-weight:400; font-size:12.5px; color:var(--label); }
+  .attachmentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .attachRow{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:7px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
+  .attachRow .attachName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .attachRow .attachName.pending{ color:#a06a1c; }
+  .attachRow .attachLinks{ display:flex; gap:10px; flex:0 0 auto; }
+  .attachRow .attachLinks button{ font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
+  .attachRow .attachLinks button:hover{ text-decoration:underline; }
+  .attachRow .attachLinks .removeLink{ color:#b23b3b; }
+  .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
+  .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    padding:9px 0; font-size:12.5px; }
+  .docRow .docMain{ flex:1 1 auto; min-width:0; }
+  .docRow input[type=file]{ font-size:11.5px; margin-top:2px; }
+
+  .linesWrap{ overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
+  table.linesTable{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:420px; }
+  table.linesTable th{ background:#f7f8fb; color:var(--label); font-size:10.5px; text-transform:uppercase;
+    letter-spacing:.02em; text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.linesTable td{ padding:5px 8px; border-bottom:1px solid #eef0f4; vertical-align:middle; }
+  table.linesTable tr:last-child td{ border-bottom:none; }
+  table.linesTable input{ width:100%; margin:0; font-size:12.5px; padding:6px 7px; }
+  table.linesTable .readCell{ font-size:12.5px; color:var(--ink); }
+  table.linesTable .lineRemoveBtn{ font-family:inherit; font-size:11px; font-weight:700; color:#b23b3b; background:#fff;
+    border:1px solid #e3b3b3; border-radius:6px; padding:5px 8px; cursor:pointer; white-space:nowrap; }
+  table.linesTable .lineRemoveBtn:hover{ background:#fbeaea; }
+  .addLineBtn{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand); background:#fff;
+    border:1px solid var(--line); border-radius:7px; padding:7px 14px; cursor:pointer; margin-top:10px; }
+  .addLineBtn:hover{ background:#eef1fa; }
+
+  .quoteCard{ border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:10px; }
+  .quoteCard .quoteCardHead{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .quoteCard .quoteCardHead h4{ font-size:13px; margin:0; color:var(--ink); }
+  .quoteCard .quoteMeta{ font-size:11.5px; color:var(--label); }
+  .quoteLineRow{ display:flex; justify-content:space-between; gap:10px; font-size:12.5px; padding:3px 0; }
+  .quoteLineRow .qty{ color:var(--label); }
+  .quoteLineRow .amt{ font-variant-numeric:tabular-nums; font-weight:600; }
+
+  .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
+  .modalBtns{ display:flex; gap:10px; margin-top:10px; }
+  .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
+    padding:11px; cursor:pointer; }
+  .saveBtn{ color:#fff; background:var(--brand); border:none; }
+  .saveBtn:hover{ background:var(--brand-dark); }
+  .saveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .cancelBtn:hover{ background:#f4f5f8; }
+
+  /* In-page document viewer (PDF / image / .stp 3D) */
+  .viewerOverlay{
+    display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:2200; padding:22px; align-items:center; justify-content:center;
+  }
+  .viewerOverlay.open{ display:flex; }
+  .viewerPanel{
+    background:#fff; border-radius:10px; width:100%; max-width:980px; height:100%;
+    display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .viewerBar{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:12px 16px; border-bottom:1px solid var(--line); }
+  .viewerTitle{ font-size:14px; font-weight:700; overflow-wrap:anywhere; }
+  .viewerBtns{ display:flex; gap:8px; flex:0 0 auto; }
+  .viewerBtns a, .viewerBtns button{
+    font-family:inherit; font-size:13px; font-weight:600; text-decoration:none; cursor:pointer;
+    border-radius:6px; padding:7px 14px; white-space:nowrap;
+  }
+  #docViewerDownload{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  #docViewerDownload:hover{ background:#eef1fa; }
+  #docViewerClose{ color:#fff; background:#5b5f66; border:1px solid #5b5f66; }
+  #docViewerClose:hover{ background:#3f4248; }
+  .viewerBody{ flex:1 1 auto; position:relative; background:#525659; }
+  .viewerBody iframe, .viewerBody img{ position:absolute; inset:0; width:100%; height:100%; border:0; object-fit:contain; background:#525659; }
+  .viewerBody #docViewer3D{ position:absolute; inset:0; width:100%; height:100%; background:#e9ebef; }
+  .viewerBody #docViewer3D canvas{ display:block; width:100%; height:100%; }
+  .viewer3DHint{ position:absolute; left:12px; bottom:10px; background:rgba(20,22,28,.6); color:#fff;
+    font-size:11px; padding:5px 9px; border-radius:5px; pointer-events:none; }
+  .viewerBody .viewerState{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:13.5px; text-align:center; padding:20px; flex-direction:column; gap:10px;
+  }
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>RFQ</h1>
+        <p class="sub">Request-for-Quote packages Dessimate shares with Suppliers before a Part is finalized &mdash; drawings/3D files go up, Suppliers quote a price and tooling cost per line.</p>
+      </div>
+    </div>
+    <div class="headerBtns">
+      <a class="homeBtn" href="index.html">Home</a>
+      <a class="homeBtn" href="PDIR_Portal.html">PDIR Portal</a>
+      <a class="homeBtn" href="PDIR_Parts.html">Parts</a>
+      <a class="homeBtn" href="PDIR_DessimatePOs.html">Dessimate POs</a>
+      <a class="homeBtn" href="PDIR_SupplierInvoices.html">Supplier Invoices</a>
+      <a class="homeBtn" href="PDIR_CustomerPOs.html">Customer POs</a>
+      <a class="homeBtn" href="PDIR_DessimateInvoices.html">Dessimate Invoices</a>
+      <a class="homeBtn" href="APQP.html">APQP</a>
+      <a class="homeBtn" href="Instructions.html">Instructions</a>
+      <button type="button" class="addBtn" id="addRfqBtn" style="display:none;">Add RFQ</button>
+    </div>
+  </div>
+
+  <div class="ghbar">
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
+  </div>
+
+  <div class="templateCard" id="templateCard" style="display:none;">
+    <div class="templateInfo">
+      <h3>Standard Quote Format</h3>
+      <p id="templateStatus">Checking&hellip;</p>
+    </div>
+    <div class="templateActions">
+      <input type="file" id="templateFileInput" accept=".xlsx,.xls">
+      <button type="button" class="quietLink" id="templateUploadBtn">Upload / Replace</button>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <h2 id="toolbarTitle">RFQs</h2>
+    <div class="toolbarRight">
+      <a href="#" class="quietLink" id="downloadTemplateLink" style="display:none;">Download Quote Format</a>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div id="loadingState" class="state">Loading&hellip;</div>
+    <div id="errorState" class="state error" style="display:none;"></div>
+    <div id="emptyState" class="state" style="display:none;">No RFQs yet.</div>
+    <table class="rfqTable" id="rfqTable" style="display:none;">
+      <thead id="rfqTableHead"></thead>
+      <tbody id="rfqTableBody"></tbody>
+    </table>
+  </div>
+
+  <footer>Dessimate &middot; DSCM &middot; RFQ &middot; <span id="appVersionStamp">DSCM v2.1</span></footer>
+</div>
+
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Staff Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to manage RFQs.</p>
+    <p class="authNote">Please check the username and password provided by your Dessimate contact. Your account will be locked after 3 unsuccessful login attempts.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+      <div class="authAttempts" id="authAttempts"></div>
+    </form>
+  </div>
+</div>
+
+<!-- Add/Edit RFQ modal (Team Member+) -->
+<div class="modalOverlay" id="rfqModalOverlay">
+  <div class="modalCard">
+    <h2 id="modalTitle">Add RFQ</h2>
+    <p class="modalSub" id="modalSub">RFQ Number is optional — leave blank to assign automatically, or type your own. It can be changed any time, even after saving.</p>
+    <form id="rfqForm">
+      <div class="numberBanner">
+        <div class="numberField">
+          <label for="f_rfqNumber">RFQ Number <span style="font-weight:400;">(optional — leave blank to auto-assign)</span></label>
+          <div class="numberFieldRow">
+            <input type="text" id="f_rfqNumber" placeholder="assigned on Save">
+            <button type="button" id="useSystemRfqBtn">Use System Number</button>
+          </div>
+        </div>
+        <div class="numberField">
+          <label for="f_rfqDate">RFQ Date</label>
+          <input type="date" id="f_rfqDate">
+        </div>
+      </div>
+
+      <div class="modalSection">
+        <h3>Notes / Comments <span style="font-weight:400;">(optional)</span></h3>
+        <textarea id="f_notes" rows="3" style="display:block; width:100%; font-family:inherit; font-size:14px; padding:9px 10px; border:1px solid var(--line); border-radius:6px;"></textarea>
+      </div>
+
+      <div class="modalSection">
+        <h3>Part Number(s) <span style="font-weight:400;">(optional — you can leave this blank and fill it in later)</span></h3>
+        <div class="linesWrap">
+          <table class="linesTable">
+            <thead>
+              <tr>
+                <th style="min-width:180px;">Part Number</th>
+                <th style="min-width:220px;">Part Name</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="linesTableBody"></tbody>
+          </table>
+        </div>
+        <button type="button" class="addLineBtn" id="addLineBtn">+ Add Part</button>
+      </div>
+
+      <div class="modalSection">
+        <h3>Share With Suppliers <span style="font-weight:400;">(optional — choose who can see and quote this RFQ)</span></h3>
+        <div class="checkList" id="f_sharedWithSuppliers_list"></div>
+      </div>
+
+      <div class="modalSection">
+        <h3>Attachments <span class="attachCount" id="attachCount">(0 / 20)</span></h3>
+        <p class="modalSectionHint">Drawings, 3D (.stp/.step) files, anything a Supplier needs to quote against — up to 20 files.</p>
+        <div id="attachmentsList" class="attachmentsList"></div>
+        <div class="docRow">
+          <div class="docMain">
+            <input type="file" id="attachmentsDocInput" multiple>
+            <div class="modalError" id="attachError" style="margin-top:6px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modalSection" id="quotesReceivedSection" style="display:none;">
+        <h3>Quotes Received</h3>
+        <div id="quotesReceivedList"></div>
+      </div>
+
+      <div class="modalError" id="modalError"></div>
+      <div class="modalBtns">
+        <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- "My Quote" modal (Supplier only) -->
+<div class="modalOverlay" id="quoteModalOverlay">
+  <div class="modalCard">
+    <h2 id="quoteModalTitle">My Quote</h2>
+    <p class="modalSub" id="quoteModalSub"></p>
+
+    <div class="modalSection" style="margin-top:0;">
+      <h3 style="border-top:none; padding-top:0;">Notes from Dessimate</h3>
+      <p id="quoteNotesDisplay" style="font-size:13px; color:var(--ink); margin:0;">&mdash;</p>
+    </div>
+
+    <div class="modalSection">
+      <h3>Dessimate Attachments</h3>
+      <p class="modalSectionHint">Drawings/3D files to quote against — click to preview.</p>
+      <div id="quoteDessimateAttachmentsList" class="attachmentsList"></div>
+    </div>
+
+    <div class="modalSection">
+      <h3>Part Number(s) &amp; Your Quote</h3>
+      <div class="linesWrap">
+        <table class="linesTable">
+          <thead>
+            <tr>
+              <th style="min-width:150px;">Part Number</th>
+              <th style="min-width:150px;">Part Name</th>
+              <th style="min-width:130px;">Unit Price</th>
+              <th style="min-width:130px;">Tooling Cost</th>
+            </tr>
+          </thead>
+          <tbody id="quoteLinesTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modalSection">
+      <a href="#" class="quietLink" id="quoteDownloadTemplateLink">Download Dessimate Quote Format</a>
+    </div>
+
+    <div class="modalSection">
+      <h3>My Attachments <span class="attachCount" id="quoteAttachCount">(0 / 20)</span></h3>
+      <p class="modalSectionHint">Your filled-in quote-format file, and anything else relevant to your quote.</p>
+      <div id="quoteAttachmentsList" class="attachmentsList"></div>
+      <div class="docRow">
+        <div class="docMain">
+          <input type="file" id="quoteAttachmentsDocInput" multiple>
+          <div class="modalError" id="quoteAttachError" style="margin-top:6px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modalError" id="quoteModalError"></div>
+    <div class="modalBtns">
+      <button type="button" class="cancelBtn" id="quoteModalCancelBtn">Cancel</button>
+      <button type="button" class="saveBtn" id="quoteModalSaveBtn">Save My Quote</button>
+    </div>
+  </div>
+</div>
+
+<div id="docViewerOverlay" class="viewerOverlay">
+  <div class="viewerPanel">
+    <div class="viewerBar">
+      <div class="viewerTitle" id="docViewerTitle">Document</div>
+      <div class="viewerBtns">
+        <a id="docViewerDownload" href="#" style="display:none;">Download</a>
+        <button type="button" id="docViewerClose">Close</button>
+      </div>
+    </div>
+    <div class="viewerBody">
+      <div id="docViewerState" class="viewerState">Loading&hellip;</div>
+      <iframe id="docViewerFrame" title="Document preview" style="display:none;"></iframe>
+      <img id="docViewerImg" alt="Document preview" style="display:none;">
+      <div id="docViewer3D" style="display:none;">
+        <div class="viewer3DHint">Drag to rotate &middot; scroll to zoom &middot; right-drag to pan</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ---- Backend (staff login + file proxy) ------------------------------------
+  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
+  var RFQ_DOC_FOLDER = 'rfq_docs';
+  var RFQ_QUOTE_TEMPLATE_PATH = 'rfq_quote_template/Dessimate_Quote_Format.xlsx';
+  (function stampAppVersion(){
+    fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg || !cfg.version) return;
+      var el = document.getElementById('appVersionStamp');
+      if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+    }).catch(function(){});
+  })();
+
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  // RFQ record create/edit/delete is Team Member+ (matches APQP); the shared
+  // quote-format template upload is Admin+ only (a system-wide file, higher
+  // blast radius than one record). A Supplier login manages only its own
+  // quote, through a separate "My Quote" modal/endpoint.
+  var currentAccessLevel = null;
+  function canManageRfqRecords(){ return currentAccessLevel === 'team_member' || currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
+  function canManageQuoteTemplate(){ return currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
+  function isSupplierUser(){ return currentAccessLevel === 'supplier'; }
+  async function resolveAccessLevel(){
+    var session = getSession();
+    if (!session) { currentAccessLevel = null; return; }
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+      if (res.ok) { var data = await res.json(); currentAccessLevel = data.accessLevel || 'team_member'; }
+    } catch (e) { console.error('Could not resolve access level', e); }
+  }
+  function applyAccessLevelUI(){
+    var addBtn = document.getElementById('addRfqBtn');
+    if (addBtn) addBtn.style.display = canManageRfqRecords() ? '' : 'none';
+    var templateCard = document.getElementById('templateCard');
+    if (templateCard) templateCard.style.display = canManageQuoteTemplate() ? 'flex' : 'none';
+    var downloadLink = document.getElementById('downloadTemplateLink');
+    if (downloadLink) downloadLink.style.display = (canManageRfqRecords() || isSupplierUser()) ? 'inline-block' : 'none';
+    document.getElementById('toolbarTitle').textContent = isSupplierUser() ? 'RFQs Shared With You' : 'RFQs';
+  }
+
+  async function apiFetch(path, opts){
+    opts = opts || {};
+    var headers = opts.headers || {};
+    var session = getSession();
+    if (session) headers['Authorization'] = 'Bearer ' + session.token;
+    var res = await fetch(WORKER_BASE_URL + '/' + path, { method: opts.method || 'GET', headers: headers, body: opts.body });
+    if (res.status === 401 && path !== 'login') {
+      clearSession();
+      showAuthOverlay();
+      throw new Error('Your session has expired — please log in again.');
+    }
+    return res;
+  }
+  function workerContentsPath(fullPath){
+    return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
+  }
+  function bytesToBase64(bytes){
+    var binary = '', chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+  function base64ToBytes(b64){
+    var bin = atob((b64 || '').replace(/\s+/g, ''));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  function docFileExt(filename){
+    var m = /\.[a-zA-Z0-9]+$/.exec(filename || '');
+    return m ? m[0] : '';
+  }
+  async function ghGetSha(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status);
+    var data = await res.json();
+    return data.sha;
+  }
+  async function ghGetFileBytes(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status + ' while loading ' + fullPath + '.');
+    var data = await res.json();
+    return base64ToBytes(data.content || '');
+  }
+  async function ghPutFile(fullPath, bytes, commitMessage){
+    var sha = await ghGetSha(fullPath);
+    var body = { message: commitMessage || ('Update ' + fullPath), content: bytesToBase64(bytes) };
+    if (sha) body.sha = sha;
+    var res = await apiFetch(workerContentsPath(fullPath), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+      throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+    }
+    return await res.json();
+  }
+  var ATTACHMENTS_MAX = 20;
+  function buildAttachmentDocPath(rfqId, filename, idx){
+    var safeName = (filename || 'file').replace(/[\\/]/g, '_');
+    return RFQ_DOC_FOLDER + '/' + rfqId + '/attachments/' + Date.now() + '-' + idx + '-' + safeName;
+  }
+  function readFileAsBytes(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onerror = function(){ reject(new Error('Could not read "' + file.name + '".')); };
+      reader.onload = function(){ resolve(new Uint8Array(reader.result)); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Staff login wall -----------------------------------------------------
+  var pendingAfterAuth = null;
+
+  function refreshGhStatus(){
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Welcome, ' + session.username;
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Log out';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Log out';
+    }
+  }
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
+    refreshGhStatus();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var attemptsEl = document.getElementById('authAttempts');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = ''; attemptsEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) {
+          var loginErr = new Error(data.message || ('HTTP ' + res.status));
+          loginErr.attemptsRemaining = data.attemptsRemaining;
+          throw loginErr;
+        }
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+        document.getElementById('authPassword').value = '';
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+        attemptsEl.textContent = (err && typeof err.attemptsRemaining === 'number' && err.attemptsRemaining > 0)
+          ? 'Sign-in attempt ' + (3 - err.attemptsRemaining) + ' of 3 — this account locks after 3 failed attempts.'
+          : '';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  refreshGhStatus();
+  // -----------------------------------------------------------------------------
+
+  // ---- In-page document viewer (PDF / image / .stp 3D) -----------------------
+  var docViewerObjectUrl = null;
+  function isInlineViewable(mimeType, filename){
+    var ext = docFileExt(filename).toLowerCase();
+    if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
+    if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    if (ext === '.stp' || ext === '.step') return 'step';
+    return null;
+  }
+
+  // three.js + occt-import-js (a WASM build of OpenCascade's STEP reader) are
+  // loaded from a CDN on first use, entirely client-side (no backend
+  // conversion) - same pattern as the Parts page's STEP viewer.
+  var THREE_CDN_BASE = 'https://cdn.jsdelivr.net/npm/three@0.128.0/';
+  var OCCT_CDN_BASE = 'https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist/';
+  var stepLibsPromise = null;
+  var step3D = null;
+
+  function loadScriptOnce(src){
+    return new Promise(function(resolve, reject){
+      var existing = document.querySelector('script[data-src="' + src + '"]');
+      if (existing) { existing.addEventListener('load', resolve); if (existing.getAttribute('data-loaded')) resolve(); return; }
+      var s = document.createElement('script');
+      s.src = src; s.setAttribute('data-src', src);
+      s.onload = function(){ s.setAttribute('data-loaded', '1'); resolve(); };
+      s.onerror = function(){ reject(new Error('Could not load ' + src + '.')); };
+      document.head.appendChild(s);
+    });
+  }
+  function loadStepViewerLibs(){
+    if (!stepLibsPromise) {
+      stepLibsPromise = (async function(){
+        if (!window.THREE) await loadScriptOnce(THREE_CDN_BASE + 'build/three.min.js');
+        if (!window.THREE.OrbitControls) await loadScriptOnce(THREE_CDN_BASE + 'examples/js/controls/OrbitControls.js');
+        if (!window.occtimportjs) await loadScriptOnce(OCCT_CDN_BASE + 'occt-import-js.js');
+        if (!window.__occtInstance) {
+          window.__occtInstance = await window.occtimportjs({
+            locateFile: function(path){ return OCCT_CDN_BASE + path; }
+          });
+        }
+      })().catch(function(err){ stepLibsPromise = null; throw err; });
+    }
+    return stepLibsPromise;
+  }
+  function disposeStep3D(){
+    if (!step3D) return;
+    cancelAnimationFrame(step3D.raf);
+    window.removeEventListener('resize', step3D.resizeHandler);
+    step3D.controls.dispose();
+    step3D.scene.traverse(function(obj){
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) (Array.isArray(obj.material) ? obj.material : [obj.material]).forEach(function(m){ m.dispose(); });
+    });
+    step3D.renderer.dispose();
+    if (step3D.renderer.domElement.parentNode) step3D.renderer.domElement.parentNode.removeChild(step3D.renderer.domElement);
+    step3D = null;
+  }
+  async function renderStepModel(container, bytes){
+    await loadStepViewerLibs();
+    var result = window.__occtInstance.ReadStepFile(bytes, null);
+    if (!result || !result.success || !result.meshes || !result.meshes.length) {
+      throw new Error('No viewable geometry found in this STEP file.');
+    }
+    disposeStep3D();
+
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xe9ebef);
+    var group = new THREE.Group();
+    result.meshes.forEach(function(mesh){
+      var geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(mesh.attributes.position.array, 3));
+      if (mesh.attributes.normal) geometry.setAttribute('normal', new THREE.Float32BufferAttribute(mesh.attributes.normal.array, 3));
+      if (mesh.index) geometry.setIndex(Array.prototype.slice.call(mesh.index.array));
+      if (!mesh.attributes.normal) geometry.computeVertexNormals();
+      var color = mesh.color ? new THREE.Color(mesh.color[0], mesh.color[1], mesh.color[2]) : new THREE.Color(0x8296b8);
+      var material = new THREE.MeshStandardMaterial({ color: color, metalness: 0.1, roughness: 0.65, side: THREE.DoubleSide });
+      group.add(new THREE.Mesh(geometry, material));
+    });
+    scene.add(group);
+
+    var box = new THREE.Box3().setFromObject(group);
+    var size = box.getSize(new THREE.Vector3());
+    var center = box.getCenter(new THREE.Vector3());
+    group.position.sub(center);
+    var maxDim = Math.max(size.x, size.y, size.z, 0.001);
+
+    var width = container.clientWidth || 600, height = container.clientHeight || 420;
+    var camera = new THREE.PerspectiveCamera(45, width / height, maxDim / 1000, maxDim * 1000);
+    camera.position.set(maxDim * 1.1, maxDim * 0.9, maxDim * 1.4);
+    camera.lookAt(0, 0, 0);
+
+    var renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(width, height);
+    var existingCanvas = container.querySelector('canvas');
+    if (existingCanvas) existingCanvas.remove();
+    container.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    var key = new THREE.DirectionalLight(0xffffff, 0.7); key.position.set(maxDim, maxDim * 2, maxDim); scene.add(key);
+    var fill = new THREE.DirectionalLight(0xffffff, 0.35); fill.position.set(-maxDim, -maxDim * 0.5, -maxDim); scene.add(fill);
+
+    var controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
+    function resizeHandler(){
+      var w = container.clientWidth, h = container.clientHeight;
+      if (!w || !h) return;
+      camera.aspect = w / h; camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+    window.addEventListener('resize', resizeHandler);
+
+    step3D = { renderer: renderer, scene: scene, camera: camera, controls: controls, raf: 0, resizeHandler: resizeHandler };
+    (function animate(){
+      step3D.raf = requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    })();
+  }
+
+  function closeDocViewer(){
+    document.getElementById('docViewerOverlay').classList.remove('open');
+    document.getElementById('docViewerFrame').src = 'about:blank';
+    document.getElementById('docViewerFrame').style.display = 'none';
+    document.getElementById('docViewerImg').src = '';
+    document.getElementById('docViewerImg').style.display = 'none';
+    document.getElementById('docViewer3D').style.display = 'none';
+    document.getElementById('docViewerDownload').style.display = 'none';
+    disposeStep3D();
+    if (docViewerObjectUrl) { URL.revokeObjectURL(docViewerObjectUrl); docViewerObjectUrl = null; }
+  }
+  document.getElementById('docViewerClose').addEventListener('click', closeDocViewer);
+  document.getElementById('docViewerOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'docViewerOverlay') closeDocViewer();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
+  });
+  async function openDocViewer(source){
+    var overlay = document.getElementById('docViewerOverlay');
+    var stateEl = document.getElementById('docViewerState');
+    var frame = document.getElementById('docViewerFrame');
+    var img = document.getElementById('docViewerImg');
+    var view3D = document.getElementById('docViewer3D');
+    var downloadBtn = document.getElementById('docViewerDownload');
+    document.getElementById('docViewerTitle').textContent = source.filename || 'Document';
+    frame.style.display = 'none'; img.style.display = 'none'; view3D.style.display = 'none'; downloadBtn.style.display = 'none';
+    disposeStep3D();
+    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var bytes = source.bytes;
+      if (!bytes) {
+        bytes = await ghGetFileBytes(source.path);
+        if (!bytes) throw new Error('File not found.');
+      }
+      var kind = isInlineViewable(source.mimeType, source.filename);
+      if (!kind) {
+        stateEl.textContent = "This file type can't be previewed here — use Download instead.";
+        return;
+      }
+      if (kind === 'step') {
+        stateEl.textContent = 'Loading 3D viewer…';
+        view3D.style.display = 'block';
+        await renderStepModel(view3D, bytes);
+        stateEl.style.display = 'none';
+        var stepBlob = new Blob([bytes], { type: 'application/octet-stream' });
+        if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+        docViewerObjectUrl = URL.createObjectURL(stepBlob);
+        downloadBtn.href = docViewerObjectUrl;
+        downloadBtn.download = source.filename || 'file';
+        downloadBtn.style.display = 'inline-block';
+        return;
+      }
+      var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : 'image/jpeg') });
+      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+      docViewerObjectUrl = URL.createObjectURL(blob);
+      if (kind === 'pdf') { frame.src = docViewerObjectUrl; frame.style.display = 'block'; }
+      else { img.src = docViewerObjectUrl; img.style.display = 'block'; }
+      stateEl.style.display = 'none';
+      downloadBtn.href = docViewerObjectUrl;
+      downloadBtn.download = source.filename || 'file';
+      downloadBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      view3D.style.display = 'none';
+      stateEl.style.display = 'flex';
+      stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
+    }
+  }
+  // -----------------------------------------------------------------------------
+
+  function escapeHtml(s){
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function money(n){
+    var v = Number(n) || 0;
+    return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  async function downloadTemplateToDisk(){
+    try {
+      var bytes = await ghGetFileBytes(RFQ_QUOTE_TEMPLATE_PATH);
+      if (!bytes) { alert('The quote format hasn’t been uploaded yet.'); return; }
+      var blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = 'Dessimate_Quote_Format.xlsx';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+    } catch (e) {
+      alert('Could not download the quote format (' + (e && e.message ? e.message : e) + ').');
+    }
+  }
+  document.getElementById('downloadTemplateLink').addEventListener('click', function(e){
+    e.preventDefault();
+    requireAuthThen(downloadTemplateToDisk);
+  });
+  document.getElementById('quoteDownloadTemplateLink').addEventListener('click', function(e){
+    e.preventDefault();
+    downloadTemplateToDisk();
+  });
+
+  // ---- Quote-format template card (Admin+) ------------------------------------
+  async function loadTemplateStatus(){
+    var statusEl = document.getElementById('templateStatus');
+    if (!statusEl) return;
+    try {
+      var res = await apiFetch('commits?path=' + encodeURIComponent(RFQ_QUOTE_TEMPLATE_PATH));
+      var data = res.ok ? await res.json() : [];
+      if (Array.isArray(data) && data.length && data[0].commit && data[0].commit.author) {
+        var d = new Date(data[0].commit.author.date);
+        statusEl.textContent = 'Last updated ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+      } else {
+        statusEl.textContent = 'No file uploaded yet.';
+      }
+    } catch (e) {
+      statusEl.textContent = 'Could not check upload status.';
+    }
+  }
+  document.getElementById('templateUploadBtn').addEventListener('click', function(){
+    requireAuthThen(async function(){
+      var input = document.getElementById('templateFileInput');
+      var file = input.files && input.files[0];
+      if (!file) { alert('Choose a file first.'); return; }
+      var btn = document.getElementById('templateUploadBtn');
+      btn.disabled = true; btn.textContent = 'Uploading…';
+      try {
+        var bytes = await readFileAsBytes(file);
+        await ghPutFile(RFQ_QUOTE_TEMPLATE_PATH, bytes, 'Upload/replace RFQ quote-format template');
+        input.value = '';
+        await loadTemplateStatus();
+      } catch (e) {
+        alert('Could not upload the quote format (' + (e && e.message ? e.message : e) + ').');
+      } finally {
+        btn.disabled = false; btn.textContent = 'Upload / Replace';
+      }
+    });
+  });
+
+  // ---- Supplier organizations (for the Share-With checklist) -----------------
+  var lastOrgs = [];
+  async function loadDropdownData(){
+    try {
+      var orgRes = await apiFetch('organizations');
+      var orgData = orgRes.ok ? await orgRes.json() : { organizations: [] };
+      lastOrgs = Array.isArray(orgData.organizations) ? orgData.organizations : [];
+    } catch (e) { console.error('Could not load organizations', e); lastOrgs = []; }
+  }
+  function supplierOrgNames(){
+    return lastOrgs.filter(function(o){ return o.relationship === 'Supplier'; }).map(function(o){ return o.name; });
+  }
+  function sharedWithSuppliersChecklistOptions(currentValues){
+    var names = supplierOrgNames();
+    if (!names.length) return '<div class="emptyNote">No Supplier organizations on file yet.</div>';
+    return names.map(function(name){
+      var checked = (currentValues || []).indexOf(name) !== -1 ? ' checked' : '';
+      return '<label><input type="checkbox" value="' + escapeHtml(name) + '"' + checked + '> ' + escapeHtml(name) + '</label>';
+    }).join('');
+  }
+  function getSelectedSharedWithSuppliers(){
+    return Array.prototype.slice.call(document.querySelectorAll('#f_sharedWithSuppliers_list input[type=checkbox]:checked'))
+      .map(function(el){ return el.value; });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- List table ---------------------------------------------------------------
+  var lastRfqs = [];
+
+  async function loadRfqs(){
+    var loadingEl = document.getElementById('loadingState');
+    var errorEl = document.getElementById('errorState');
+    var emptyEl = document.getElementById('emptyState');
+    var tableEl = document.getElementById('rfqTable');
+    loadingEl.style.display = 'block'; errorEl.style.display = 'none'; emptyEl.style.display = 'none'; tableEl.style.display = 'none';
+    try {
+      var res = await apiFetch('rfqs');
+      if (!res.ok) {
+        var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+        throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+      }
+      var data = await res.json();
+      lastRfqs = Array.isArray(data.rfqs) ? data.rfqs : [];
+      loadingEl.style.display = 'none';
+      renderTable();
+    } catch (err) {
+      console.error(err);
+      loadingEl.style.display = 'none';
+      errorEl.style.display = 'block';
+      errorEl.textContent = 'Could not load RFQs (' + err.message + ').';
+    }
+  }
+
+  function renderTable(){
+    var tableEl = document.getElementById('rfqTable');
+    var headEl = document.getElementById('rfqTableHead');
+    var bodyEl = document.getElementById('rfqTableBody');
+    var emptyEl = document.getElementById('emptyState');
+    if (!lastRfqs.length) {
+      emptyEl.textContent = isSupplierUser() ? 'No RFQs have been shared with your organization yet.' : 'No RFQs yet. Click Add RFQ above to add the first one.';
+      emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return;
+    }
+    emptyEl.style.display = 'none'; tableEl.style.display = 'table';
+
+    var sorted = lastRfqs.slice().sort(function(a, b){ return (b.rfqNumber || 0) - (a.rfqNumber || 0); });
+
+    if (isSupplierUser()) {
+      headEl.innerHTML = '<tr><th>RFQ Number</th><th>RFQ Date</th><th>Parts</th><th>Quote Status</th><th></th></tr>';
+      bodyEl.innerHTML = sorted.map(function(r){
+        var org = (r.sharedWithSuppliers && r.sharedWithSuppliers[0]) || '';
+        var quote = r.supplierQuotes && r.supplierQuotes[org];
+        var statusHtml = (quote && quote.submittedAt)
+          ? '<span class="statusPill submitted">Submitted ' + escapeHtml(new Date(quote.submittedAt).toLocaleDateString()) + '</span>'
+          : '<span class="statusPill notStarted">Not started</span>';
+        return '<tr>' +
+          '<td class="rfqNumber">' + escapeHtml(r.rfqNumber) + '</td>' +
+          '<td>' + escapeHtml(r.rfqDate) + '</td>' +
+          '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
+          '<td>' + statusHtml + '</td>' +
+          '<td><div class="rowActions"><button type="button" class="editBtn" data-quote="' + escapeHtml(r.id) + '">' + (quote ? 'Edit My Quote' : 'Add My Quote') + '</button></div></td>' +
+          '</tr>';
+      }).join('');
+      bodyEl.querySelectorAll('[data-quote]').forEach(function(btn){
+        btn.addEventListener('click', function(){ requireAuthThen(function(){ openQuoteModal(this.getAttribute('data-quote')); }.bind(this)); });
+      });
+      return;
+    }
+
+    headEl.innerHTML = '<tr><th>RFQ Number</th><th>RFQ Date</th><th>Parts</th><th>Shared With</th><th>Quotes Received</th><th>Files</th><th></th></tr>';
+    bodyEl.innerHTML = sorted.map(function(r){
+      var sharedCount = (r.sharedWithSuppliers || []).length;
+      var sharedCell = sharedCount ? escapeHtml(r.sharedWithSuppliers.join(', ')) : '<span style="color:var(--label);">—</span>';
+      var quoteOrgs = Object.keys(r.supplierQuotes || {});
+      var quotesCell = quoteOrgs.length
+        ? '<span class="have" style="color:#187b46; font-weight:600;">' + quoteOrgs.length + ' of ' + sharedCount + '</span>'
+        : '<span style="color:var(--label);">0 of ' + sharedCount + '</span>';
+      var attCount = (r.dessimateAttachments || []).length;
+      var attCell = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '<span style="color:var(--label);">—</span>';
+      return '<tr>' +
+        '<td class="rfqNumber">' + escapeHtml(r.rfqNumber) + '</td>' +
+        '<td>' + escapeHtml(r.rfqDate) + '</td>' +
+        '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
+        '<td>' + sharedCell + '</td>' +
+        '<td>' + quotesCell + '</td>' +
+        '<td class="docCell">' + attCell + '</td>' +
+        '<td>' + (canManageRfqRecords() ? '<div class="rowActions">' +
+          '<button type="button" class="editBtn" data-edit="' + escapeHtml(r.id) + '">Edit</button>' +
+          '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(r.id) + '">Delete</button>' +
+        '</div>' : '') + '</td>' +
+        '</tr>';
+    }).join('');
+
+    bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
+      btn.addEventListener('click', function(){ requireAuthThen(function(){ openEditModal(this.getAttribute('data-edit')); }.bind(this)); });
+    });
+    bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
+      btn.addEventListener('click', function(){ deleteRfq(this.getAttribute('data-delete')); });
+    });
+  }
+
+  async function deleteRfq(id){
+    var r = lastRfqs.find(function(x){ return x.id === id; });
+    if (!confirm('Remove RFQ ' + (r ? r.rfqNumber : '') + '? This can\'t be undone.')) return;
+    requireAuthThen(async function(){
+      try {
+        var res = await apiFetch('rfqs/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!res.ok) { var d = {}; try { d = await res.json(); } catch(e){} throw new Error(d.message || ('HTTP ' + res.status)); }
+        await loadRfqs();
+      } catch (err) {
+        alert('Could not delete this RFQ (' + (err && err.message ? err.message : err) + ').');
+      }
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Add / Edit RFQ modal (Team Member+) -------------------------------------
+  var editingId = null;
+  var lineRows = []; // { lineId, partNumber, partName }
+
+  var attachmentsState = [];
+  function activeAttachmentCount(){ return attachmentsState.length; }
+  function renderAttachmentsList(){
+    var listEl = document.getElementById('attachmentsList');
+    var countEl = document.getElementById('attachCount');
+    var inputEl = document.getElementById('attachmentsDocInput');
+    var count = activeAttachmentCount();
+    countEl.textContent = '(' + count + ' / ' + ATTACHMENTS_MAX + ')';
+    if (!count) {
+      listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>';
+    } else {
+      listEl.innerHTML = attachmentsState.map(function(entry, idx){
+        var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
+        var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+        var viewBtn = entry.kind === 'pending'
+          ? '<button type="button" data-preview-idx="' + idx + '">Preview</button>'
+          : '<button type="button" data-view-idx="' + idx + '">View</button>';
+        return '<div class="attachRow">' +
+          '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+          '<div class="attachLinks">' + viewBtn +
+            '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' +
+          '</div></div>';
+      }).join('');
+    }
+    inputEl.disabled = count >= ATTACHMENTS_MAX;
+    inputEl.title = inputEl.disabled ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached.' : '';
+
+    listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
+        if (entry) openDocViewer({ filename: entry.filename, mimeType: entry.mimeType, bytes: entry.bytes });
+      });
+    });
+    listEl.querySelectorAll('[data-view-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-view-idx'))];
+        if (entry) openDocViewer({ filename: entry.doc.filename, mimeType: entry.doc.mimeType, path: entry.doc.path });
+      });
+    });
+    listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        attachmentsState.splice(Number(btn.getAttribute('data-remove-idx')), 1);
+        renderAttachmentsList();
+      });
+    });
+  }
+  document.getElementById('attachmentsDocInput').addEventListener('change', async function(){
+    var files = this.files ? Array.from(this.files) : [];
+    this.value = '';
+    if (!files.length) return;
+    var errEl = document.getElementById('attachError');
+    errEl.textContent = '';
+    var room = ATTACHMENTS_MAX - activeAttachmentCount();
+    if (files.length > room) {
+      errEl.textContent = room <= 0
+        ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached — remove one before adding another.'
+        : 'Only ' + room + ' more file' + (room === 1 ? '' : 's') + ' can be added (limit ' + ATTACHMENTS_MAX + ').';
+      files = files.slice(0, Math.max(room, 0));
+    }
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      try {
+        var bytes = await readFileAsBytes(file);
+        attachmentsState.push({ kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' });
+      } catch (e) {
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      }
+    }
+    renderAttachmentsList();
+  });
+
+  function newLineRow(){ return { lineId: '', partNumber: '', partName: '' }; }
+
+  function renderLines(){
+    var bodyEl = document.getElementById('linesTableBody');
+    bodyEl.innerHTML = lineRows.map(function(row, idx){
+      return '<tr data-line-idx="' + idx + '">' +
+        '<td><input type="text" data-line-field="partNumber" value="' + escapeHtml(row.partNumber) + '"></td>' +
+        '<td><input type="text" data-line-field="partName" value="' + escapeHtml(row.partName) + '"></td>' +
+        '<td><button type="button" class="lineRemoveBtn" data-line-remove="' + idx + '">Remove</button></td>' +
+        '</tr>';
+    }).join('');
+    bodyEl.querySelectorAll('tr').forEach(function(tr){
+      var idx = parseInt(tr.getAttribute('data-line-idx'), 10);
+      tr.querySelectorAll('[data-line-field]').forEach(function(el){
+        var field = el.getAttribute('data-line-field');
+        el.addEventListener('input', function(){ lineRows[idx][field] = el.value; });
+      });
+    });
+    bodyEl.querySelectorAll('[data-line-remove]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        lineRows.splice(parseInt(this.getAttribute('data-line-remove'), 10), 1);
+        renderLines();
+      });
+    });
+  }
+  document.getElementById('addLineBtn').addEventListener('click', function(){
+    lineRows.push(newLineRow());
+    renderLines();
+  });
+
+  document.getElementById('useSystemRfqBtn').addEventListener('click', async function(){
+    var btn = this;
+    btn.disabled = true;
+    try {
+      var res = await apiFetch('rfqs/peek-number');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      document.getElementById('f_rfqNumber').value = data.rfqNumber;
+    } catch (e) {
+      alert('Could not look up the next system RFQ Number (' + (e && e.message ? e.message : e) + ').');
+    } finally { btn.disabled = false; }
+  });
+
+  function renderQuotesReceived(rfq){
+    var section = document.getElementById('quotesReceivedSection');
+    var listEl = document.getElementById('quotesReceivedList');
+    var orgs = Object.keys(rfq.supplierQuotes || {});
+    if (!orgs.length) { section.style.display = 'none'; return; }
+    section.style.display = 'block';
+    var linesById = {};
+    (rfq.lines || []).forEach(function(l){ linesById[l.lineId] = l; });
+    listEl.innerHTML = orgs.map(function(org){
+      var q = rfq.supplierQuotes[org];
+      var lineRowsHtml = (q.lines || []).map(function(ql){
+        var line = linesById[ql.lineId];
+        var label = line ? (line.partNumber || line.partName || '(unnamed part)') : '(line removed since quoted)';
+        return '<div class="quoteLineRow"><span class="qty">' + escapeHtml(label) + '</span>' +
+          '<span class="amt">Unit ' + money(ql.price) + ' &middot; Tooling ' + money(ql.toolingCost) + '</span></div>';
+      }).join('') || '<div class="quoteLineRow"><span class="qty">No line pricing submitted.</span></div>';
+      var attHtml = (q.attachments || []).length
+        ? q.attachments.map(function(a, i){
+            return '<button type="button" class="quietLink" style="padding:4px 10px; font-size:11.5px; margin:4px 6px 0 0;" data-quote-att="' + escapeHtml(org) + '" data-quote-att-idx="' + i + '">' + escapeHtml(a.filename) + '</button>';
+          }).join('')
+        : '<span class="quoteMeta">No files attached.</span>';
+      return '<div class="quoteCard">' +
+        '<div class="quoteCardHead"><h4>' + escapeHtml(org) + '</h4><span class="quoteMeta">Submitted ' + (q.submittedAt ? escapeHtml(new Date(q.submittedAt).toLocaleString()) : '—') + (q.submittedBy ? ' by ' + escapeHtml(q.submittedBy) : '') + '</span></div>' +
+        lineRowsHtml +
+        '<div style="margin-top:8px;">' + attHtml + '</div>' +
+        '</div>';
+    }).join('');
+    listEl.querySelectorAll('[data-quote-att]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var org = btn.getAttribute('data-quote-att');
+        var idx = Number(btn.getAttribute('data-quote-att-idx'));
+        var a = rfq.supplierQuotes[org].attachments[idx];
+        if (a) openDocViewer({ filename: a.filename, mimeType: a.mimeType, path: a.path });
+      });
+    });
+  }
+
+  function resetForm(){
+    document.getElementById('rfqForm').reset();
+    document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = [];
+    renderAttachmentsList();
+    lineRows = [];
+    document.getElementById('f_sharedWithSuppliers_list').innerHTML = sharedWithSuppliersChecklistOptions([]);
+    document.getElementById('f_notes').value = '';
+    document.getElementById('f_rfqNumber').value = '';
+    document.getElementById('f_rfqDate').value = '';
+    document.getElementById('quotesReceivedSection').style.display = 'none';
+    renderLines();
+  }
+
+  function openAddModal(){
+    editingId = null;
+    resetForm();
+    document.getElementById('modalTitle').textContent = 'Add RFQ';
+    document.getElementById('modalSub').textContent = 'RFQ Number is optional — leave blank to assign automatically, or type your own. It can be changed any time, even after saving.';
+    document.getElementById('rfqModalOverlay').classList.add('open');
+  }
+  function openEditModal(id){
+    var rfq = lastRfqs.find(function(x){ return x.id === id; });
+    if (!rfq) return;
+    editingId = id;
+    document.getElementById('rfqForm').reset();
+    document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = (rfq.dessimateAttachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
+    lineRows = (rfq.lines || []).map(function(l){ return { lineId: l.lineId, partNumber: l.partNumber, partName: l.partName }; });
+    document.getElementById('modalTitle').textContent = 'Edit RFQ ' + rfq.rfqNumber;
+    document.getElementById('modalSub').textContent = 'RFQ Number can be changed any time.';
+    document.getElementById('f_rfqNumber').value = rfq.rfqNumber;
+    document.getElementById('f_rfqDate').value = rfq.rfqDate || '';
+    document.getElementById('f_notes').value = rfq.notes || '';
+    document.getElementById('f_sharedWithSuppliers_list').innerHTML = sharedWithSuppliersChecklistOptions(rfq.sharedWithSuppliers || []);
+    renderLines();
+    renderQuotesReceived(rfq);
+    document.getElementById('rfqModalOverlay').classList.add('open');
+  }
+  function closeModal(){ document.getElementById('rfqModalOverlay').classList.remove('open'); }
+  document.getElementById('addRfqBtn').addEventListener('click', function(){
+    requireAuthThen(async function(){ await loadDropdownData(); openAddModal(); });
+  });
+  document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('rfqModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'rfqModalOverlay') closeModal();
+  });
+
+  document.getElementById('rfqForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
+
+    var currentlyShared = getSelectedSharedWithSuppliers();
+    if (editingId) {
+      var existingRfq = lastRfqs.find(function(x){ return x.id === editingId; });
+      var previouslyShared = (existingRfq && existingRfq.sharedWithSuppliers) || [];
+      var beingRemoved = previouslyShared.filter(function(org){
+        return currentlyShared.indexOf(org) === -1 && existingRfq.supplierQuotes && existingRfq.supplierQuotes[org];
+      });
+      if (beingRemoved.length && !confirm(
+        beingRemoved.join(', ') + ' already submitted a quote on this RFQ. Unsharing hides this RFQ from ' +
+        (beingRemoved.length === 1 ? 'them' : 'those suppliers') + ' going forward, but their submitted quote stays on file for your team to see. Continue?'
+      )) return;
+    }
+
+    var baseFields = {
+      rfqNumber: document.getElementById('f_rfqNumber').value.trim(),
+      rfqDate: document.getElementById('f_rfqDate').value,
+      notes: document.getElementById('f_notes').value.trim(),
+      lines: lineRows.filter(function(r){ return r.partNumber || r.partName; }),
+      sharedWithSuppliers: currentlyShared
+    };
+
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      var rfqId = editingId;
+      if (!rfqId) {
+        var createRes = await apiFetch('rfqs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
+        var createData = {}; try { createData = await createRes.json(); } catch(e){}
+        if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+        rfqId = createData.id;
+        baseFields.rfqNumber = createData.rfqNumber; // avoid resending '' on the follow-up PUT below
+      }
+
+      var attachmentsPayload = [];
+      for (var i = 0; i < attachmentsState.length; i++) {
+        var entry = attachmentsState[i];
+        if (entry.kind === 'existing') {
+          attachmentsPayload.push(entry.doc);
+        } else {
+          var path = buildAttachmentDocPath(rfqId, entry.filename, i);
+          await ghPutFile(path, entry.bytes, 'Upload attachment for RFQ ' + (baseFields.rfqNumber || rfqId));
+          attachmentsPayload.push({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length });
+        }
+      }
+
+      var putRes = await apiFetch('rfqs/' + encodeURIComponent(rfqId), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({}, baseFields, { dessimateAttachments: attachmentsPayload }))
+      });
+      var putData = {}; try { putData = await putRes.json(); } catch(e){}
+      if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
+
+      closeModal();
+      await loadRfqs();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not save this RFQ.';
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+  // -----------------------------------------------------------------------------
+
+  // ---- "My Quote" modal (Supplier) ---------------------------------------------
+  var quoteRfqId = null;
+  var quoteLineValues = {}; // lineId -> { price, toolingCost }
+  var quoteAttachmentsState = []; // { kind:'existing', doc } | { kind:'pending', bytes, filename, mimeType }
+  var quoteOriginalAttachmentIds = [];
+
+  function activeQuoteAttachmentCount(){ return quoteAttachmentsState.length; }
+  function renderQuoteAttachmentsList(){
+    var listEl = document.getElementById('quoteAttachmentsList');
+    var countEl = document.getElementById('quoteAttachCount');
+    var inputEl = document.getElementById('quoteAttachmentsDocInput');
+    var count = activeQuoteAttachmentCount();
+    countEl.textContent = '(' + count + ' / ' + ATTACHMENTS_MAX + ')';
+    if (!count) {
+      listEl.innerHTML = '<div class="attachEmpty">No files attached yet.</div>';
+    } else {
+      listEl.innerHTML = quoteAttachmentsState.map(function(entry, idx){
+        var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
+        var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+        var viewBtn = entry.kind === 'pending'
+          ? '<button type="button" data-qpreview-idx="' + idx + '">Preview</button>'
+          : '<button type="button" data-qview-idx="' + idx + '">View</button>';
+        return '<div class="attachRow">' +
+          '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+          '<div class="attachLinks">' + viewBtn +
+            '<span class="removeLink" style="cursor:pointer;" data-qremove-idx="' + idx + '">Remove</span>' +
+          '</div></div>';
+      }).join('');
+    }
+    inputEl.disabled = count >= ATTACHMENTS_MAX;
+    listEl.querySelectorAll('[data-qpreview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = quoteAttachmentsState[Number(btn.getAttribute('data-qpreview-idx'))];
+        if (entry) openDocViewer({ filename: entry.filename, mimeType: entry.mimeType, bytes: entry.bytes });
+      });
+    });
+    listEl.querySelectorAll('[data-qview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = quoteAttachmentsState[Number(btn.getAttribute('data-qview-idx'))];
+        if (entry) openDocViewer({ filename: entry.doc.filename, mimeType: entry.doc.mimeType, path: entry.doc.path });
+      });
+    });
+    listEl.querySelectorAll('[data-qremove-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        quoteAttachmentsState.splice(Number(btn.getAttribute('data-qremove-idx')), 1);
+        renderQuoteAttachmentsList();
+      });
+    });
+  }
+  document.getElementById('quoteAttachmentsDocInput').addEventListener('change', async function(){
+    var files = this.files ? Array.from(this.files) : [];
+    this.value = '';
+    if (!files.length) return;
+    var errEl = document.getElementById('quoteAttachError');
+    errEl.textContent = '';
+    var room = ATTACHMENTS_MAX - activeQuoteAttachmentCount();
+    if (files.length > room) {
+      errEl.textContent = room <= 0 ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached.' : 'Only ' + room + ' more file(s) can be added.';
+      files = files.slice(0, Math.max(room, 0));
+    }
+    for (var i = 0; i < files.length; i++) {
+      try {
+        var bytes = await readFileAsBytes(files[i]);
+        quoteAttachmentsState.push({ kind: 'pending', bytes: bytes, filename: files[i].name, mimeType: files[i].type || 'application/octet-stream' });
+      } catch (e) {
+        alert('Could not read "' + files[i].name + '": ' + (e && e.message ? e.message : e));
+      }
+    }
+    renderQuoteAttachmentsList();
+  });
+
+  function renderQuoteLines(rfq){
+    var bodyEl = document.getElementById('quoteLinesTableBody');
+    var lines = rfq.lines || [];
+    if (!lines.length) {
+      bodyEl.innerHTML = '<tr><td colspan="4" class="readCell">No parts listed on this RFQ yet.</td></tr>';
+      return;
+    }
+    bodyEl.innerHTML = lines.map(function(l){
+      var v = quoteLineValues[l.lineId] || { price: '', toolingCost: '' };
+      return '<tr data-line-id="' + escapeHtml(l.lineId) + '">' +
+        '<td class="readCell">' + escapeHtml(l.partNumber || '—') + '</td>' +
+        '<td class="readCell">' + escapeHtml(l.partName || '—') + '</td>' +
+        '<td><input type="number" step="any" min="0" data-quote-field="price" value="' + escapeHtml(v.price) + '"></td>' +
+        '<td><input type="number" step="any" min="0" data-quote-field="toolingCost" value="' + escapeHtml(v.toolingCost) + '"></td>' +
+        '</tr>';
+    }).join('');
+    bodyEl.querySelectorAll('tr').forEach(function(tr){
+      var lineId = tr.getAttribute('data-line-id');
+      tr.querySelectorAll('[data-quote-field]').forEach(function(el){
+        var field = el.getAttribute('data-quote-field');
+        el.addEventListener('input', function(){
+          if (!quoteLineValues[lineId]) quoteLineValues[lineId] = { price: '', toolingCost: '' };
+          quoteLineValues[lineId][field] = el.value;
+        });
+      });
+    });
+  }
+
+  function renderQuoteDessimateAttachments(rfq){
+    var listEl = document.getElementById('quoteDessimateAttachmentsList');
+    var atts = rfq.dessimateAttachments || [];
+    if (!atts.length) { listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>'; return; }
+    listEl.innerHTML = atts.map(function(a, idx){
+      return '<div class="attachRow"><span class="attachName" title="' + escapeHtml(a.filename) + '">' + escapeHtml(a.filename) + '</span>' +
+        '<div class="attachLinks"><button type="button" data-dview-idx="' + idx + '">View</button></div></div>';
+    }).join('');
+    listEl.querySelectorAll('[data-dview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var a = atts[Number(btn.getAttribute('data-dview-idx'))];
+        if (a) openDocViewer({ filename: a.filename, mimeType: a.mimeType, path: a.path });
+      });
+    });
+  }
+
+  function openQuoteModal(id){
+    var rfq = lastRfqs.find(function(x){ return x.id === id; });
+    if (!rfq) return;
+    quoteRfqId = id;
+    var org = (rfq.sharedWithSuppliers && rfq.sharedWithSuppliers[0]) || '';
+    var existingQuote = rfq.supplierQuotes && rfq.supplierQuotes[org];
+
+    document.getElementById('quoteModalTitle').textContent = 'RFQ ' + rfq.rfqNumber + (rfq.rfqDate ? ' — ' + rfq.rfqDate : '');
+    document.getElementById('quoteModalSub').textContent = existingQuote
+      ? 'You submitted a quote on this RFQ. You can update it below.'
+      : 'Enter your price and tooling cost per part, attach your filled-in quote format, and save.';
+    document.getElementById('quoteNotesDisplay').textContent = rfq.notes || '—';
+    document.getElementById('quoteModalError').textContent = '';
+
+    quoteLineValues = {};
+    (existingQuote && existingQuote.lines || []).forEach(function(l){
+      quoteLineValues[l.lineId] = {
+        price: (l.price === undefined || l.price === null) ? '' : l.price,
+        toolingCost: (l.toolingCost === undefined || l.toolingCost === null) ? '' : l.toolingCost
+      };
+    });
+    renderQuoteLines(rfq);
+    renderQuoteDessimateAttachments(rfq);
+
+    quoteAttachmentsState = ((existingQuote && existingQuote.attachments) || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    quoteOriginalAttachmentIds = quoteAttachmentsState.map(function(e){ return e.doc.id; }).filter(Boolean);
+    renderQuoteAttachmentsList();
+
+    document.getElementById('quoteModalOverlay').classList.add('open');
+  }
+  function closeQuoteModal(){ document.getElementById('quoteModalOverlay').classList.remove('open'); }
+  document.getElementById('quoteModalCancelBtn').addEventListener('click', closeQuoteModal);
+  document.getElementById('quoteModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'quoteModalOverlay') closeQuoteModal();
+  });
+
+  document.getElementById('quoteModalSaveBtn').addEventListener('click', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('quoteModalError');
+    var saveBtn = this;
+    errEl.textContent = '';
+
+    var lines = Object.keys(quoteLineValues)
+      .filter(function(lineId){ var v = quoteLineValues[lineId]; return v.price !== '' || v.toolingCost !== ''; })
+      .map(function(lineId){ return { lineId: lineId, price: Number(quoteLineValues[lineId].price) || 0, toolingCost: Number(quoteLineValues[lineId].toolingCost) || 0 }; });
+
+    var newAttachments = [];
+    for (var i = 0; i < quoteAttachmentsState.length; i++) {
+      var entry = quoteAttachmentsState[i];
+      if (entry.kind === 'pending') {
+        newAttachments.push({ filename: entry.filename, mimeType: entry.mimeType, contentBase64: bytesToBase64(entry.bytes) });
+      }
+    }
+    var keptExistingIds = quoteAttachmentsState.filter(function(e){ return e.kind === 'existing'; }).map(function(e){ return e.doc.id; }).filter(Boolean);
+    var removeAttachmentIds = quoteOriginalAttachmentIds.filter(function(id){ return keptExistingIds.indexOf(id) === -1; });
+
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      var res = await apiFetch('rfqs/' + encodeURIComponent(quoteRfqId) + '/quote', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lines: lines, newAttachments: newAttachments, removeAttachmentIds: removeAttachmentIds })
+      });
+      var data = {}; try { data = await res.json(); } catch(err){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      closeQuoteModal();
+      await loadRfqs();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not save your quote.';
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save My Quote';
+    }
+  });
+  // -----------------------------------------------------------------------------
+
+  requireAuthThen(async function(){
+    await resolveAccessLevel();
+    applyAccessLevelUI();
+    if (canManageQuoteTemplate()) loadTemplateStatus();
+    if (canManageRfqRecords()) await loadDropdownData();
+    await loadRfqs();
+  });
+})();
+</script>

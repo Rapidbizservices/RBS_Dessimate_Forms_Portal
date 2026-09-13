@@ -151,6 +151,19 @@
  *   PUT    /customer-pos/<id>          - admin or above required; update one.
  *   DELETE /customer-pos/<id>          - admin or above required; remove one (its attached
  *                                        source PDF is left in place, same as Organizations/Parts).
+ *   GET    /rfqs                       - auth required (any signed-in user); full RFQ list, scoped
+ *                                        (a Supplier login sees only RFQs shared with its own
+ *                                        organization, and only its own submitted quote on each).
+ *   POST   /rfqs                       - team_member or above required; create an RFQ.
+ *   GET    /rfqs/peek-number           - team_member or above required; preview of the next
+ *                                        auto-assigned RFQ Number (does not consume it).
+ *   PUT    /rfqs/<id>                  - team_member or above required; update one (RFQ Number
+ *                                        stays editable indefinitely, unlike Dessimate PO Number).
+ *   DELETE /rfqs/<id>                  - team_member or above required; hard delete (attachments
+ *                                        left in place, same as Dessimate PO/Customer PO).
+ *   PUT    /rfqs/<id>/quote            - Supplier only, and only if that RFQ has been shared with
+ *                                        their organization; submits/updates their own price/
+ *                                        tooling-cost quote and quote attachments.
  *   GET    /contents/<path...>        - reads one file from R2 (blocked for anything
  *                                        under data/ - see above), or lists a "directory"
  *                                        prefix, in a shape mirroring GitHub's old API.
@@ -501,6 +514,50 @@ export default {
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         if (request.method === 'PUT') return await handleUpdateDessimatePo(request, env, origin, id);
         if (request.method === 'DELETE') return await handleDeleteDessimatePo(env, origin, id);
+      }
+
+      if (url.pathname === '/rfqs') {
+        if (request.method === 'GET') {
+          const auth = await requireAuthWithScope(request, env);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleListRfqs(env, origin, auth.accessLevel, auth.organization);
+        }
+        if (request.method === 'POST') {
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleCreateRfq(request, env, origin);
+        }
+      }
+
+      // Non-mutating preview of what "Use System Number" would assign, for
+      // the Add-RFQ modal's voluntary/optional numbering - same pattern as
+      // /dessimate-pos/peek-numbers. Checked before the generic '/rfqs/'
+      // handler below, same reason as that route.
+      if (url.pathname === '/rfqs/peek-number' && request.method === 'GET') {
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handlePeekRfqNumber(env, origin);
+      }
+
+      // A Supplier submits their price/tooling-cost quote through this
+      // narrow endpoint (never the generic record PUT below), so their
+      // write can only ever touch their own supplierQuotes entry. Checked
+      // before the generic '/rfqs/<id>' block, same "specific route before
+      // generic prefix" ordering used throughout this file.
+      if (/^\/rfqs\/[^/]+\/quote$/.test(url.pathname) && request.method === 'PUT') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireRole(request, env, ['supplier']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        const organization = await resolveUserOrganization(env, auth.username);
+        return await handleSubmitRfqQuote(request, env, origin, id, organization, auth.username);
+      }
+
+      if (url.pathname.startsWith('/rfqs/')) {
+        const id = decodeURIComponent(url.pathname.slice('/rfqs/'.length));
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        if (request.method === 'PUT') return await handleUpdateRfq(request, env, origin, id);
+        if (request.method === 'DELETE') return await handleDeleteRfq(env, origin, id);
       }
 
       if (url.pathname === '/supplier-invoices') {
@@ -1779,13 +1836,38 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
   const m = /^pdirs\/(.+)\.pdf$/.exec(decoded) ||
     /^pdir_drafts\/(.+)\.json$/.exec(decoded) ||
     /^pdir_docs\/([^/]+)\/.+$/.exec(decoded);
-  if (!m) return false;
-  const title = m[1];
-  const entry = await resolvePdirIndexEntry(env, title);
-  if (!entry) return false;
-  if (accessLevel === 'supplier') return !!entry.organization && entry.organization === organization;
-  const visiblePartNumbers = await resolveCustomerVisiblePartNumbers(env, organization);
-  return visiblePartNumbers.has((entry.partNumber || '').toLowerCase());
+  if (m) {
+    const title = m[1];
+    const entry = await resolvePdirIndexEntry(env, title);
+    if (!entry) return false;
+    if (accessLevel === 'supplier') return !!entry.organization && entry.organization === organization;
+    const visiblePartNumbers = await resolveCustomerVisiblePartNumbers(env, organization);
+    return visiblePartNumbers.has((entry.partNumber || '').toLowerCase());
+  }
+
+  // RFQ module - a Supplier can read the Dessimate-side attachments and its
+  // own previously-submitted quote files for any RFQ currently shared with
+  // its organization, plus the one shared quote-format template (a single
+  // non-sensitive file every supplier is meant to have, no per-record check
+  // needed). Never reachable for a Customer login - RFQ has no
+  // Customer-facing side (scopeRfqs excludes accessLevel === 'customer'
+  // entirely, same as this check does for path access).
+  if (accessLevel === 'supplier') {
+    if (/^rfq_quote_template\/.+$/.test(decoded)) return true;
+    const rfqDocsMatch = /^rfq_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (rfqDocsMatch) {
+      const sharedOrgs = await resolveRfqSharedOrgs(env, rfqDocsMatch[1]);
+      return !!sharedOrgs && sharedOrgs.indexOf(organization) !== -1;
+    }
+    const rfqQuoteDocsMatch = /^rfq_quote_docs\/([^/]+)\/([^/]+)\/.+$/.exec(decoded);
+    if (rfqQuoteDocsMatch) {
+      if (slugifyOrgName(organization) !== rfqQuoteDocsMatch[2]) return false;
+      const sharedOrgs = await resolveRfqSharedOrgs(env, rfqQuoteDocsMatch[1]);
+      return !!sharedOrgs && sharedOrgs.indexOf(organization) !== -1;
+    }
+  }
+
+  return false;
 }
 
 // ---- customer POs (what a Customer ordered - admin section) ---------------
@@ -1961,7 +2043,8 @@ const DEFAULT_COUNTERS = {
   nextDessimatePoNumber: 3013,
   nextDessimateInvoiceNumber: 3014, // reserved for the Dessimate Invoice module
   shipmentYear: 26,
-  nextShipmentSeq: 10
+  nextShipmentSeq: 10,
+  nextRfqNumber: 9009 // RFQ module - client's 9000-series, latest used was 9008
 };
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -2602,6 +2685,331 @@ async function handleGenerateDessimatePoPdf(env, origin, id, accessLevel, organi
     return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
   }
   return pdfResponse(pdfBytes, 'Dessimate PO ' + clean.poNumber + '.pdf', origin);
+}
+
+// ---- RFQ (Request for Quote) - Dessimate team members create a numbered
+// RFQ package (9000-series, own counter - see DEFAULT_COUNTERS), attach
+// drawings/3D files, and choose which Supplier organizations to share it
+// with. A shared Supplier sees the RFQ in their own login, downloads the
+// standard quote-format file, and submits back a price + tooling cost per
+// line plus their own attachments - through the separate, narrowly-scoped
+// PUT /rfqs/<id>/quote endpoint (never the generic record PUT), so a
+// Supplier write can never touch anything Dessimate authored. Record writes
+// (create/edit/delete) are Team Member+ (same gate as APQP, per the product
+// brief's "Dessimate team member decide which supplier to share..."), while
+// the shared quote-format template upload is Admin+ only (a system-wide
+// file, higher blast radius than one record). RFQ Number is voluntary/
+// optional and, unlike the Dessimate PO's PO Number, stays editable
+// indefinitely after creation (same pattern as the Dessimate Invoice
+// Number). Delete is a hard delete, same precedent as Dessimate PO (a
+// running numbered record, not soft-deleted like Dessimate Invoice, which
+// is soft-deleted specifically so its number sequence stays gap-free for
+// billing audit - a rationale that doesn't apply here).
+const RFQS_FILE_PATH = 'data/rfqs.json';
+const RFQ_DOC_FOLDER = 'rfq_docs';                 // Dessimate-side attachments (drawings/3D files), via the generic /contents/ proxy
+const RFQ_QUOTE_DOC_FOLDER = 'rfq_quote_docs';     // Supplier-side attachments, written directly by handleSubmitRfqQuote (never through the generic proxy)
+const RFQ_QUOTE_TEMPLATE_PATH = 'rfq_quote_template/Dessimate_Quote_Format.xlsx'; // one shared file, Admin+ uploads/replaces via the existing generic /contents/ PUT
+
+function slugifyOrgName(name) {
+  return (name || '').toString().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'org';
+}
+
+// Same voluntary/custom-number pattern as reserveDessimateInvoiceNumber -
+// leave blank for the next 9000-series number, or supply your own (already
+// checked for uniqueness by the caller); a numeric custom value bumps the
+// counter past itself so the system never later hands out a colliding one.
+async function reserveRfqNumber(env, clientRfqNumber) {
+  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+    let rfqNumber;
+    if (clientRfqNumber) {
+      rfqNumber = /^\d+$/.test(clientRfqNumber) ? Number(clientRfqNumber) : clientRfqNumber;
+      if (typeof rfqNumber === 'number' && rfqNumber >= obj.nextRfqNumber) obj.nextRfqNumber = rfqNumber + 1;
+    } else {
+      rfqNumber = obj.nextRfqNumber;
+      obj.nextRfqNumber = rfqNumber + 1;
+    }
+    return { obj: obj, meta: { rfqNumber: rfqNumber } };
+  });
+  if (!result.ok) throw new Error(result.message);
+  return result.meta.rfqNumber;
+}
+
+// Non-mutating preview for the Add-RFQ modal's "Use System Number" button.
+async function handlePeekRfqNumber(env, origin) {
+  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
+  return json({ rfqNumber: state.obj.nextRfqNumber }, 200, origin);
+}
+
+async function rfqNumberTaken(env, rfqNumber, excludeId) {
+  const state = await readJsonArrayFile(env, RFQS_FILE_PATH);
+  const target = String(rfqNumber).toLowerCase();
+  return state.items.some(function (o) { return o.id !== excludeId && String(o.rfqNumber).toLowerCase() === target; });
+}
+
+// lineId is the stable join key between an RFQ's own lines and a supplier's
+// quoted lines (matched in handleSubmitRfqQuote) - deliberately NOT the same
+// as lineNo (the 1-based display position, recomputed by index on every
+// read in sanitizeRfq). If Dessimate removes/reorders a line after a
+// Supplier already quoted it, the quote stays attached to the right part
+// instead of silently shifting onto whatever now occupies that position.
+// lineId is assigned once, in validateRfqFields, the first time a line is
+// saved without one - sanitizeRfq (the read path) never invents one, so a
+// GET can't hand back a different id than what was actually persisted.
+function sanitizeRfqLine(l) {
+  return {
+    lineId: (l && l.lineId) || '',
+    lineNo: 0, // overwritten by index in sanitizeRfq
+    partNumber: (l && l.partNumber) || '',
+    partName: (l && l.partName) || ''
+  };
+}
+function sanitizeRfqSupplierQuoteLine(l) {
+  return {
+    lineId: (l && l.lineId) ? String(l.lineId) : '',
+    price: Number(l && l.price) || 0,
+    toolingCost: Number(l && l.toolingCost) || 0
+  };
+}
+function sanitizeRfqSupplierQuote(q) {
+  return {
+    lines: Array.isArray(q && q.lines) ? q.lines.map(sanitizeRfqSupplierQuoteLine).filter(function (l) { return l.lineId; }) : [],
+    attachments: sanitizeOrgDocList(q && q.attachments),
+    submittedAt: (q && q.submittedAt) || null,
+    submittedBy: (q && q.submittedBy) || ''
+  };
+}
+function sanitizeRfq(o) {
+  const lines = (Array.isArray(o.lines) ? o.lines : []).map(sanitizeRfqLine).map(function (l, idx) {
+    l.lineNo = idx + 1;
+    return l;
+  });
+  const sharedWithSuppliers = Array.isArray(o.sharedWithSuppliers)
+    ? Array.from(new Set(o.sharedWithSuppliers.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
+    : [];
+  const supplierQuotesIn = (o.supplierQuotes && typeof o.supplierQuotes === 'object' && !Array.isArray(o.supplierQuotes)) ? o.supplierQuotes : {};
+  const supplierQuotes = {};
+  Object.keys(supplierQuotesIn).forEach(function (org) { supplierQuotes[org] = sanitizeRfqSupplierQuote(supplierQuotesIn[org]); });
+  return {
+    id: o.id,
+    rfqNumber: o.rfqNumber,
+    rfqDate: o.rfqDate || '',
+    notes: o.notes || '',
+    lines: lines,
+    dessimateAttachments: sanitizeOrgDocList(o.dessimateAttachments),
+    sharedWithSuppliers: sharedWithSuppliers,
+    supplierQuotes: supplierQuotes,
+    createdAt: o.createdAt || null
+  };
+}
+
+// A Supplier login sees only RFQs it's actually been shared with
+// (sharedWithSuppliers, not an ownership field like Dessimate PO's
+// `supplier`), and within a visible record, only its own submitted quote -
+// another Supplier's price/tooling cost on the same RFQ is exactly the kind
+// of competitively sensitive detail this system already keeps siloed
+// elsewhere (e.g. a Supplier never sees a Dessimate PO's Customer PO ref).
+// sharedWithSuppliers itself is also trimmed to just the caller's own org -
+// no business seeing who else was invited to bid. A Customer login has no
+// relationship to RFQ at all.
+function scopeRfqs(rfqs, accessLevel, organization) {
+  if (accessLevel === 'customer') return [];
+  if (accessLevel === 'supplier') {
+    const visible = rfqs.filter(function (o) { return organization && o.sharedWithSuppliers.indexOf(organization) !== -1; });
+    return visible.map(function (o) {
+      const copy = Object.assign({}, o);
+      copy.sharedWithSuppliers = [organization];
+      copy.supplierQuotes = (o.supplierQuotes && o.supplierQuotes[organization]) ? { [organization]: o.supplierQuotes[organization] } : {};
+      return copy;
+    });
+  }
+  return rfqs;
+}
+
+async function handleListRfqs(env, origin, accessLevel, organization) {
+  const state = await readJsonArrayFile(env, RFQS_FILE_PATH);
+  const rfqs = scopeRfqs(state.items.map(sanitizeRfq), accessLevel, organization);
+  return json({ rfqs: rfqs }, 200, origin);
+}
+
+// Nothing is required to save an RFQ - "there are no part numbers when RFQ
+// number is created" (product brief). A line is kept if either of its two
+// fields has content (not just Part Number), so a user filling the form out
+// gradually never loses a half-typed row on save.
+function validateRfqFields(body) {
+  const linesIn = Array.isArray(body.lines) ? body.lines : [];
+  const lines = linesIn
+    .map(function (l) {
+      return {
+        lineId: (l && l.lineId ? String(l.lineId).trim() : '') || cryptoRandomId(),
+        partNumber: ((l && l.partNumber) || '').toString().trim(),
+        partName: ((l && l.partName) || '').toString().trim()
+      };
+    })
+    .filter(function (l) { return l.partNumber || l.partName; });
+  const sharedWithSuppliers = Array.isArray(body.sharedWithSuppliers)
+    ? Array.from(new Set(body.sharedWithSuppliers.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
+    : [];
+  return {
+    rfqDate: (body.rfqDate || '').toString().trim(),
+    notes: (body.notes || '').toString().trim(),
+    lines: lines,
+    sharedWithSuppliers: sharedWithSuppliers
+  };
+}
+
+async function handleCreateRfq(request, env, origin) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const fields = validateRfqFields(body);
+
+  const clientRfqNumber = (body.rfqNumber !== undefined && body.rfqNumber !== null) ? String(body.rfqNumber).trim() : '';
+  if (clientRfqNumber && await rfqNumberTaken(env, clientRfqNumber, null)) {
+    return json({ message: 'That RFQ Number is already in use.' }, 409, origin);
+  }
+  const rfqNumber = await reserveRfqNumber(env, clientRfqNumber);
+  const newRfq = Object.assign(
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments), supplierQuotes: {} },
+    fields
+  );
+
+  const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
+    items.push(newRfq);
+    return { items: items };
+  });
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeRfq(newRfq), 201, origin);
+}
+
+async function handleUpdateRfq(request, env, origin, id) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const fields = validateRfqFields(body);
+
+  // RFQ Number can be changed at any time ("allow them to change it once
+  // they pull a RFQ number" - product brief) - same pattern as the
+  // Dessimate Invoice Number: kept out of validateRfqFields since it needs
+  // its own uniqueness check excluding this record, and the counter is
+  // bumped in a separate mutation only after the record write succeeds.
+  let newRfqNumber; // undefined = leave as-is
+  if (body.rfqNumber !== undefined) {
+    const requested = (body.rfqNumber === null ? '' : String(body.rfqNumber)).trim();
+    if (!requested) return json({ message: 'RFQ Number is required.' }, 400, origin);
+    if (await rfqNumberTaken(env, requested, id)) {
+      return json({ message: 'That RFQ Number is already in use.' }, 409, origin);
+    }
+    newRfqNumber = /^\d+$/.test(requested) ? Number(requested) : requested;
+  }
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    Object.assign(target, fields); // supplierQuotes is never in `fields` - a team_member's edit never touches it
+    if (newRfqNumber !== undefined) target.rfqNumber = newRfqNumber;
+    if (body.dessimateAttachments !== undefined) target.dessimateAttachments = sanitizeOrgDocList(body.dessimateAttachments);
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  if (typeof newRfqNumber === 'number') {
+    await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+      if (newRfqNumber >= obj.nextRfqNumber) obj.nextRfqNumber = newRfqNumber + 1;
+      return { obj: obj };
+    });
+  }
+  return json(sanitizeRfq(saved), 200, origin);
+}
+
+// Hard delete (array splice only) - see the module comment above for why
+// this matches Dessimate PO's precedent rather than Dessimate Invoice's
+// soft delete. dessimateAttachments and any supplierQuotes attachments are
+// left orphaned in R2, same as every other module's delete in this codebase
+// (Organizations/Parts/Dessimate PO documents are never cascade-deleted).
+async function handleDeleteRfq(env, origin, id) {
+  const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
+    const idx = items.findIndex(function (o) { return o.id === id; });
+    if (idx === -1) return null;
+    items.splice(idx, 1);
+    return { items: items };
+  }, { requireFound: true });
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json({ ok: true }, 200, origin);
+}
+
+// Used by isContentsPathAllowedForExternal to gate a Supplier's raw
+// /contents/ file access to an RFQ's attachments - returns null if the RFQ
+// doesn't exist (treated as "not allowed" by the caller).
+async function resolveRfqSharedOrgs(env, rfqId) {
+  const state = await readJsonArrayFile(env, RFQS_FILE_PATH);
+  const rfq = state.items.find(function (o) { return o.id === rfqId; });
+  return (rfq && Array.isArray(rfq.sharedWithSuppliers)) ? rfq.sharedWithSuppliers : null;
+}
+
+// A Supplier's own quote submission - deliberately a separate endpoint from
+// handleUpdateRfq so a Supplier write can only ever touch its own
+// supplierQuotes[organization] entry, never lines/dessimateAttachments/
+// sharedWithSuppliers/rfqNumber. Body: { lines: [{lineId, price,
+// toolingCost}], newAttachments: [{filename, mimeType, contentBase64}],
+// removeAttachmentIds: [id, ...] }. New attachment bytes are written
+// directly to R2 here (env.FILES.put, the same primitive proxyContents
+// itself uses) rather than through the generic /contents/ proxy, so that
+// proxy's supplier/customer restriction to GET-only never has to be
+// loosened.
+async function handleSubmitRfqQuote(request, env, origin, id, organization, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+
+  const state = await readJsonArrayFile(env, RFQS_FILE_PATH);
+  const rfq = state.items.find(function (o) { return o.id === id; });
+  if (!rfq) return json({ message: 'Not found.' }, 404, origin);
+  const sharedWith = Array.isArray(rfq.sharedWithSuppliers) ? rfq.sharedWithSuppliers : [];
+  if (!organization || sharedWith.indexOf(organization) === -1) {
+    return json({ message: 'This RFQ hasn’t been shared with your organization.' }, 403, origin);
+  }
+
+  // Drop any submitted line whose lineId doesn't match a real current line
+  // on this RFQ - defends against a stale client submitting against a line
+  // that's since been removed.
+  const validLineIds = new Set((Array.isArray(rfq.lines) ? rfq.lines : []).map(function (l) { return l.lineId; }));
+  const linesIn = Array.isArray(body.lines) ? body.lines : [];
+  const lines = linesIn
+    .filter(function (l) { return l && validLineIds.has(l.lineId); })
+    .map(function (l) { return { lineId: String(l.lineId), price: Number(l.price) || 0, toolingCost: Number(l.toolingCost) || 0 }; });
+
+  const existingAttachments = (rfq.supplierQuotes && rfq.supplierQuotes[organization] && Array.isArray(rfq.supplierQuotes[organization].attachments))
+    ? rfq.supplierQuotes[organization].attachments
+    : [];
+  const removeIds = Array.isArray(body.removeAttachmentIds) ? body.removeAttachmentIds.map(String) : [];
+  let attachments = existingAttachments.filter(function (a) { return removeIds.indexOf(a.id) === -1; });
+
+  const newAttachmentsIn = Array.isArray(body.newAttachments) ? body.newAttachments : [];
+  for (let i = 0; i < newAttachmentsIn.length; i++) {
+    const a = newAttachmentsIn[i];
+    if (!a || !a.filename || !a.contentBase64) continue;
+    let bytes;
+    try { bytes = base64ToBytes(a.contentBase64); } catch (e) { continue; }
+    const safeFilename = String(a.filename).replace(/[^A-Za-z0-9._-]/g, '_');
+    const path = RFQ_QUOTE_DOC_FOLDER + '/' + id + '/' + slugifyOrgName(organization) + '/' + Date.now() + '-' + i + '-' + safeFilename;
+    await env.FILES.put(path, bytes);
+    attachments.push({ id: cryptoRandomId(), path: path, filename: a.filename, mimeType: a.mimeType || 'application/octet-stream', size: bytes.length });
+  }
+  attachments = attachments.slice(0, PART_ATTACHMENTS_MAX);
+
+  const quote = { lines: lines, attachments: attachments, submittedAt: new Date().toISOString(), submittedBy: username || '' };
+
+  const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    if (!target.supplierQuotes || typeof target.supplierQuotes !== 'object') target.supplierQuotes = {};
+    target.supplierQuotes[organization] = quote;
+    return { items: items };
+  }, { requireFound: true });
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeRfqSupplierQuote(quote), 200, origin);
 }
 
 // ---- Supplier Invoices (what a Supplier bills Dessimate against a

@@ -421,6 +421,45 @@ linked here for a fast overview if you're updating an existing deployment.
   so this block's variable height (0 lines when absent, up to ~5 when
   present) never collides with the table.
 
+## Rev2.8 changes
+
+- **RFQ module** — a new Pre-Production module (`RFQ.html`, listed below
+  APQP in the sidebar), built from the client's brief: a Dessimate team
+  member creates a numbered RFQ package (own 9000-series counter,
+  `nextRfqNumber` in `data/counters.json`, starting at 9009 per the client's
+  "latest used was 9008") with zero or more Part Number/Part Name lines -
+  no line is required to save, unlike every other numbered module in this
+  system. Unlike the Dessimate PO's PO Number, RFQ Number stays editable
+  indefinitely after creation (same pattern as the Dessimate Invoice
+  Number - see `handleUpdateRfq`). Up to 20 drawing/3D-file attachments
+  (`dessimateAttachments`) reuse the same viewer as the Parts page,
+  including the `.stp`/`.step` 3D viewer (three.js + occt-import-js,
+  client-side only). A team member picks which Supplier organizations to
+  share the RFQ with (`sharedWithSuppliers`); each shared Supplier sees the
+  RFQ in their own RFQ module (listed the same place, per the brief),
+  downloads the one shared quote-format template
+  (`rfq_quote_template/Dessimate_Quote_Format.xlsx`), and submits back a
+  price + tooling cost per line plus their own attachments through a
+  separate, narrowly-scoped endpoint (`PUT /rfqs/<id>/quote`) that can only
+  ever touch that Supplier's own `supplierQuotes[organization]` entry -
+  never anything Dessimate authored. A Supplier never sees another
+  Supplier's quote on the same RFQ (`scopeRfqs` strips `supplierQuotes`
+  down to the caller's own entry, and `sharedWithSuppliers` down to their
+  own org) - the same competitive-sensitivity precedent already applied to
+  a Dessimate PO's Customer PO reference. RFQ record create/edit/delete is
+  Team Member+ (matches APQP, per the brief's "Dessimate team member
+  decide which supplier to share..." - a deliberately lower bar than the
+  Admin+-only gate Dessimate PO/Invoice/Customer PO got in Rev2.7); the
+  shared quote-format template upload is Admin+ only (a system-wide file,
+  higher blast radius than one record). Delete is a hard delete (attachments
+  left in R2, unlinked) - matches Dessimate PO's precedent, not Dessimate
+  Invoice's soft delete, since that soft-delete exists specifically to keep
+  the invoice-number sequence gap-free for billing audit, a rationale that
+  doesn't apply to RFQ. A placeholder quote-format `.xlsx` (built by hand
+  as a minimal valid OOXML package, header row + a "replace once approved"
+  note) was seeded into R2 via `wrangler r2 object put` so the feature ships
+  with a real downloadable file rather than a broken link on day one.
+
 ## The dashboard (`index.html`)
 
 `index.html` is a persistent left sidebar with a content pane next to it —
