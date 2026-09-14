@@ -1896,12 +1896,38 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
       const rfq = await resolveRfqRecord(env, rfqQuoteDocsMatch[1]);
       return !!rfq && rfq.sharedWithSuppliers.indexOf(organization) !== -1;
     }
+    // A Supplier can read the attachments on their own Dessimate PO
+    // (dessimate_po_docs) - same ownership check scopeDessimatePos already
+    // uses for the list itself.
+    const poDocsMatch = /^dessimate_po_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (poDocsMatch) {
+      const owner = await resolveDessimatePoOwner(env, poDocsMatch[1]);
+      return owner !== null && owner === organization;
+    }
   }
   if (accessLevel === 'customer') {
     const dessimateQuoteDocsMatch = /^rfq_dessimate_quote_docs\/([^/]+)\/.+$/.exec(decoded);
     if (dessimateQuoteDocsMatch) {
       const rfq = await resolveRfqRecord(env, dessimateQuoteDocsMatch[1]);
       return !!rfq && rfq.sharedWithCustomers.indexOf(organization) !== -1 && !!rfq.dessimateQuote.submitted;
+    }
+    // A Customer can read the attachments/original PO on their own Customer
+    // PO (customer_po_docs) and their own Dessimate Invoice
+    // (dessimate_invoice_docs) - same ownership check handleListCustomerPos/
+    // scopeDessimateInvoices already use for the list itself (o.customer ===
+    // organization), just re-applied per file request since this proxy has
+    // no path allowlist of its own otherwise. Covers both the legacy single
+    // sourcePdf path and the newer multi-attachment path - both live under
+    // the same "<folder>/<id>/..." prefix.
+    const cpoDocsMatch = /^customer_po_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (cpoDocsMatch) {
+      const owner = await resolveCustomerPoOwner(env, cpoDocsMatch[1]);
+      return owner !== null && owner === organization;
+    }
+    const invDocsMatch = /^dessimate_invoice_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (invDocsMatch) {
+      const owner = await resolveDessimateInvoiceOwner(env, invDocsMatch[1]);
+      return owner !== null && owner === organization;
     }
   }
 
@@ -1919,6 +1945,16 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
 // this is where customer-facing commercial terms/pricing get entered.
 const CUSTOMER_POS_FILE_PATH = 'data/customer_pos.json';
 const CUSTOMER_PO_DOC_FOLDER = 'customer_po_docs';
+
+// Used by isContentsPathAllowedForExternal to gate a Customer's raw
+// /contents/ access to their own Customer PO's attachments - returns the
+// org name on file, or null if the PO doesn't exist (treated as "not
+// allowed" by the caller).
+async function resolveCustomerPoOwner(env, poId) {
+  const state = await readJsonArrayFile(env, CUSTOMER_POS_FILE_PATH);
+  const po = state.items.find(function (o) { return o.id === poId; });
+  return po ? (po.customer || '') : null;
+}
 
 function sanitizeCustomerPoLine(l) {
   const qty = Number(l && l.qtyOrdered) || 0;
@@ -2076,6 +2112,18 @@ const DESSIMATE_POS_FILE_PATH = 'data/dessimate_pos.json';
 // pointer shape and PART_ATTACHMENTS_MAX cap as Parts attachments, reusing
 // sanitizeOrgDocList below.
 const DESSIMATE_PO_DOC_FOLDER = 'dessimate_po_docs';
+
+// Used by isContentsPathAllowedForExternal to gate a Supplier's raw
+// /contents/ access to their own Dessimate PO's attachments - same
+// ownership check scopeDessimatePos already uses for the list itself
+// (o.supplier === organization). Returns the org name on file, or null if
+// the PO doesn't exist.
+async function resolveDessimatePoOwner(env, poId) {
+  const state = await readJsonArrayFile(env, DESSIMATE_POS_FILE_PATH);
+  const po = state.items.find(function (o) { return o.id === poId; });
+  return po ? (po.supplier || '') : null;
+}
+
 const COUNTERS_FILE_PATH = 'data/counters.json';
 const DEFAULT_COUNTERS = {
   nextDessimatePoNumber: 3013,
@@ -3299,6 +3347,18 @@ async function handleDeleteSupplierInvoice(env, origin, id) {
 // a deleted invoice is simply hidden from the normal list.
 const DESSIMATE_INVOICES_FILE_PATH = 'data/dessimate_invoices.json';
 const DESSIMATE_INVOICE_STATUSES = ['Unpaid', 'Paid'];
+
+// Used by isContentsPathAllowedForExternal to gate a Customer's raw
+// /contents/ access to their own Dessimate Invoice's attachments (path
+// folder is 'dessimate_invoice_docs', built client-side in
+// PDIR_DessimateInvoices.html - no backend constant for it since the
+// generic /contents/ proxy never constructs paths itself). Returns the org
+// name on file, or null if the invoice doesn't exist.
+async function resolveDessimateInvoiceOwner(env, invoiceId) {
+  const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
+  const inv = state.items.find(function (o) { return o.id === invoiceId; });
+  return inv ? (inv.customer || '') : null;
+}
 
 async function assignDessimateInvoiceNumber(env) {
   return reserveDessimateInvoiceNumber(env, '');
