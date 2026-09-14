@@ -2583,7 +2583,12 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, customerInfo, stamp
     leftText(line, margin, ly, 9); ly -= 12;
   });
 
-  const contactX = margin + 190;
+  // Contact column shares Bill to's left edge (col2) further down, per
+  // customer markup - computed early since Vendor/Bill to/Ship To below
+  // reuse the same colW/col2/col3.
+  const colW = (pageWidth - margin * 2) / 3;
+  const col1 = margin, col2 = margin + colW, col3 = margin + colW * 2;
+  const contactX = col2;
   let cy = logoBottom - 20;
   [selfOrg && selfOrg.purchasingEmail, selfOrg && selfOrg.phone, selfOrg && selfOrg.website].filter(Boolean).forEach(function (line) {
     leftText(line, contactX, cy, 9); cy -= 12;
@@ -2595,15 +2600,19 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, customerInfo, stamp
   // gap has to stay narrow enough to clear the contact column's longest
   // real line (the purchasing email) at the same row. Payment Terms (and,
   // rarely, a long Customer PO Ref list) can still run past its narrow
-  // value width - wraps onto extra lines right-aligned under the label
-  // rather than colliding with the row above it.
+  // value width - wraps onto extra lines under the label rather than
+  // colliding with the row above it. Values are left-aligned (starting
+  // right after the label) rather than right-flush against the page edge,
+  // per customer markup - a straight left edge reads more like a normal
+  // label/value form than a ragged-left, flush-right column of numbers.
   const idValueMaxWidth = 68;
   const idLabelEdge = pageWidth - margin - idValueMaxWidth - 10;
+  const idValueX = idLabelEdge + 10;
   function idRow(label, value, size, bold) {
     rightText(label, idLabelEdge, ry, size, { bold: true });
     const valLines = wrapLines(String(value || ''), idValueMaxWidth, size);
     if (!valLines.length) valLines.push('');
-    valLines.forEach(function (vl, i) { rightText(vl, pageWidth - margin, ry - i * (size + 2), size, { bold: !!bold }); });
+    valLines.forEach(function (vl, i) { leftText(vl, idValueX, ry - i * (size + 2), size, { bold: !!bold }); });
     ry -= (size + 5) + Math.max(0, valLines.length - 1) * (size + 2);
   }
   let ry = logoBottom - 20;
@@ -2617,8 +2626,6 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, customerInfo, stamp
 
   // ---- Vendor / Bill to / Ship To (still inside the header band) -----------
   const addrTop = Math.min(ly, cy, ry) - 20;
-  const colW = (pageWidth - margin * 2) / 3;
-  const col1 = margin, col2 = margin + colW, col3 = margin + colW * 2;
   leftText('Vendor', col1, addrTop, 10, { bold: true });
   leftText('Bill to', col2, addrTop, 10, { bold: true });
   leftText('Ship To', col3, addrTop, 10, { bold: true });
@@ -2653,7 +2660,6 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, customerInfo, stamp
   // same protection as before with no extra check needed here.
   let y4 = y3;
   if (customerInfo) {
-    y4 -= 8;
     if (customerInfo.name) { leftText(customerInfo.name, col3, y4, 9); y4 -= 11; }
     if (customerInfo.buyerName) { leftText('Attn: ' + customerInfo.buyerName, col3, y4, 9); y4 -= 11; }
     [customerInfo.addressLine1, customerInfo.addressLine2].filter(Boolean).forEach(function (line) {
