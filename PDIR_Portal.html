@@ -1,6 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>PDIR Portal &mdash; DSCM</title>
+<link rel="stylesheet" href="office-viewer.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -99,11 +100,11 @@
   .pill.pill-hidden{ background:#f1e6f6; color:#7a3fa0; }
   .pdir-meta{ font-size:12px; color:var(--label); white-space:nowrap; margin-top:2px; }
   .pdir-actions{ display:flex; gap:8px; flex:0 0 auto; }
-  .pdir-view, .pdir-modify, .pdir-delete, .pdir-restore{
+  .pdir-view, .pdir-attachments, .pdir-modify, .pdir-delete, .pdir-restore{
     font-family:inherit; font-size:13px; font-weight:600; text-decoration:none;
     border-radius:6px; padding:6px 14px; white-space:nowrap; cursor:pointer; }
-  .pdir-view{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
-  .pdir-view:hover{ background:#eef1fa; }
+  .pdir-view, .pdir-attachments{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .pdir-view:hover, .pdir-attachments:hover{ background:#eef1fa; }
   .pdir-modify{ color:#fff; background:var(--brand); border:1px solid var(--brand); }
   .pdir-modify:hover{ background:var(--brand-dark); }
   .pdir-delete{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
@@ -146,11 +147,25 @@
   #viewerClose:hover{ background:#3f4248; }
   .viewerBody{ flex:1 1 auto; position:relative; background:#525659; }
   .viewerBody iframe{ position:absolute; inset:0; width:100%; height:100%; border:0; }
+  .viewerBody img{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#525659; }
   .viewerBody .viewerState{
     position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
     color:#fff; font-size:13.5px; text-align:center; padding:20px; flex-direction:column; gap:10px;
   }
   .viewerBody .viewerState a{ color:#bcd2ff; }
+
+  /* Read-only Supporting Documents list (Rev2.11) - same visual pattern as
+     the attachments list on Customer PO/Dessimate PO/Invoice pages. */
+  .attachmentsPanel{ padding:16px; overflow:auto; }
+  .attachmentsList{ display:flex; flex-direction:column; gap:6px; }
+  .attachRow{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:7px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
+  .attachRow .attachName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .attachRow .attachLinks{ display:flex; gap:10px; flex:0 0 auto; }
+  .attachRow .attachLinks button{ font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
+  .attachRow .attachLinks button:hover{ text-decoration:underline; }
+  .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
 </style>
 
 <div class="wrap">
@@ -219,6 +234,23 @@
     <div class="viewerBody">
       <div id="viewerState" class="viewerState">Loading PDF&hellip;</div>
       <iframe id="viewerFrame" title="PDF preview" style="display:none;"></iframe>
+      <img id="viewerImg" alt="Document preview" style="display:none;">
+      <div id="docViewerOffice" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="attachmentsOverlay" class="viewerOverlay">
+  <div class="viewerPanel" style="max-width:560px; height:auto; max-height:80vh;">
+    <div class="viewerBar">
+      <div class="viewerTitle" id="attachmentsTitle">Supporting Documents</div>
+      <div class="viewerBtns">
+        <button type="button" id="attachmentsClose">Close</button>
+      </div>
+    </div>
+    <div class="attachmentsPanel">
+      <div id="attachmentsState" class="attachEmpty">Loading&hellip;</div>
+      <div id="attachmentsList" class="attachmentsList"></div>
     </div>
   </div>
 </div>
@@ -242,6 +274,7 @@
   </div>
 </div>
 
+<script src="office-viewer.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -526,53 +559,184 @@
   // button (or the one in the bar above it) if they want to save the file.
   var viewerObjectUrl = null;
 
-  function closePdfViewer(){
+  function docFileExt(filename){
+    var m = /\.[a-zA-Z0-9]+$/.exec(filename || '');
+    return m ? m[0] : '';
+  }
+  // Rev2.11: generalized from PDF-only so the new Supporting Documents list
+  // below (material reports etc., which can be PDF/image/Office files per
+  // PDIR_Form_Filler.html's DOC_FIELDS accept list) can reuse the same
+  // overlay as the finished-PDF viewer instead of a separate one.
+  function isInlineViewable(mimeType, filename){
+    var ext = docFileExt(filename).toLowerCase();
+    if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
+    if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    var officeKind = window.OfficeViewer && window.OfficeViewer.isOfficeExt(filename, mimeType);
+    if (officeKind) return officeKind;
+    return null;
+  }
+
+  function closeDocViewer(){
     document.getElementById('viewerOverlay').classList.remove('open');
     document.getElementById('viewerFrame').src = 'about:blank';
     document.getElementById('viewerFrame').style.display = 'none';
+    document.getElementById('viewerImg').src = '';
+    document.getElementById('viewerImg').style.display = 'none';
+    document.getElementById('docViewerOffice').style.display = 'none';
+    document.getElementById('docViewerOffice').innerHTML = '';
     document.getElementById('viewerDownload').style.display = 'none';
     if (viewerObjectUrl) { URL.revokeObjectURL(viewerObjectUrl); viewerObjectUrl = null; }
   }
-  document.getElementById('viewerClose').addEventListener('click', closePdfViewer);
+  document.getElementById('viewerClose').addEventListener('click', closeDocViewer);
   document.getElementById('viewerOverlay').addEventListener('click', function(e){
-    if (e.target.id === 'viewerOverlay') closePdfViewer();
+    if (e.target.id === 'viewerOverlay') closeDocViewer();
   });
   document.addEventListener('keydown', function(e){
-    if (e.key === 'Escape' && document.getElementById('viewerOverlay').classList.contains('open')) closePdfViewer();
+    if (e.key !== 'Escape') return;
+    if (document.getElementById('attachmentsOverlay').classList.contains('open')) { closeAttachmentsModal(); return; }
+    if (document.getElementById('viewerOverlay').classList.contains('open')) closeDocViewer();
   });
 
-  // Fetches the PDF through the Worker (base64 JSON, same as everything else)
-  // rather than GitHub's public raw download_url, since the repo can now be
-  // private — nobody but a signed-in staff member can reach a PDF.
-  async function openPdfViewer(title, fullPath){
+  // Fetches the file through the Worker (base64 JSON, same as everything
+  // else) rather than GitHub's public raw download_url, since the repo can
+  // now be private — nobody but a signed-in staff member (or a Supplier/
+  // Customer login scoped to this shipment) can reach it. filename/mimeType
+  // are only needed to pick a viewer kind for a Supporting Document — the
+  // finished-PDF call site below always resolves to 'pdf' by extension.
+  async function openDocViewer(title, fullPath, mimeTypeHint){
     var overlay = document.getElementById('viewerOverlay');
     var stateEl = document.getElementById('viewerState');
     var frame = document.getElementById('viewerFrame');
+    var img = document.getElementById('viewerImg');
+    var office = document.getElementById('docViewerOffice');
     var downloadBtn = document.getElementById('viewerDownload');
     document.getElementById('viewerTitle').textContent = title;
-    frame.style.display = 'none';
-    downloadBtn.style.display = 'none';
+    frame.style.display = 'none'; img.style.display = 'none'; office.style.display = 'none'; office.innerHTML = ''; downloadBtn.style.display = 'none';
     stateEl.style.display = 'flex';
-    stateEl.textContent = 'Loading PDF…';
+    stateEl.textContent = 'Loading…';
     overlay.classList.add('open');
     try {
       var bytes = await ghGetFileBytes(fullPath);
       if (!bytes) throw new Error('File not found.');
-      var blob = new Blob([bytes], { type: 'application/pdf' });
+      var filename = fullPath.split('/').pop();
+      var kind = isInlineViewable(mimeTypeHint, filename);
+      if (!kind) {
+        stateEl.textContent = "This file type can't be previewed here — use Download instead.";
+        var anyBlob = new Blob([bytes], { type: mimeTypeHint || 'application/octet-stream' });
+        if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
+        viewerObjectUrl = URL.createObjectURL(anyBlob);
+        downloadBtn.href = viewerObjectUrl;
+        downloadBtn.download = filename;
+        downloadBtn.style.display = 'inline-block';
+        return;
+      }
+      if (kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
+        office.style.display = 'block';
+        await window.OfficeViewer.render(kind, office, bytes);
+        stateEl.style.display = 'none';
+        var officeBlob = new Blob([bytes], { type: mimeTypeHint || 'application/octet-stream' });
+        if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
+        viewerObjectUrl = URL.createObjectURL(officeBlob);
+        downloadBtn.href = viewerObjectUrl;
+        downloadBtn.download = filename;
+        downloadBtn.style.display = 'inline-block';
+        return;
+      }
+      var blob = new Blob([bytes], { type: mimeTypeHint || (kind === 'pdf' ? 'application/pdf' : 'image/jpeg') });
       if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
       viewerObjectUrl = URL.createObjectURL(blob);
-      frame.src = viewerObjectUrl;
-      frame.style.display = 'block';
+      if (kind === 'pdf') { frame.src = viewerObjectUrl; frame.style.display = 'block'; }
+      else { img.src = viewerObjectUrl; img.style.display = 'block'; }
       stateEl.style.display = 'none';
       downloadBtn.href = viewerObjectUrl;
-      downloadBtn.download = title + '.pdf';
+      downloadBtn.download = filename;
       downloadBtn.style.display = 'inline-block';
     } catch (err) {
       console.error(err);
-      stateEl.innerHTML = 'Could not load the PDF for preview (' + escapeHtml(err.message) + ').';
+      stateEl.innerHTML = 'Could not load this file for preview (' + escapeHtml(err.message) + ').';
     }
   }
   // -------------------------------------------------------------------------
+
+  // ---- Read-only Supporting Documents list (Rev2.11) -------------------------
+  // The material reports/certificates etc. a Supplier's shipment came with
+  // (PDIR_Form_Filler.html's DOC_FIELDS) are already embedded as native file
+  // attachments inside the finished PDF too, but most PDF viewers - browsers'
+  // built-in ones included - have no UI for an embedded attachment's
+  // "paperclip" panel, so a Customer/Supplier who could only ever reach
+  // "View PDF" here had no real way to get at them. This lists the same
+  // files straight from the PDIR's draft JSON instead (pdir_drafts/<title>.json's
+  // "docs" object - already scoped to this account server-side the same way
+  // the PDF/draft themselves are), each openable in the viewer above.
+  var DOC_FIELD_LABELS = {
+    ctq_report: 'Supplier CTQ Dimensional Inspection Report',
+    mtc_report: 'Supplier MTC Report',
+    eway_bill: 'E-way Bill',
+    customs_authority: 'Customs Authority',
+    iec_copy: 'IEC Copy',
+    pancard_of_firm: 'Pancard of Firm',
+    new_authority1_letter: 'New Authority1 Letter',
+    gst_certificate: 'GST Certificate',
+    end_use_letter: 'End Use Letter',
+    pack_list: 'Pack List',
+    tax_invoice: 'Tax Invoice',
+    sco_met: 'SCO MET'
+  };
+  var DOC_FIELD_ORDER = Object.keys(DOC_FIELD_LABELS);
+
+  function closeAttachmentsModal(){
+    document.getElementById('attachmentsOverlay').classList.remove('open');
+  }
+  document.getElementById('attachmentsClose').addEventListener('click', closeAttachmentsModal);
+  document.getElementById('attachmentsOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'attachmentsOverlay') closeAttachmentsModal();
+  });
+
+  async function openAttachmentsModal(title){
+    var overlay = document.getElementById('attachmentsOverlay');
+    var stateEl = document.getElementById('attachmentsState');
+    var listEl = document.getElementById('attachmentsList');
+    document.getElementById('attachmentsTitle').textContent = 'Supporting Documents — ' + title;
+    listEl.innerHTML = '';
+    stateEl.style.display = 'block';
+    stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var text = await ghGetFileContent(GH_DRAFT_FOLDER + '/' + title + '.json');
+      var docs = {};
+      if (text) {
+        try { docs = JSON.parse(text).docs || {}; } catch (e) { docs = {}; }
+      }
+      var rows = DOC_FIELD_ORDER
+        .map(function(key){ return { key: key, label: DOC_FIELD_LABELS[key], doc: docs[key] }; })
+        .filter(function(r){ return r.doc && r.doc.path; });
+      if (!rows.length) {
+        stateEl.textContent = 'No supporting documents are on file for this PDIR.';
+        return;
+      }
+      stateEl.style.display = 'none';
+      listEl.innerHTML = rows.map(function(r, idx){
+        return '<div class="attachRow">' +
+          '<span class="attachName" title="' + escapeHtml(r.label + ' — ' + r.doc.filename) + '">' +
+            escapeHtml(r.label) + ' <span style="color:var(--label);">(' + escapeHtml(r.doc.filename) + ')</span>' +
+          '</span>' +
+          '<div class="attachLinks"><button type="button" data-view-idx="' + idx + '">View</button></div>' +
+        '</div>';
+      }).join('');
+      listEl.querySelectorAll('[data-view-idx]').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var r = rows[Number(btn.getAttribute('data-view-idx'))];
+          closeAttachmentsModal();
+          openDocViewer(r.label, r.doc.path, r.doc.mimeType);
+        });
+      });
+    } catch (err) {
+      console.error(err);
+      stateEl.style.display = 'block';
+      stateEl.textContent = 'Could not load supporting documents (' + (err && err.message ? err.message : err) + ').';
+    }
+  }
+  // -----------------------------------------------------------------------------
 
   // Each entry is keyed by its title ("PDIR for Shipment # ..."), which is the
   // shared base filename between the finished PDF (pdirs/<title>.pdf) and the
@@ -674,6 +838,7 @@
         '</div>' +
         '<div class="pdir-actions">' +
           (e.pdf ? '<button type="button" class="pdir-view">View PDF</button>' : '') +
+          '<button type="button" class="pdir-attachments">Supporting Documents</button>' +
           (isSupplier ? '' : '<a class="pdir-modify" href="' + modifyHref + '">Modify PDIR</a>') +
           (isSupplier ? '' : (e.hidden
             ? '<button type="button" class="pdir-restore">Restore</button>'
@@ -681,9 +846,12 @@
         '</div>';
       if (e.pdf) {
         row.querySelector('.pdir-view').addEventListener('click', function(){
-          openPdfViewer(e.title, GH_PDF_FOLDER + '/' + e.pdf.name);
+          openDocViewer(e.title, GH_PDF_FOLDER + '/' + e.pdf.name);
         });
       }
+      row.querySelector('.pdir-attachments').addEventListener('click', function(){
+        openAttachmentsModal(e.title);
+      });
       if (!isSupplier) {
         if (e.hidden) {
           row.querySelector('.pdir-restore').addEventListener('click', function(){
