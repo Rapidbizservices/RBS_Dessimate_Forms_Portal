@@ -984,15 +984,24 @@
         '<td class="moneyCell">' + escapeHtml(po.currency || '') + ' ' + money(po.poTotal) + '</td>' +
         '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(po.id) + '" data-ponum="' + escapeHtml(po.poNumber) + '">View PDF</button></td>' +
         '<td class="docCell">' + attCell + '</td>' +
-        '<td>' + (canManageRecords() ? '<div class="rowActions">' +
-          '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
-          '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>' +
-        '</div>' : '') + '</td>' +
+        '<td><div class="rowActions">' + (canManageRecords()
+          ? '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
+            '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>'
+          : '<button type="button" class="editBtn" data-view="' + escapeHtml(po.id) + '">View</button>'
+        ) + '</div></td>' +
         '</tr>';
     }).join('');
 
     bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
       btn.addEventListener('click', function(){ requireAuthThen(function(){ openEditModal(this.getAttribute('data-edit')); }.bind(this)); });
+    });
+    // Rev2.7 hid Edit/Delete for anyone below Admin, but that was the only
+    // way a Team Member (this page's GET is open to any signed-in Dessimate
+    // user) could open the modal and see line items/attachments/notes at
+    // all - a read-only "View" (same modal, everything disabled, no Save)
+    // fills that gap back in without granting any write access.
+    bodyEl.querySelectorAll('[data-view]').forEach(function(btn){
+      btn.addEventListener('click', function(){ requireAuthThen(function(){ openViewModal(this.getAttribute('data-view')); }.bind(this)); });
     });
     bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
       btn.addEventListener('click', function(){ deletePo(this.getAttribute('data-delete')); });
@@ -1211,6 +1220,7 @@
   });
 
   function resetForm(){
+    applyModalReadOnlyMode(false);
     document.getElementById('poForm').reset();
     document.getElementById('modalError').textContent = '';
     document.getElementById('attachError').textContent = '';
@@ -1229,6 +1239,34 @@
     renderLines();
   }
 
+  // Read-only mode for the "View" path (Team Member logins - this page's
+  // GET is open to any signed-in Dessimate user, but writes are Admin+
+  // only) - disables every field, hides every write-affordance (Add/Remove
+  // Line, the attachment upload input and its Remove links, Save), and
+  // relabels Cancel to Close. View/Preview on an attachment and the
+  // existing "View PDF" button still work, since those are just reading,
+  // not writing. PO Number/Shipment Number are already read-only in Edit
+  // mode regardless of role (see setNumberFieldsEditable), so nothing
+  // extra is needed for those two fields here.
+  var viewOnlyMode = false;
+  function applyModalReadOnlyMode(readOnly){
+    viewOnlyMode = readOnly;
+    document.querySelectorAll('#poForm input, #poForm select, #poForm textarea').forEach(function(el){ el.disabled = readOnly; });
+    document.getElementById('addLineBtn').style.display = readOnly ? 'none' : '';
+    document.querySelectorAll('#linesTableBody [data-line-remove]').forEach(function(btn){ btn.style.display = readOnly ? 'none' : ''; });
+    var docRow = document.getElementById('attachmentsDocInput').closest('.docRow');
+    if (docRow) docRow.style.display = readOnly ? 'none' : '';
+    document.querySelectorAll('#attachmentsList [data-remove-idx]').forEach(function(el){ el.style.display = readOnly ? 'none' : ''; });
+    document.getElementById('modalSaveBtn').style.display = readOnly ? 'none' : '';
+    document.getElementById('modalCancelBtn').textContent = readOnly ? 'Close' : 'Cancel';
+  }
+  function openViewModal(id){
+    openEditModal(id);
+    document.getElementById('modalTitle').textContent = 'View Dessimate PO';
+    document.getElementById('modalSub').textContent = 'Read-only — contact an Admin or Super Admin for any changes.';
+    applyModalReadOnlyMode(true);
+  }
+
   function openAddModal(){
     editingId = null;
     resetForm();
@@ -1240,6 +1278,7 @@
     var po = lastPos.find(function(x){ return x.id === id; });
     if (!po) return;
     editingId = id;
+    applyModalReadOnlyMode(false);
     document.getElementById('poForm').reset();
     document.getElementById('modalError').textContent = '';
     document.getElementById('attachError').textContent = '';

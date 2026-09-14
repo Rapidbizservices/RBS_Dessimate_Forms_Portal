@@ -772,15 +772,24 @@
         '<td>' + (po.lines ? po.lines.length : 0) + '</td>' +
         '<td class="moneyCell">' + escapeHtml(po.currency || '') + ' ' + money(po.poTotal) + '</td>' +
         '<td class="docCell">' + docHtml + '</td>' +
-        '<td>' + (canManageRecords() ? '<div class="rowActions">' +
-          '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
-          '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>' +
-        '</div>' : '') + '</td>' +
+        '<td><div class="rowActions">' + (canManageRecords()
+          ? '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
+            '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>'
+          : '<button type="button" class="editBtn" data-view="' + escapeHtml(po.id) + '">View</button>'
+        ) + '</div></td>' +
         '</tr>';
     }).join('');
 
     bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
       btn.addEventListener('click', function(){ requireAuthThen(function(){ openEditModal(this.getAttribute('data-edit')); }.bind(this)); });
+    });
+    // Rev2.7 hid Edit/Delete for anyone below Admin, but that was the only
+    // way ANY signed-in user (Team Member, or a Customer scoped to their
+    // own POs) could open the modal and see line items/attachments at all -
+    // a read-only "View" (same modal, everything disabled, no Save) fills
+    // that gap back in without granting any write access.
+    bodyEl.querySelectorAll('[data-view]').forEach(function(btn){
+      btn.addEventListener('click', function(){ requireAuthThen(function(){ openViewModal(this.getAttribute('data-view')); }.bind(this)); });
     });
     bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
       btn.addEventListener('click', function(){ deletePo(this.getAttribute('data-delete')); });
@@ -956,6 +965,7 @@
   });
 
   function resetForm(){
+    applyModalReadOnlyMode(false);
     document.getElementById('poForm').reset();
     document.getElementById('modalError').textContent = '';
     document.getElementById('attachError').textContent = '';
@@ -977,6 +987,7 @@
     var po = lastPos.find(function(x){ return x.id === id; });
     if (!po) return;
     editingId = id;
+    applyModalReadOnlyMode(false);
     document.getElementById('poForm').reset();
     document.getElementById('modalError').textContent = '';
     document.getElementById('attachError').textContent = '';
@@ -1000,6 +1011,30 @@
     document.getElementById('f_notes').value = po.notes || '';
     renderLines();
     document.getElementById('poModalOverlay').classList.add('open');
+  }
+  // Read-only mode for the "View" path (Team Member and Customer logins,
+  // who can see this modal's data but never save it) - disables every
+  // field, hides every write-affordance (Add/Remove Line, the attachment
+  // upload input and its Remove links, Save), and relabels Cancel to
+  // Close. View/Preview on an attachment still works, since that's just
+  // reading a file, not a write.
+  var viewOnlyMode = false;
+  function applyModalReadOnlyMode(readOnly){
+    viewOnlyMode = readOnly;
+    document.querySelectorAll('#poForm input, #poForm select, #poForm textarea').forEach(function(el){ el.disabled = readOnly; });
+    document.getElementById('addLineBtn').style.display = readOnly ? 'none' : '';
+    document.querySelectorAll('#linesTableBody [data-line-remove]').forEach(function(btn){ btn.style.display = readOnly ? 'none' : ''; });
+    var docRow = document.getElementById('attachmentsDocInput').closest('.docRow');
+    if (docRow) docRow.style.display = readOnly ? 'none' : '';
+    document.querySelectorAll('#attachmentsList [data-remove-idx]').forEach(function(el){ el.style.display = readOnly ? 'none' : ''; });
+    document.getElementById('modalSaveBtn').style.display = readOnly ? 'none' : '';
+    document.getElementById('modalCancelBtn').textContent = readOnly ? 'Close' : 'Cancel';
+  }
+  function openViewModal(id){
+    openEditModal(id);
+    document.getElementById('modalTitle').textContent = 'View Customer PO';
+    document.getElementById('modalSub').textContent = 'Read-only — contact your Dessimate contact for any changes.';
+    applyModalReadOnlyMode(true);
   }
   function closeModal(){ document.getElementById('poModalOverlay').classList.remove('open'); }
   document.getElementById('addPoBtn').addEventListener('click', function(){
