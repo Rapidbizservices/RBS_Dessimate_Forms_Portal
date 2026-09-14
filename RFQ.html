@@ -963,6 +963,25 @@
       return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
     });
   }
+  // Display-only date formatting (MM/DD/YYYY, site-wide standard) - never
+  // changes what's actually stored. Handles a plain "YYYY-MM-DD" (from an
+  // <input type="date">) without going through a Date object at all, to
+  // avoid a timezone-shift off-by-one-day bug; a full ISO timestamp (e.g. a
+  // createdAt/submittedAt) is parsed and shown in local time instead.
+  // Anything else (blank, already formatted, free text) passes through
+  // unchanged rather than risk mangling it.
+  function fmtDateMDY(s){
+    var str = (s == null ? '' : String(s)).trim();
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    if (m) return m[2] + '/' + m[3] + '/' + m[1];
+    if (str) {
+      var d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+      }
+    }
+    return str;
+  }
   function money(n){
     var v = Number(n) || 0;
     return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -999,7 +1018,7 @@
       var data = res.ok ? await res.json() : [];
       if (Array.isArray(data) && data.length && data[0].commit && data[0].commit.author) {
         var d = new Date(data[0].commit.author.date);
-        statusEl.textContent = 'Last updated ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+        statusEl.textContent = 'Last updated ' + fmtDateMDY(d.toISOString()) + ' ' + d.toLocaleTimeString();
       } else {
         statusEl.textContent = 'No file uploaded yet.';
       }
@@ -1113,11 +1132,11 @@
       bodyEl.innerHTML = sorted.map(function(r){
         var submitted = r.dessimateQuote && r.dessimateQuote.submitted;
         var statusHtml = submitted
-          ? '<span class="statusPill submitted">Quote available' + (r.dessimateQuote.submittedAt ? ' — ' + escapeHtml(new Date(r.dessimateQuote.submittedAt).toLocaleDateString()) : '') + '</span>'
+          ? '<span class="statusPill submitted">Quote available' + (r.dessimateQuote.submittedAt ? ' — ' + escapeHtml(fmtDateMDY(r.dessimateQuote.submittedAt)) : '') + '</span>'
           : '<span class="statusPill notStarted">Awaiting Dessimate quote</span>';
         return '<tr>' +
           '<td class="rfqNumber">' + escapeHtml(r.rfqNumber) + '</td>' +
-          '<td>' + escapeHtml(r.rfqDate) + '</td>' +
+          '<td>' + escapeHtml(fmtDateMDY(r.rfqDate)) + '</td>' +
           '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
           '<td>' + statusHtml + '</td>' +
           '<td><div class="rowActions"><button type="button" class="editBtn" data-view="' + escapeHtml(r.id) + '">View</button></div></td>' +
@@ -1135,11 +1154,11 @@
         var org = (r.sharedWithSuppliers && r.sharedWithSuppliers[0]) || '';
         var quote = r.supplierQuotes && r.supplierQuotes[org];
         var statusHtml = (quote && quote.submittedAt)
-          ? '<span class="statusPill submitted">Submitted ' + escapeHtml(new Date(quote.submittedAt).toLocaleDateString()) + '</span>'
+          ? '<span class="statusPill submitted">Submitted ' + escapeHtml(fmtDateMDY(quote.submittedAt)) + '</span>'
           : '<span class="statusPill notStarted">Not started</span>';
         return '<tr>' +
           '<td class="rfqNumber">' + escapeHtml(r.rfqNumber) + '</td>' +
-          '<td>' + escapeHtml(r.rfqDate) + '</td>' +
+          '<td>' + escapeHtml(fmtDateMDY(r.rfqDate)) + '</td>' +
           '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
           '<td>' + statusHtml + '</td>' +
           '<td><div class="rowActions"><button type="button" class="editBtn" data-quote="' + escapeHtml(r.id) + '">' + (quote ? 'Edit My Quote' : 'Add My Quote') + '</button></div></td>' +
@@ -1170,7 +1189,7 @@
       var attCell = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '<span style="color:var(--label);">—</span>';
       return '<tr>' +
         '<td class="rfqNumber">' + escapeHtml(r.rfqNumber) + '</td>' +
-        '<td>' + escapeHtml(r.rfqDate) + '</td>' +
+        '<td>' + escapeHtml(fmtDateMDY(r.rfqDate)) + '</td>' +
         '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
         '<td>' + sharedCell + '</td>' +
         '<td>' + quotesCell + '</td>' +
@@ -1779,7 +1798,7 @@
     var org = (rfq.sharedWithSuppliers && rfq.sharedWithSuppliers[0]) || '';
     var existingQuote = rfq.supplierQuotes && rfq.supplierQuotes[org];
 
-    document.getElementById('quoteModalTitle').textContent = 'RFQ ' + rfq.rfqNumber + (rfq.rfqDate ? ' — ' + rfq.rfqDate : '');
+    document.getElementById('quoteModalTitle').textContent = 'RFQ ' + rfq.rfqNumber + (rfq.rfqDate ? ' — ' + fmtDateMDY(rfq.rfqDate) : '');
     document.getElementById('quoteModalSub').textContent = existingQuote
       ? 'You submitted a quote on this RFQ. You can update it below.'
       : 'Enter your price and tooling cost per part, attach your filled-in quote format, and save.';
@@ -1855,7 +1874,7 @@
     var rfq = lastRfqs.find(function(x){ return x.id === id; });
     if (!rfq) return;
     document.getElementById('customerViewTitle').textContent = 'RFQ ' + rfq.rfqNumber;
-    document.getElementById('customerViewSub').textContent = rfq.rfqDate ? 'RFQ Date: ' + rfq.rfqDate : '';
+    document.getElementById('customerViewSub').textContent = rfq.rfqDate ? 'RFQ Date: ' + fmtDateMDY(rfq.rfqDate) : '';
 
     var lines = rfq.lines || [];
     document.getElementById('customerViewLinesTableBody').innerHTML = lines.length

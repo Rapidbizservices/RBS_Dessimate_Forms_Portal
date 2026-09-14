@@ -3738,6 +3738,14 @@ async function buildDessimateInvoicePdf(inv, selfOrg, customerOrg) {
     parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     return parts.join('.');
   }
+  // ISO date input ("YYYY-MM-DD") -> MM/DD/YYYY for display, matching the
+  // Dessimate PO PDF's fmtDateMDY; anything else (already-formatted, free
+  // text, blank) passes through unchanged rather than risk mangling it.
+  function fmtDateMDY(s) {
+    const str = (s || '').toString().trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    return m ? (m[2] + '/' + m[3] + '/' + m[1]) : str;
+  }
 
   const headerHeight = 246;
   const footerHeight = 168;
@@ -3776,7 +3784,7 @@ async function buildDessimateInvoicePdf(inv, selfOrg, customerOrg) {
   const poRefDisplay = (Array.isArray(inv.customerPoRefs) && inv.customerPoRefs.length) ? inv.customerPoRefs.join(', ') : (inv.customerPoRef || '');
   idRow('Invoice Number:', inv.invoiceNumber || '', 10);
   idRow('Purchase Order Number:', poRefDisplay, 10);
-  idRow('Date:', inv.invoiceDate || '', 10);
+  idRow('Date:', fmtDateMDY(inv.invoiceDate), 10);
   idRow('Terms:', inv.paymentTerms || '', 10);
   idRow('Due Date:', '', 10);
   idRow('Shipment #:', inv.shipmentNumber || '', 10);
@@ -3973,6 +3981,14 @@ async function buildPackingSlipPdf(inv, selfOrg, customerOrg, partsByNumber) {
     if (cur) lines.push(cur);
     return lines;
   }
+  // ISO date input ("YYYY-MM-DD") -> MM/DD/YYYY for display, matching the
+  // Dessimate PO PDF's fmtDateMDY; anything else (already-formatted, free
+  // text, blank) passes through unchanged rather than risk mangling it.
+  function fmtDateMDY(s) {
+    const str = (s || '').toString().trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    return m ? (m[2] + '/' + m[3] + '/' + m[1]) : str;
+  }
 
   const headerHeight = 240;
   const colGap = margin + 230;
@@ -3995,9 +4011,9 @@ async function buildPackingSlipPdf(inv, selfOrg, customerOrg, partsByNumber) {
   [
     ['Invoice Number:', inv.invoiceNumber || ''],
     ['Purchase Order Number:', (Array.isArray(inv.customerPoRefs) && inv.customerPoRefs.length) ? inv.customerPoRefs.join(', ') : (inv.customerPoRef || '')],
-    ['Date:', inv.invoiceDate || ''],
+    ['Date:', fmtDateMDY(inv.invoiceDate)],
     ['Ship Via:', inv.shipVia || ''],
-    ['Ship Date:', inv.shipDate || '']
+    ['Ship Date:', fmtDateMDY(inv.shipDate)]
   ].forEach(function (row) {
     rightText(row[0], pageWidth - margin - 100, ry, 10, { bold: true });
     rightText(row[1], pageWidth - margin, ry, 10);

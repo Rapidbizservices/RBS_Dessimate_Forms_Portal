@@ -769,6 +769,25 @@
       return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
     });
   }
+  // Display-only date formatting (MM/DD/YYYY, site-wide standard) - never
+  // changes what's actually stored. Handles a plain "YYYY-MM-DD" (from an
+  // <input type="date">) without going through a Date object at all, to
+  // avoid a timezone-shift off-by-one-day bug; a full ISO timestamp (e.g. a
+  // createdAt/submittedAt) is parsed and shown in local time instead.
+  // Anything else (blank, already formatted, free text) passes through
+  // unchanged rather than risk mangling it.
+  function fmtDateMDY(s){
+    var str = (s == null ? '' : String(s)).trim();
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    if (m) return m[2] + '/' + m[3] + '/' + m[1];
+    if (str) {
+      var d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+      }
+    }
+    return str;
+  }
   function money(n){
     var v = Number(n) || 0;
     return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -999,7 +1018,7 @@
         '<td>' + escapeHtml(po.supplier) + '</td>' +
         '<td>' + customerPoCell + '</td>' +
         '<td>' + relatedCell + '</td>' +
-        '<td>' + escapeHtml(po.poDate) + '</td>' +
+        '<td>' + escapeHtml(fmtDateMDY(po.poDate)) + '</td>' +
         '<td>' + (po.lines ? po.lines.length : 0) + '</td>' +
         '<td class="moneyCell">' + escapeHtml(po.currency || '') + ' ' + money(po.poTotal) + '</td>' +
         '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(po.id) + '" data-ponum="' + escapeHtml(po.poNumber) + '">View PDF</button></td>' +

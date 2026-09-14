@@ -605,8 +605,9 @@
     if (!iso) return '';
     try {
       var d = new Date(iso);
-      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) +
-        ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      // MM/DD/YYYY (site-wide date display standard), local time.
+      var mdy = String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+      return mdy + ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
     } catch (e) { return iso; }
   }
 
