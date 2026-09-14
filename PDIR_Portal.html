@@ -288,6 +288,12 @@
   var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
   var GH_PDF_FOLDER = 'pdirs';
   var GH_DRAFT_FOLDER = 'pdir_drafts';
+  // A Supporting Document's saved "path" (from the draft JSON's "docs"
+  // object) is relative to this folder, e.g. "<title>/mtc_report.pdf" - the
+  // same convention PDIR_Form_Filler.html's own ghGetDocFileBytes() uses
+  // (GH_DOC_FOLDER + '/' + relativePath), so it has to be prefixed the same
+  // way here before fetching it.
+  var GH_DOC_FOLDER = 'pdir_docs';
   var SESSION_KEY = 'dessimate_session';
   // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
   // worker/README.md) instead of hand-typed here - this fills it in once
@@ -600,10 +606,15 @@
   // Fetches the file through the Worker (base64 JSON, same as everything
   // else) rather than GitHub's public raw download_url, since the repo can
   // now be private — nobody but a signed-in staff member (or a Supplier/
-  // Customer login scoped to this shipment) can reach it. filename/mimeType
-  // are only needed to pick a viewer kind for a Supporting Document — the
-  // finished-PDF call site below always resolves to 'pdf' by extension.
-  async function openDocViewer(title, fullPath, mimeTypeHint){
+  // Customer login scoped to this shipment) can reach it. mimeTypeHint/
+  // filenameHint are only needed for a Supporting Document - the finished-
+  // PDF call site below omits both and always resolves to 'pdf' by
+  // extension. filenameHint matters because a Supporting Document's storage
+  // path uses its field key as the filename (e.g. "mtc_report.pdf"), not
+  // the original name the Supplier uploaded (e.g. "MTC_Certificate.pdf") -
+  // without it, both kind-detection and the Download button's suggested
+  // name would use the wrong one.
+  async function openDocViewer(title, fullPath, mimeTypeHint, filenameHint){
     var overlay = document.getElementById('viewerOverlay');
     var stateEl = document.getElementById('viewerState');
     var frame = document.getElementById('viewerFrame');
@@ -618,7 +629,7 @@
     try {
       var bytes = await ghGetFileBytes(fullPath);
       if (!bytes) throw new Error('File not found.');
-      var filename = fullPath.split('/').pop();
+      var filename = filenameHint || fullPath.split('/').pop();
       var kind = isInlineViewable(mimeTypeHint, filename);
       if (!kind) {
         stateEl.textContent = "This file type can't be previewed here — use Download instead.";
@@ -727,7 +738,7 @@
         btn.addEventListener('click', function(){
           var r = rows[Number(btn.getAttribute('data-view-idx'))];
           closeAttachmentsModal();
-          openDocViewer(r.label, r.doc.path, r.doc.mimeType);
+          openDocViewer(r.label, GH_DOC_FOLDER + '/' + r.doc.path, r.doc.mimeType, r.doc.filename);
         });
       });
     } catch (err) {
