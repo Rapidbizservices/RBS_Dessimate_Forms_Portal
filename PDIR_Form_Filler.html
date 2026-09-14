@@ -56,6 +56,22 @@
   .docView:hover{ text-decoration:underline; }
   .docLinks{ display:flex; align-items:center; }
 
+  /* Supporting Documents - multi-file per section (Rev2.11) */
+  .doc-field-multi{ display:flex; flex-direction:column; font-size:12.5px; gap:4px; }
+  .doc-field-multi .docFieldLabel{ color:var(--label); font-weight:600; }
+  .doc-field-multi input[type=file]{ font-size:11.5px; width:100%; }
+  .doc-field-multi .attachmentsList{ display:flex; flex-direction:column; gap:5px; margin-top:2px; }
+  .doc-field-multi .attachRow{ display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:5px 8px; background:#f7f8fb; border:1px solid var(--line); border-radius:5px; font-size:11.5px; font-weight:400; }
+  .doc-field-multi .attachName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); }
+  .doc-field-multi .attachName.pending{ color:#a06a1c; }
+  .doc-field-multi .attachLinks{ display:flex; gap:8px; flex:0 0 auto; }
+  .doc-field-multi .attachLinks button, .doc-field-multi .attachLinks .removeLink{
+    font-family:inherit; font-size:11px; font-weight:600; cursor:pointer; background:none; border:none; padding:0; color:var(--brand); }
+  .doc-field-multi .attachLinks button:hover, .doc-field-multi .attachLinks .removeLink:hover{ text-decoration:underline; }
+  .doc-field-multi .attachLinks .removeLink{ color:#b23b3b; }
+  .doc-field-multi .attachEmpty{ color:var(--label); font-style:italic; font-size:11.5px; }
+
   /* In-page document viewer (Supporting Documents) */
   .viewerOverlay{
     display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
@@ -794,8 +810,14 @@
     var m = /\.[a-zA-Z0-9]+$/.exec(filename || '');
     return m ? m[0] : '';
   }
-  function buildDocPath(title, key, filename){
-    return title + '/' + key + docFileExt(filename);
+  // idx is only passed for a multi-file DOC_FIELDS entry (Rev2.11) - each
+  // file needs its own unique path under a "<key>/" subfolder instead of
+  // the single flat "<key><ext>" file a single-file field (Stamp, and the
+  // legacy invoice field) still uses when idx is omitted.
+  function buildDocPath(title, key, filename, idx){
+    if (idx === undefined) return title + '/' + key + docFileExt(filename);
+    var safeName = (filename || 'file').replace(/[\\/]/g, '_');
+    return title + '/' + key + '/' + Date.now() + '-' + idx + '-' + safeName;
   }
 
   // ---- Staff login wall -----------------------------------------------------
@@ -937,6 +959,12 @@
     ['tax_invoice', 'Tax Invoice'],
     ['sco_met', 'SCO MET']
   ];
+  // Rev2.11: each DOC_FIELDS section now accepts more than one file, unlike
+  // the Stamp fields and the legacy invoice field below (still exactly one
+  // each) - docData[key] for a key in this list is an array of entries
+  // instead of a single entry, so anywhere that distinction matters checks
+  // membership here.
+  var DOC_FIELD_KEYS = DOC_FIELDS.map(function(item){ return item[0]; });
   // A PDIR saved before Rev2.1 may already have a docs.invoice file. It's
   // deliberately left out of DOC_FIELDS above - never shown, never
   // re-uploadable, never drawn into a newly-generated PDF's Supporting
@@ -962,24 +990,23 @@
     ['dessimate_stamp', 'Dessimate Stamp']
   ];
   var ALL_DOC_FIELDS = DOC_FIELDS.concat(STAMP_FIELDS).concat(LEGACY_HIDDEN_DOC_FIELDS);
-  // Each docData[key] is (when present): { bytes, filename, mimeType, path, dirty }.
-  // "bytes" is only kept in memory when needed (just chosen, or freshly
-  // downloaded for a view/attach); "path" is where it lives under pdir_docs/
-  // once saved; "dirty" means the in-memory bytes haven't been uploaded yet.
+  // For a key in DOC_FIELD_KEYS, docData[key] is an array of entries (Rev2.11
+  // - zero or more files); for every other key (Stamp fields, the legacy
+  // invoice field), it's a single entry or absent. Each entry is:
+  // { bytes, filename, mimeType, path, dirty }. "bytes" is only kept in
+  // memory when needed (just chosen, or freshly downloaded for a view/
+  // attach); "path" is where it lives under pdir_docs/ once saved; "dirty"
+  // means the in-memory bytes haven't been uploaded yet.
   var docData = {};
   var docFieldsRow = document.getElementById('docFieldsRow');
   DOC_FIELDS.forEach(function(item){
     var key = item[0], label = item[1];
-    var wrap = document.createElement('label');
-    wrap.className = 'field doc-field';
+    var wrap = document.createElement('div');
+    wrap.className = 'field doc-field-multi';
     wrap.innerHTML =
-      label +
-      '<input type="file" data-doc="' + key + '" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png">' +
-      '<span class="docStatus" data-doc-status="' + key + '">No file attached</span>' +
-      '<div class="docLinks">' +
-        '<button type="button" class="docView" data-doc-view="' + key + '">View</button>' +
-        '<a href="#" class="docDownload" data-doc-dl="' + key + '">Download current file</a>' +
-      '</div>';
+      '<div class="docFieldLabel">' + escapeHtmlLite(label) + '</div>' +
+      '<input type="file" data-doc-multi="' + key + '" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" multiple>' +
+      '<div class="attachmentsList" data-doc-list="' + key + '"></div>';
     docFieldsRow.appendChild(wrap);
   });
   // Scoped to the whole document (not just docFieldsRow) so the Supplier
@@ -1067,8 +1094,11 @@
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
   });
-  async function openDocViewer(key){
-    var entry = docData[key];
+  // Shared by the single-file fields (Stamp, legacy invoice - via
+  // openDocViewer(key) below, which looks the one entry up itself) and the
+  // multi-file DOC_FIELDS rows (which already have their specific entry
+  // in hand and call this directly - see renderDocFieldList).
+  async function openDocViewerForEntry(entry, fallbackTitle){
     if (!entry) return;
     var overlay = document.getElementById('docViewerOverlay');
     var stateEl = document.getElementById('docViewerState');
@@ -1076,7 +1106,7 @@
     var img = document.getElementById('docViewerImg');
     var office = document.getElementById('docViewerOffice');
     var downloadBtn = document.getElementById('docViewerDownload');
-    document.getElementById('docViewerTitle').textContent = entry.filename || key;
+    document.getElementById('docViewerTitle').textContent = entry.filename || fallbackTitle || 'Document';
     frame.style.display = 'none';
     img.style.display = 'none';
     office.style.display = 'none';
@@ -1106,7 +1136,7 @@
         if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
         docViewerObjectUrl = URL.createObjectURL(officeBlob);
         downloadBtn.href = docViewerObjectUrl;
-        downloadBtn.download = entry.filename || key;
+        downloadBtn.download = entry.filename || fallbackTitle || 'file';
         downloadBtn.style.display = 'inline-block';
         return;
       }
@@ -1122,12 +1152,15 @@
       }
       stateEl.style.display = 'none';
       downloadBtn.href = docViewerObjectUrl;
-      downloadBtn.download = entry.filename || key;
+      downloadBtn.download = entry.filename || fallbackTitle || 'file';
       downloadBtn.style.display = 'inline-block';
     } catch (e) {
       console.error(e);
       stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
     }
+  }
+  function openDocViewer(key){
+    return openDocViewerForEntry(docData[key], key);
   }
   document.querySelectorAll('button[data-doc-view]').forEach(function(btn){
     btn.addEventListener('click', function(){
@@ -1135,10 +1168,10 @@
     });
   });
   // ---------------------------------------------------------------------------
-  // Shared by the three DOC_FIELDS inputs (built above, inside docFieldsRow,
-  // keyed off their data-doc attribute) and the standalone Supplier Stamp
-  // input in the Sign-Off card (outside docFieldsRow, wired explicitly below
-  // with its fixed key) — same in-memory-then-upload-on-save behavior either way.
+  // Single-file version, for the Supplier/Dessimate Stamp inputs in the
+  // Sign-Off card (wired explicitly below with their fixed key) - the
+  // DOC_FIELDS inputs in docFieldsRow moved to the multi-file mechanism
+  // below (wireDocFieldMultiInput/renderDocFieldList) in Rev2.11.
   function wireDocFileInput(inp, key){
     inp.addEventListener('change', function(){
       var file = this.files && this.files[0];
@@ -1159,9 +1192,80 @@
       });
     });
   }
-  docFieldsRow.querySelectorAll('input[type=file][data-doc]').forEach(function(inp){
-    wireDocFileInput(inp, inp.getAttribute('data-doc'));
+  // ---- Multi-file version, for the DOC_FIELDS sections (Rev2.11) ------------
+  function renderDocFieldList(key){
+    var listEl = document.querySelector('[data-doc-list="' + key + '"]');
+    if (!listEl) return;
+    var entries = docData[key] || [];
+    if (!entries.length) {
+      listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>';
+      return;
+    }
+    listEl.innerHTML = entries.map(function(entry, idx){
+      var nameClass = entry.dirty ? 'attachName pending' : 'attachName';
+      var label = entry.dirty ? escapeHtmlLite(entry.filename) + ' (will upload on Save)' : escapeHtmlLite(entry.filename);
+      return '<div class="attachRow">' +
+        '<span class="' + nameClass + '" title="' + escapeHtmlLite(entry.filename) + '">' + label + '</span>' +
+        '<div class="attachLinks">' +
+          '<button type="button" data-doc-field-view="' + key + '" data-doc-field-idx="' + idx + '">View</button>' +
+          '<span class="removeLink" data-doc-field-remove="' + key + '" data-doc-field-idx2="' + idx + '">Remove</span>' +
+        '</div></div>';
+    }).join('');
+    listEl.querySelectorAll('[data-doc-field-view]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var k = btn.getAttribute('data-doc-field-view');
+        var entry = (docData[k] || [])[Number(btn.getAttribute('data-doc-field-idx'))];
+        openDocViewerForEntry(entry, entry && entry.filename);
+      });
+    });
+    listEl.querySelectorAll('[data-doc-field-remove]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var k = btn.getAttribute('data-doc-field-remove');
+        (docData[k] || []).splice(Number(btn.getAttribute('data-doc-field-idx2')), 1);
+        renderDocFieldList(k);
+        scheduleAutosave();
+      });
+    });
+  }
+  function wireDocFieldMultiInput(inp, key){
+    inp.addEventListener('change', function(){
+      var files = this.files ? Array.from(this.files) : [];
+      this.value = '';
+      if (!files.length) return;
+      Promise.all(files.map(function(file){
+        return file.arrayBuffer().then(function(buf){
+          return { bytes: new Uint8Array(buf), filename: file.name, mimeType: file.type || 'application/octet-stream', path: null, dirty: true };
+        }).catch(function(e){
+          console.error(e);
+          alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+          return null;
+        });
+      })).then(function(newEntries){
+        if (!docData[key]) docData[key] = [];
+        newEntries.forEach(function(entry){ if (entry) docData[key].push(entry); });
+        renderDocFieldList(key);
+        scheduleAutosave();
+      });
+    });
+  }
+  docFieldsRow.querySelectorAll('input[type=file][data-doc-multi]').forEach(function(inp){
+    var key = inp.getAttribute('data-doc-multi');
+    wireDocFieldMultiInput(inp, key);
+    renderDocFieldList(key);
   });
+  // Refreshes every doc field's display after a save - persistDirtyDocs()
+  // just cleared each entry's "dirty" flag, which the multi-file list
+  // renders as a "(will upload on Save)" label, so those need a re-render;
+  // the single-file fields just need their Download link's visibility
+  // re-checked the same as before.
+  function refreshAllDocDisplays(){
+    ALL_DOC_FIELDS.forEach(function(item){
+      var key = item[0];
+      if (DOC_FIELD_KEYS.indexOf(key) !== -1) { renderDocFieldList(key); }
+      else { updateDocDownloadLink(key); }
+    });
+  }
+  // -----------------------------------------------------------------------------
   var supplierStampInputEl = document.getElementById('f_supplierStamp');
   if (supplierStampInputEl) wireDocFileInput(supplierStampInputEl, 'supplier_stamp');
   // Rev2.1: manual Stamp upload for the Dessimate Sign-off, matching the
@@ -1298,8 +1402,12 @@
     photoData = {};
     photoGroupsEl.querySelectorAll('.preview').forEach(function(img){ img.style.display = 'none'; img.src = ''; });
     docData = {};
-    ALL_DOC_FIELDS.forEach(function(item){ updateDocStatus(item[0], 'No file attached', false); updateDocDownloadLink(item[0]); });
-    docFieldsRow.querySelectorAll('input[type=file][data-doc]').forEach(function(inp){ inp.value = ''; });
+    ALL_DOC_FIELDS.forEach(function(item){
+      var key = item[0];
+      if (DOC_FIELD_KEYS.indexOf(key) !== -1) { renderDocFieldList(key); }
+      else { updateDocStatus(key, 'No file attached', false); updateDocDownloadLink(key); }
+    });
+    docFieldsRow.querySelectorAll('input[type=file][data-doc-multi]').forEach(function(inp){ inp.value = ''; });
     if (supplierStampInputEl) supplierStampInputEl.value = '';
     if (dessimateStampInputEl) dessimateStampInputEl.value = '';
     resolveQualityApproverStamp();
@@ -1650,13 +1758,24 @@
     cursorY -= 4;
     DOC_FIELDS.forEach(function(item){
       var key = item[0], label = item[1];
-      var entry = docData[key];
+      var entries = docData[key] || [];
       ensureSpace(16);
       page.drawText(label + ':', { x: MARGIN, y: cursorY, size: 9.5, font: fontBold, color: INK });
       var labelW = fontBold.widthOfTextAtSize(label + ':', 9.5);
-      var statusText = entry ? entry.filename : 'Not provided';
-      page.drawText(statusText, { x: MARGIN + labelW + 6, y: cursorY, size: 9.5, font: font, color: entry ? INK : LABEL });
+      if (!entries.length) {
+        page.drawText('Not provided', { x: MARGIN + labelW + 6, y: cursorY, size: 9.5, font: font, color: LABEL });
+        cursorY -= 16;
+        return;
+      }
+      // First file's name shares the label's line (matching the old
+      // single-file look); any additional files (Rev2.11) list below it.
+      page.drawText(entries[0].filename, { x: MARGIN + labelW + 6, y: cursorY, size: 9.5, font: font, color: INK });
       cursorY -= 16;
+      for (var fi = 1; fi < entries.length; fi++) {
+        ensureSpace(13);
+        page.drawText(entries[fi].filename, { x: MARGIN + labelW + 6, y: cursorY, size: 9.5, font: font, color: INK });
+        cursorY -= 13;
+      }
     });
     cursorY -= 6;
 
@@ -1710,8 +1829,9 @@
     // from pdir_docs/ first in that case.
     for (var di = 0; di < DOC_FIELDS.length; di++) {
       var dKey = DOC_FIELDS[di][0], dLabel = DOC_FIELDS[di][1];
-      var dEntry = docData[dKey];
-      if (dEntry) {
+      var dEntries = docData[dKey] || [];
+      for (var dj = 0; dj < dEntries.length; dj++) {
+        var dEntry = dEntries[dj];
         var attachBytes = dEntry.bytes;
         if (!attachBytes && dEntry.path) {
           try { attachBytes = await ghGetDocFileBytes(dEntry.path); if (attachBytes) dEntry.bytes = attachBytes; } catch (e) { console.error(e); }
@@ -1767,27 +1887,51 @@
     }
     // Documents themselves live under pdir_docs/ (see persistDirtyDocs) — the
     // draft just remembers where to find each one, not the bytes themselves.
+    // A DOC_FIELDS key stores an array (zero or more files, Rev2.11); every
+    // other key still stores a single {path,filename,mimeType,size} object.
     var docs = {};
     ALL_DOC_FIELDS.forEach(function(item){
       var key = item[0];
-      var dd = docData[key];
-      if (dd && dd.path) docs[key] = { path: dd.path, filename: dd.filename, mimeType: dd.mimeType, size: dd.bytes ? dd.bytes.length : (dd.size || 0) };
+      if (DOC_FIELD_KEYS.indexOf(key) !== -1) {
+        var arr = (docData[key] || [])
+          .filter(function(d){ return d && d.path; })
+          .map(function(d){ return { path: d.path, filename: d.filename, mimeType: d.mimeType, size: d.bytes ? d.bytes.length : (d.size || 0) }; });
+        if (arr.length) docs[key] = arr;
+      } else {
+        var dd = docData[key];
+        if (dd && dd.path) docs[key] = { path: dd.path, filename: dd.filename, mimeType: dd.mimeType, size: dd.bytes ? dd.bytes.length : (dd.size || 0) };
+      }
     });
     return { fields: fields, photos: photos, docs: docs, savedAt: new Date().toISOString() };
   }
 
   // Uploads any newly-chosen document files to pdir_docs/<title>/<key><ext>
-  // before a draft or PDF is saved, so the draft's "docs" metadata always
-  // points at a file that actually exists in the repo.
+  // (single-file fields) or pdir_docs/<title>/<key>/<unique name> (DOC_FIELDS,
+  // Rev2.11 - multiple files per key need distinct paths) before a draft or
+  // PDF is saved, so the draft's "docs" metadata always points at files that
+  // actually exist in the repo.
   async function persistDirtyDocs(title, shipmentLabel){
     for (var i = 0; i < ALL_DOC_FIELDS.length; i++) {
       var key = ALL_DOC_FIELDS[i][0], label = ALL_DOC_FIELDS[i][1];
-      var entry = docData[key];
-      if (entry && entry.dirty && entry.bytes) {
-        var relPath = buildDocPath(title, key, entry.filename);
-        await ghSaveDocFile(relPath, entry.bytes, 'Save ' + label + ' for shipment ' + shipmentLabel);
-        entry.path = relPath;
-        entry.dirty = false;
+      if (DOC_FIELD_KEYS.indexOf(key) !== -1) {
+        var arr = docData[key] || [];
+        for (var j = 0; j < arr.length; j++) {
+          var e = arr[j];
+          if (e && e.dirty && e.bytes) {
+            var multiPath = buildDocPath(title, key, e.filename, j);
+            await ghSaveDocFile(multiPath, e.bytes, 'Save ' + label + ' for shipment ' + shipmentLabel);
+            e.path = multiPath;
+            e.dirty = false;
+          }
+        }
+      } else {
+        var entry = docData[key];
+        if (entry && entry.dirty && entry.bytes) {
+          var relPath = buildDocPath(title, key, entry.filename);
+          await ghSaveDocFile(relPath, entry.bytes, 'Save ' + label + ' for shipment ' + shipmentLabel);
+          entry.path = relPath;
+          entry.dirty = false;
+        }
       }
     }
   }
@@ -1820,16 +1964,27 @@
     docData = {};
     ALL_DOC_FIELDS.forEach(function(item){
       var key = item[0];
-      var entry = docs && docs[key];
-      if (entry && entry.path) {
-        // Bytes aren't re-downloaded until actually needed (Download link
-        // click, or Create PDF) — the path is enough to fetch them on demand.
-        docData[key] = { bytes: null, filename: entry.filename, mimeType: entry.mimeType, path: entry.path, size: entry.size, dirty: false };
-        updateDocStatus(key, 'Attached: ' + entry.filename, true);
+      var raw = docs && docs[key];
+      if (DOC_FIELD_KEYS.indexOf(key) !== -1) {
+        // A PDIR saved before Rev2.11 has a single {path,...} object here
+        // instead of an array - normalize it to a 1-element array so an
+        // older draft's file isn't silently dropped.
+        var arr = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+        docData[key] = arr.filter(function(d){ return d && d.path; }).map(function(d){
+          // Bytes aren't re-downloaded until actually needed (View/Download,
+          // or Create PDF) — the path is enough to fetch them on demand.
+          return { bytes: null, filename: d.filename, mimeType: d.mimeType, path: d.path, size: d.size, dirty: false };
+        });
+        renderDocFieldList(key);
       } else {
-        updateDocStatus(key, 'No file attached', false);
+        if (raw && raw.path) {
+          docData[key] = { bytes: null, filename: raw.filename, mimeType: raw.mimeType, path: raw.path, size: raw.size, dirty: false };
+          updateDocStatus(key, 'Attached: ' + raw.filename, true);
+        } else {
+          updateDocStatus(key, 'No file attached', false);
+        }
+        updateDocDownloadLink(key);
       }
-      updateDocDownloadLink(key);
     });
   }
 
@@ -1854,7 +2009,7 @@
       currentDraftTitle = title;
       await upsertPdirIndex(title, shipmentNumber.trim());
       updateDraftStatus('Draft saved to GitHub at ' + new Date().toLocaleTimeString() + '.', 'ok');
-      ALL_DOC_FIELDS.forEach(function(item){ updateDocDownloadLink(item[0]); });
+      refreshAllDocDisplays();
     } catch (e) {
       console.error(e);
       updateDraftStatus('Could not save draft (' + e.message + ').', 'error');
@@ -1945,7 +2100,7 @@
           // Save any newly-chosen supporting documents as their own files first,
           // so the draft below can point at them.
           await persistDirtyDocs(title, shipmentNumber.trim() || 'unspecified');
-          ALL_DOC_FIELDS.forEach(function(item){ updateDocDownloadLink(item[0]); });
+          refreshAllDocDisplays();
           // Save the draft alongside the PDF so "Modify PDIR" can always pick this
           // shipment back up later, and so a re-generated PDF overwrites the old one.
           var draftPayload = collectDraftData();

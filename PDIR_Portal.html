@@ -718,9 +718,18 @@
       if (text) {
         try { docs = JSON.parse(text).docs || {}; } catch (e) { docs = {}; }
       }
-      var rows = DOC_FIELD_ORDER
-        .map(function(key){ return { key: key, label: DOC_FIELD_LABELS[key], doc: docs[key] }; })
-        .filter(function(r){ return r.doc && r.doc.path; });
+      // A section can now hold more than one file (Rev2.11) - docs[key] is
+      // an array in that case, one row per file; an older PDIR saved before
+      // that change still has a single {path,...} object here, so that's
+      // normalized to a 1-element array rather than dropped.
+      var rows = [];
+      DOC_FIELD_ORDER.forEach(function(key){
+        var raw = docs[key];
+        var arr = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+        arr.forEach(function(doc){
+          if (doc && doc.path) rows.push({ key: key, label: DOC_FIELD_LABELS[key], doc: doc });
+        });
+      });
       if (!rows.length) {
         stateEl.textContent = 'No supporting documents are on file for this PDIR.';
         return;
