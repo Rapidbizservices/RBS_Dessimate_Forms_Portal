@@ -1,6 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>Organizations &mdash; DSCM</title>
+<link rel="stylesheet" href="office-viewer.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -397,10 +398,12 @@
       <div id="docViewerState" class="viewerState">Loading&hellip;</div>
       <iframe id="docViewerFrame" title="Document preview" style="display:none;"></iframe>
       <img id="docViewerImg" alt="Document preview" style="display:none;">
+      <div id="docViewerOffice" style="display:none;"></div>
     </div>
   </div>
 </div>
 
+<script src="office-viewer.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -595,6 +598,8 @@
     var ext = docFileExt(filename).toLowerCase();
     if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
     if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    var officeKind = window.OfficeViewer && window.OfficeViewer.isOfficeExt(filename, mimeType);
+    if (officeKind) return officeKind;
     return null;
   }
   function closeDocViewer(){
@@ -603,6 +608,8 @@
     document.getElementById('docViewerFrame').style.display = 'none';
     document.getElementById('docViewerImg').src = '';
     document.getElementById('docViewerImg').style.display = 'none';
+    document.getElementById('docViewerOffice').style.display = 'none';
+    document.getElementById('docViewerOffice').innerHTML = '';
     document.getElementById('docViewerDownload').style.display = 'none';
     if (docViewerObjectUrl) { URL.revokeObjectURL(docViewerObjectUrl); docViewerObjectUrl = null; }
   }
@@ -618,9 +625,10 @@
     var stateEl = document.getElementById('docViewerState');
     var frame = document.getElementById('docViewerFrame');
     var img = document.getElementById('docViewerImg');
+    var office = document.getElementById('docViewerOffice');
     var downloadBtn = document.getElementById('docViewerDownload');
     document.getElementById('docViewerTitle').textContent = source.filename || 'Document';
-    frame.style.display = 'none'; img.style.display = 'none'; downloadBtn.style.display = 'none';
+    frame.style.display = 'none'; img.style.display = 'none'; office.style.display = 'none'; office.innerHTML = ''; downloadBtn.style.display = 'none';
     stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
     overlay.classList.add('open');
     try {
@@ -632,6 +640,18 @@
       var kind = isInlineViewable(source.mimeType, source.filename);
       if (!kind) {
         stateEl.textContent = "This file type can't be previewed here — use Download instead.";
+        return;
+      }
+      if (kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
+        office.style.display = 'block';
+        await window.OfficeViewer.render(kind, office, bytes);
+        stateEl.style.display = 'none';
+        var officeBlob = new Blob([bytes], { type: source.mimeType || 'application/octet-stream' });
+        if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+        docViewerObjectUrl = URL.createObjectURL(officeBlob);
+        downloadBtn.href = docViewerObjectUrl;
+        downloadBtn.download = source.filename || 'file';
+        downloadBtn.style.display = 'inline-block';
         return;
       }
       var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : 'image/jpeg') });

@@ -1,0 +1,25 @@
+/* office-viewer.css — styling for the shared #docViewerOffice container
+   (.docx/.xlsx/.pptx inline previews), included alongside office-viewer.js. */
+#docViewerOffice{
+  position:absolute; inset:0; overflow:auto; background:#fff;
+}
+#docViewerOffice .docx-wrapper{ background:#e9ebef; padding:24px 0; }
+
+#docViewerOffice .officeXlsxTabs{
+  display:flex; flex-wrap:wrap; gap:4px; padding:8px 10px;
+  background:#f4f5f7; border-bottom:1px solid #d7dae0;
+  position:sticky; top:0; z-index:1;
+}
+#docViewerOffice .officeXlsxTab{
+  font:inherit; font-size:12px; padding:4px 10px; border:1px solid #ccd0d8;
+  background:#fff; border-radius:4px; cursor:pointer; color:#333;
+}
+#docViewerOffice .officeXlsxTab.active{ background:var(--brand,#1f3d7a); border-color:var(--brand,#1f3d7a); color:#fff; }
+#docViewerOffice .officeXlsxTableWrap{ padding:10px; overflow:auto; }
+#docViewerOffice .officeXlsxTableWrap table{ border-collapse:collapse; font-size:12px; }
+#docViewerOffice .officeXlsxTableWrap table td,
+#docViewerOffice .officeXlsxTableWrap table th{
+  border:1px solid #d7dae0; padding:3px 8px; white-space:nowrap;
+}
+
+#docViewerOffice .slides-loadnig-msg{ padding:16px; text-align:center; color:#555; }
