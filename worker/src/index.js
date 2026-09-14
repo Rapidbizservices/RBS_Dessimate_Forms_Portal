@@ -216,6 +216,17 @@ const PARTS_FILE_PATH = 'data/parts.json';
 const PART_DOC_FOLDER = 'part_docs';
 const PART_STATUSES = ['Active', 'Inactive', 'Obsolete'];
 
+// Used by isContentsPathAllowedForExternal to gate a Supplier/Customer's raw
+// /contents/ access to a Part's attachments (drawings, .stp/.step files,
+// etc.) - same ownership check scopeParts already uses for the list itself.
+// Returns { customer, suppliers } or null if the Part doesn't exist.
+async function resolvePartOwnership(env, partId) {
+  const state = await readJsonArrayFile(env, PARTS_FILE_PATH);
+  const part = state.items.find(function (o) { return o.id === partId; });
+  if (!part) return null;
+  return { customer: part.customer || '', suppliers: Array.isArray(part.suppliers) ? part.suppliers : [] };
+}
+
 // PDIR (shipment inspection reports) predates structured backend storage -
 // its records are still raw files in pdirs/pdir_drafts/pdir_docs, named and
 // organized by the frontend alone, not a JSON-array-of-records file like
@@ -239,6 +250,16 @@ const DEFAULT_APP_CONFIG = { version: '2.2', builtLabel: 'Built September 2026',
 
 const APQP_FILE_PATH = 'data/apqp.json';
 const APQP_DOC_FOLDER = 'apqp_docs';
+
+// Used by isContentsPathAllowedForExternal to gate a Supplier/Customer's raw
+// /contents/ access to an APQP record's checklist-item files - returns the
+// record's partNumber (APQP visibility is Part-based, same as PDIR - see
+// handleListApqp), or null if the record doesn't exist.
+async function resolveApqpRecordPartNumber(env, recordId) {
+  const state = await readJsonArrayFile(env, APQP_FILE_PATH);
+  const record = state.items.find(function (o) { return o.id === recordId; });
+  return record ? (record.partNumber || '') : null;
+}
 // Fixed checklist of APQP deliverables per part (per the product brief), each
 // with its own files + a running comment log. Order matters - it's the order
 // the Part's checklist is shown in. "0. Feasibility Studies" (Rev2.1) is two
@@ -1864,6 +1885,32 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
     return visiblePartNumbers.has((entry.partNumber || '').toLowerCase());
   }
 
+  // A Supplier/Customer can read the attachments (drawings, .stp/.step
+  // files, etc.) on a Part their organization is actually involved with -
+  // same ownership check scopeParts already uses for the Parts list itself
+  // (a Supplier in the Part's `suppliers` array, a Customer matching the
+  // Part's single `customer` field).
+  const partDocsMatch = /^part_docs\/([^/]+)\/.+$/.exec(decoded);
+  if (partDocsMatch) {
+    const part = await resolvePartOwnership(env, partDocsMatch[1]);
+    if (!part) return false;
+    return accessLevel === 'supplier' ? part.suppliers.indexOf(organization) !== -1 : part.customer === organization;
+  }
+
+  // A Supplier/Customer can read the files attached to an APQP checklist
+  // item for a Part their organization is involved with - APQP visibility is
+  // Part-based (same mechanism as PDIR/Parts, see handleListApqp), so this
+  // re-derives the same visible-part-numbers set scopeParts already
+  // computes for the APQP list itself.
+  const apqpDocsMatch = /^apqp_docs\/([^/]+)\/.+$/.exec(decoded);
+  if (apqpDocsMatch) {
+    const partNumber = await resolveApqpRecordPartNumber(env, apqpDocsMatch[1]);
+    if (!partNumber) return false;
+    const partsState = await readJsonArrayFile(env, PARTS_FILE_PATH);
+    const visibleParts = scopeParts(partsState.items.map(sanitizePart), accessLevel, organization);
+    return visibleParts.some(function (p) { return (p.partNumber || '').toLowerCase() === partNumber.toLowerCase(); });
+  }
+
   // RFQ module - a Supplier can read the Dessimate-side attachments (rfq_docs)
   // and its own previously-submitted quote files (rfq_quote_docs) for any
   // RFQ currently shared with its organization, plus the one shared
@@ -1902,6 +1949,14 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
     const poDocsMatch = /^dessimate_po_docs\/([^/]+)\/.+$/.exec(decoded);
     if (poDocsMatch) {
       const owner = await resolveDessimatePoOwner(env, poDocsMatch[1]);
+      return owner !== null && owner === organization;
+    }
+    // A Supplier can read the attachments on their own submitted Supplier
+    // Invoice (supplier_invoice_docs) - same ownership check
+    // handleListSupplierInvoices already uses for the list itself.
+    const supplierInvoiceDocsMatch = /^supplier_invoice_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (supplierInvoiceDocsMatch) {
+      const owner = await resolveSupplierInvoiceOwner(env, supplierInvoiceDocsMatch[1]);
       return owner !== null && owner === organization;
     }
   }
@@ -3217,6 +3272,17 @@ async function handleUpdateRfqDessimateQuote(request, env, origin, id, username)
 // Dessimate user, writes are Team Member+.
 const SUPPLIER_INVOICES_FILE_PATH = 'data/supplier_invoices.json';
 const SUPPLIER_INVOICE_STATUSES = ['Unpaid', 'Paid'];
+
+// Used by isContentsPathAllowedForExternal to gate a Supplier's raw
+// /contents/ access to their own submitted invoice's attached PDF - same
+// ownership check handleListSupplierInvoices already uses for the list
+// itself. Returns the org name on file, or null if the invoice doesn't
+// exist.
+async function resolveSupplierInvoiceOwner(env, invoiceId) {
+  const state = await readJsonArrayFile(env, SUPPLIER_INVOICES_FILE_PATH);
+  const inv = state.items.find(function (o) { return o.id === invoiceId; });
+  return inv ? (inv.supplier || '') : null;
+}
 
 function sanitizeSupplierInvoiceLine(l) {
   const qty = Number(l && l.qtyInvoiced) || 0;
