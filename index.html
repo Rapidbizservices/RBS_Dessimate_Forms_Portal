@@ -156,6 +156,7 @@
 
     <div class="sideFoot">
       <div class="sideUser" id="sideUser">Not signed in</div>
+      <button type="button" class="sideLogoutBtn" id="sideChangePasswordBtn" style="margin-bottom:8px;">Change Password</button>
       <button type="button" class="sideLogoutBtn" id="sideLogoutBtn">Log out</button>
       <div class="sideVersion" id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</div>
     </div>
@@ -198,6 +199,28 @@
         <button type="submit" id="authSubmitBtn">Log In</button>
         <div class="authError" id="authError"></div>
         <div class="authAttempts" id="authAttempts"></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="authOverlay" id="changePasswordOverlay">
+    <div class="authCard">
+      <h2>Change Password</h2>
+      <p class="authSub">Enter your current password and choose a new one (at least 8 characters).</p>
+      <form id="changePasswordForm">
+        <label>Current Password
+          <input type="password" id="cpCurrent" autocomplete="current-password">
+        </label>
+        <label>New Password
+          <input type="password" id="cpNew" autocomplete="new-password">
+        </label>
+        <label>Confirm New Password
+          <input type="password" id="cpConfirm" autocomplete="new-password">
+        </label>
+        <button type="submit" id="cpSubmitBtn">Update Password</button>
+        <button type="button" id="cpCancelBtn" style="background:#5b5f66; margin-top:8px;">Cancel</button>
+        <div class="authError" id="cpError"></div>
+        <div class="authAttempts" id="cpSuccess" style="color:#187b46; font-weight:600;"></div>
       </form>
     </div>
   </div>
@@ -319,6 +342,65 @@
       btn.disabled = false; btn.textContent = 'Log In';
     }
   });
+
+  // ---- Self-service Change Password (Rev2.11) --------------------------
+  function openChangePasswordModal(){
+    if (!getSession()) { showAuthOverlay(); return; }
+    document.getElementById('cpCurrent').value = '';
+    document.getElementById('cpNew').value = '';
+    document.getElementById('cpConfirm').value = '';
+    document.getElementById('cpError').textContent = '';
+    document.getElementById('cpSuccess').textContent = '';
+    document.getElementById('changePasswordOverlay').classList.add('open');
+  }
+  function closeChangePasswordModal(){
+    document.getElementById('changePasswordOverlay').classList.remove('open');
+  }
+  document.getElementById('sideChangePasswordBtn').addEventListener('click', openChangePasswordModal);
+  document.getElementById('cpCancelBtn').addEventListener('click', closeChangePasswordModal);
+  document.getElementById('changePasswordOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'changePasswordOverlay') closeChangePasswordModal();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && document.getElementById('changePasswordOverlay').classList.contains('open')) closeChangePasswordModal();
+  });
+  document.getElementById('changePasswordForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var current = document.getElementById('cpCurrent').value;
+    var next = document.getElementById('cpNew').value;
+    var confirmVal = document.getElementById('cpConfirm').value;
+    var errEl = document.getElementById('cpError');
+    var okEl = document.getElementById('cpSuccess');
+    var btn = document.getElementById('cpSubmitBtn');
+    errEl.textContent = ''; okEl.textContent = '';
+    if (!current || !next || !confirmVal) { errEl.textContent = 'Fill in all three fields.'; return; }
+    if (next.length < 8) { errEl.textContent = 'New password must be at least 8 characters.'; return; }
+    if (next !== confirmVal) { errEl.textContent = 'New password and confirmation do not match.'; return; }
+    var session = getSession();
+    if (!session) { errEl.textContent = 'Your session has expired — please log in again.'; return; }
+    btn.disabled = true; btn.textContent = 'Updating…';
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me/password', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.token },
+        body: JSON.stringify({ currentPassword: current, newPassword: next })
+      });
+      var data = await res.json().catch(function(){ return {}; });
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      okEl.textContent = 'Password updated.';
+      document.getElementById('cpCurrent').value = '';
+      document.getElementById('cpNew').value = '';
+      document.getElementById('cpConfirm').value = '';
+      setTimeout(closeChangePasswordModal, 1200);
+    } catch (err) {
+      console.error(err);
+      errEl.textContent = err && err.message ? err.message : 'Could not update your password.';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Update Password';
+    }
+  });
+  // -----------------------------------------------------------------------
+
   document.getElementById('sideLogoutBtn').addEventListener('click', function(){
     clearSession();
     // Clear out the previous person's module content and nav so nothing

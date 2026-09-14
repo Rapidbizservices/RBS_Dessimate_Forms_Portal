@@ -102,6 +102,11 @@
  *   GET    /me                        - auth required; -> { username, accessLevel }. Lets the
  *                                        frontend decide what to show (e.g. the Admin button)
  *                                        from real resolved access, instead of a hardcoded list.
+ *   PUT    /me/password               - auth required (any role, not impersonating); self-service
+ *                                        password change - { currentPassword, newPassword } ->
+ *                                        { ok: true }. Verifies currentPassword itself; never an
+ *                                        Admin-privileged path, can only touch the caller's own
+ *                                        account.
  *   GET    /admin/users               - super_admin required; full sanitized user directory
  *                                        (never salts/hashes), including not-yet-migrated
  *                                        legacy logins.
@@ -348,6 +353,16 @@ export default {
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         const accessLevel = await resolveAccessLevel(env, auth.username);
         return json({ username: auth.username, accessLevel: accessLevel, impersonatedBy: auth.impersonatedBy || null }, 200, origin);
+      }
+
+      if (url.pathname === '/me/password' && request.method === 'PUT') {
+        const auth = await requireAuth(request, env);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        // A Super Admin "Log in as" session shouldn't be able to quietly
+        // change the impersonated person's password - that already has its
+        // own explicit, logged path via the Users admin page.
+        if (auth.impersonatedBy) return json({ message: "Can't change a password while impersonating another user — use the Users admin page instead." }, 403, origin);
+        return await handleChangeOwnPassword(request, env, origin, auth.username);
       }
 
       // Rev2.4: Super Admin "Log in as" - see handleAdminImpersonate.
@@ -853,6 +868,68 @@ async function issueSession(username, env, origin, impersonatedBy) {
   const resp = { token: token, username: username, expiresAt: exp * 1000 };
   if (impersonatedBy) resp.impersonatedBy = impersonatedBy;
   return json(resp, 200, origin);
+}
+
+// PUT /me/password - self-service password change (Rev2.11), open to any
+// signed-in role (Dessimate Team member, Supplier, Customer alike). Not an
+// Admin-privileged action - it can only ever touch the caller's own record,
+// verified by re-checking their current password the same way handleLogin
+// does. Same {username, salt, hash} shape handleAdminUpdateUser writes,
+// reused here so a password set either way looks identical on file.
+async function handleChangeOwnPassword(request, env, origin, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const currentPassword = (body.currentPassword || '').toString();
+  const newPassword = (body.newPassword || '').toString();
+  if (!currentPassword || !newPassword) return json({ message: 'Enter your current password and a new password.' }, 400, origin);
+  if (newPassword.length < 8) return json({ message: 'New password must be at least 8 characters.' }, 400, origin);
+
+  const usernameLower = username.toLowerCase();
+  const fileState = await readUsersFile(env);
+  const fileMatch = fileState.users.find(function (u) { return (u.username || '').toLowerCase() === usernameLower; });
+
+  if (fileMatch) {
+    if (!fileMatch.hash) return json({ message: 'This account has no password set yet — contact an Admin.' }, 400, origin);
+    const computedHash = await pbkdf2Hex(currentPassword, fileMatch.salt);
+    if (computedHash !== fileMatch.hash) return json({ message: 'Current password is incorrect.' }, 401, origin);
+    const newSalt = randomSaltHex();
+    const newHash = await pbkdf2Hex(newPassword, newSalt);
+    const result = await mutateUsersFile(env, function (users) {
+      const target = users.find(function (u) { return u.id === fileMatch.id; });
+      if (!target) return null;
+      target.salt = newSalt;
+      target.hash = newHash;
+      return { users: users };
+    }, { requireFound: true });
+    if (result === 'not-found') return json({ message: 'Account not found.' }, 404, origin);
+    if (!result.ok) return json({ message: result.message }, 500, origin);
+    await clearFailedLogins(env, usernameLower);
+    return json({ ok: true }, 200, origin);
+  }
+
+  // Legacy-only account (bootstrap STAFF_USERS secret, never migrated into
+  // data/users.json - see handleLogin's own two-tier lookup). Verify against
+  // the legacy hash, then promote into the file the same way an Admin
+  // editing this account would (handleAdminUpdateUser's isLegacyId branch),
+  // so it's a normal file-managed account from here on.
+  const legacy = readLegacyStaff(env);
+  const legacyMatch = legacy.find(function (u) { return (u.username || '').toLowerCase() === usernameLower; });
+  if (!legacyMatch) return json({ message: 'Account not found.' }, 404, origin);
+  const legacyHash = await pbkdf2Hex(currentPassword, legacyMatch.salt);
+  if (legacyHash !== legacyMatch.hash) return json({ message: 'Current password is incorrect.' }, 401, origin);
+  const promotedSalt = randomSaltHex();
+  const promotedHash = await pbkdf2Hex(newPassword, promotedSalt);
+  const promoteResult = await mutateUsersFile(env, function (users) {
+    users.push({
+      id: cryptoRandomId(), name: legacyMatch.username, username: legacyMatch.username,
+      salt: promotedSalt, hash: promotedHash, organization: '', relationship: '', role: '',
+      email: '', phone: '', active: true, accessLevel: null, isDemo: false
+    });
+    return { users: users };
+  });
+  if (!promoteResult.ok) return json({ message: promoteResult.message }, 500, origin);
+  await clearFailedLogins(env, usernameLower);
+  return json({ ok: true }, 200, origin);
 }
 
 // ---- Rev2.4: Super Admin impersonation ("Log in as") -----------------------
