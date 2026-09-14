@@ -354,6 +354,11 @@
       </div>
 
       <div class="modalSection">
+        <h3>Share With Customers <span style="font-weight:400;">(optional — until a quote is submitted, they'll only see the RFQ number, parts, and drawings/3D)</span></h3>
+        <div class="checkList" id="f_sharedWithCustomers_list"></div>
+      </div>
+
+      <div class="modalSection">
         <h3>Attachments <span class="attachCount" id="attachCount">(0 / 20)</span></h3>
         <p class="modalSectionHint">Drawings, 3D (.stp/.step) files, anything a Supplier needs to quote against — up to 20 files.</p>
         <div id="attachmentsList" class="attachmentsList"></div>
@@ -368,6 +373,40 @@
       <div class="modalSection" id="quotesReceivedSection" style="display:none;">
         <h3>Quotes Received</h3>
         <div id="quotesReceivedList"></div>
+      </div>
+
+      <div class="modalSection" id="dessimateQuoteSection" style="display:none;">
+        <h3>Dessimate Quote <span style="font-weight:400;">(to Customer — Admin/Super Admin only, hidden from the Customer until submitted)</span></h3>
+        <p class="modalSectionHint" id="dessimateQuoteStatus"></p>
+        <div class="linesWrap">
+          <table class="linesTable">
+            <thead>
+              <tr>
+                <th style="min-width:150px;">Part Number</th>
+                <th style="min-width:150px;">Part Name</th>
+                <th style="min-width:130px;">Unit Price</th>
+                <th style="min-width:130px;">Tooling Cost</th>
+              </tr>
+            </thead>
+            <tbody id="dessimateQuoteLinesTableBody"></tbody>
+          </table>
+        </div>
+        <label style="margin-top:12px;">Notes to Customer
+          <textarea id="f_dessimateQuoteNotes" rows="3" style="display:block; width:100%; font-family:inherit; font-size:14px; padding:9px 10px; border:1px solid var(--line); border-radius:6px;"></textarea>
+        </label>
+        <h3 style="border-top:none; padding-top:0; margin-top:16px;">Quote Attachments <span class="attachCount" id="dessimateQuoteAttachCount">(0 / 20)</span></h3>
+        <div id="dessimateQuoteAttachmentsList" class="attachmentsList"></div>
+        <div class="docRow">
+          <div class="docMain">
+            <input type="file" id="dessimateQuoteAttachmentsDocInput" multiple>
+            <div class="modalError" id="dessimateQuoteAttachError" style="margin-top:6px;"></div>
+          </div>
+        </div>
+        <div class="modalError" id="dessimateQuoteError"></div>
+        <div class="modalBtns">
+          <button type="button" class="cancelBtn" id="saveDessimateQuoteDraftBtn">Save Draft</button>
+          <button type="button" class="saveBtn" id="submitDessimateQuoteBtn">Submit to Customer</button>
+        </div>
       </div>
 
       <div class="modalError" id="modalError"></div>
@@ -437,6 +476,38 @@
   </div>
 </div>
 
+<!-- Customer view (Customer only, read-only) -->
+<div class="modalOverlay" id="customerViewModalOverlay">
+  <div class="modalCard">
+    <h2 id="customerViewTitle">RFQ</h2>
+    <p class="modalSub" id="customerViewSub"></p>
+
+    <div class="modalSection" style="margin-top:0;">
+      <h3 style="border-top:none; padding-top:0;">Parts</h3>
+      <div class="linesWrap">
+        <table class="linesTable">
+          <thead><tr><th style="min-width:150px;">Part Number</th><th style="min-width:220px;">Part Name</th></tr></thead>
+          <tbody id="customerViewLinesTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modalSection">
+      <h3>Drawings / 3D Files</h3>
+      <div id="customerViewAttachmentsList" class="attachmentsList"></div>
+    </div>
+
+    <div class="modalSection" id="customerViewQuoteSection">
+      <h3>Dessimate Quote</h3>
+      <div id="customerViewQuoteBody"></div>
+    </div>
+
+    <div class="modalBtns">
+      <button type="button" class="cancelBtn" id="customerViewCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+
 <div id="docViewerOverlay" class="viewerOverlay">
   <div class="viewerPanel">
     <div class="viewerBar">
@@ -464,6 +535,7 @@
   var SESSION_KEY = 'dessimate_session';
   var RFQ_DOC_FOLDER = 'rfq_docs';
   var RFQ_QUOTE_TEMPLATE_PATH = 'rfq_quote_template/Dessimate_Quote_Format.xlsx';
+  var RFQ_DESSIMATE_QUOTE_DOC_FOLDER = 'rfq_dessimate_quote_docs';
   (function stampAppVersion(){
     fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
       if (!cfg || !cfg.version) return;
@@ -491,7 +563,13 @@
   var currentAccessLevel = null;
   function canManageRfqRecords(){ return currentAccessLevel === 'team_member' || currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
   function canManageQuoteTemplate(){ return currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
+  // The "Dessimate Quote" back to the Customer is Admin/Super Admin only
+  // (same bar as the template upload, but a semantically distinct feature -
+  // kept as its own named function for clarity even though the check is
+  // identical today).
+  function canManageDessimateQuote(){ return canManageQuoteTemplate(); }
   function isSupplierUser(){ return currentAccessLevel === 'supplier'; }
+  function isCustomerUser(){ return currentAccessLevel === 'customer'; }
   async function resolveAccessLevel(){
     var session = getSession();
     if (!session) { currentAccessLevel = null; return; }
@@ -507,7 +585,7 @@
     if (templateCard) templateCard.style.display = canManageQuoteTemplate() ? 'flex' : 'none';
     var downloadLink = document.getElementById('downloadTemplateLink');
     if (downloadLink) downloadLink.style.display = (canManageRfqRecords() || isSupplierUser()) ? 'inline-block' : 'none';
-    document.getElementById('toolbarTitle').textContent = isSupplierUser() ? 'RFQs Shared With You' : 'RFQs';
+    document.getElementById('toolbarTitle').textContent = isSupplierUser() ? 'RFQs Shared With You' : (isCustomerUser() ? 'RFQs Shared With You' : 'RFQs');
   }
 
   async function apiFetch(path, opts){
@@ -953,6 +1031,21 @@
     return Array.prototype.slice.call(document.querySelectorAll('#f_sharedWithSuppliers_list input[type=checkbox]:checked'))
       .map(function(el){ return el.value; });
   }
+  function customerOrgNames(){
+    return lastOrgs.filter(function(o){ return o.relationship === 'Customer'; }).map(function(o){ return o.name; });
+  }
+  function sharedWithCustomersChecklistOptions(currentValues){
+    var names = customerOrgNames();
+    if (!names.length) return '<div class="emptyNote">No Customer organizations on file yet.</div>';
+    return names.map(function(name){
+      var checked = (currentValues || []).indexOf(name) !== -1 ? ' checked' : '';
+      return '<label><input type="checkbox" value="' + escapeHtml(name) + '"' + checked + '> ' + escapeHtml(name) + '</label>';
+    }).join('');
+  }
+  function getSelectedSharedWithCustomers(){
+    return Array.prototype.slice.call(document.querySelectorAll('#f_sharedWithCustomers_list input[type=checkbox]:checked'))
+      .map(function(el){ return el.value; });
+  }
   // -----------------------------------------------------------------------------
 
   // ---- List table ---------------------------------------------------------------
@@ -988,12 +1081,33 @@
     var bodyEl = document.getElementById('rfqTableBody');
     var emptyEl = document.getElementById('emptyState');
     if (!lastRfqs.length) {
-      emptyEl.textContent = isSupplierUser() ? 'No RFQs have been shared with your organization yet.' : 'No RFQs yet. Click Add RFQ above to add the first one.';
+      emptyEl.textContent = (isSupplierUser() || isCustomerUser()) ? 'No RFQs have been shared with your organization yet.' : 'No RFQs yet. Click Add RFQ above to add the first one.';
       emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return;
     }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
     var sorted = lastRfqs.slice().sort(function(a, b){ return (b.rfqNumber || 0) - (a.rfqNumber || 0); });
+
+    if (isCustomerUser()) {
+      headEl.innerHTML = '<tr><th>RFQ Number</th><th>RFQ Date</th><th>Parts</th><th>Quote Status</th><th></th></tr>';
+      bodyEl.innerHTML = sorted.map(function(r){
+        var submitted = r.dessimateQuote && r.dessimateQuote.submitted;
+        var statusHtml = submitted
+          ? '<span class="statusPill submitted">Quote available' + (r.dessimateQuote.submittedAt ? ' — ' + escapeHtml(new Date(r.dessimateQuote.submittedAt).toLocaleDateString()) : '') + '</span>'
+          : '<span class="statusPill notStarted">Awaiting Dessimate quote</span>';
+        return '<tr>' +
+          '<td class="rfqNumber">' + escapeHtml(r.rfqNumber) + '</td>' +
+          '<td>' + escapeHtml(r.rfqDate) + '</td>' +
+          '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
+          '<td>' + statusHtml + '</td>' +
+          '<td><div class="rowActions"><button type="button" class="editBtn" data-view="' + escapeHtml(r.id) + '">View</button></div></td>' +
+          '</tr>';
+      }).join('');
+      bodyEl.querySelectorAll('[data-view]').forEach(function(btn){
+        btn.addEventListener('click', function(){ requireAuthThen(function(){ openCustomerViewModal(this.getAttribute('data-view')); }.bind(this)); });
+      });
+      return;
+    }
 
     if (isSupplierUser()) {
       headEl.innerHTML = '<tr><th>RFQ Number</th><th>RFQ Date</th><th>Parts</th><th>Quote Status</th><th></th></tr>';
@@ -1017,7 +1131,7 @@
       return;
     }
 
-    headEl.innerHTML = '<tr><th>RFQ Number</th><th>RFQ Date</th><th>Parts</th><th>Shared With</th><th>Quotes Received</th><th>Files</th><th></th></tr>';
+    headEl.innerHTML = '<tr><th>RFQ Number</th><th>RFQ Date</th><th>Parts</th><th>Shared With Suppliers</th><th>Supplier Quotes</th><th>Shared With Customers</th><th>Customer Quote</th><th>Files</th><th></th></tr>';
     bodyEl.innerHTML = sorted.map(function(r){
       var sharedCount = (r.sharedWithSuppliers || []).length;
       var sharedCell = sharedCount ? escapeHtml(r.sharedWithSuppliers.join(', ')) : '<span style="color:var(--label);">—</span>';
@@ -1025,6 +1139,13 @@
       var quotesCell = quoteOrgs.length
         ? '<span class="have" style="color:#187b46; font-weight:600;">' + quoteOrgs.length + ' of ' + sharedCount + '</span>'
         : '<span style="color:var(--label);">0 of ' + sharedCount + '</span>';
+      var custSharedCount = (r.sharedWithCustomers || []).length;
+      var custSharedCell = custSharedCount ? escapeHtml(r.sharedWithCustomers.join(', ')) : '<span style="color:var(--label);">—</span>';
+      var custQuoteCell = !custSharedCount
+        ? '<span style="color:var(--label);">—</span>'
+        : (r.dessimateQuote && r.dessimateQuote.submitted)
+          ? '<span class="have" style="color:#187b46; font-weight:600;">Submitted</span>'
+          : '<span style="color:var(--label);">Draft</span>';
       var attCount = (r.dessimateAttachments || []).length;
       var attCell = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '<span style="color:var(--label);">—</span>';
       return '<tr>' +
@@ -1033,6 +1154,8 @@
         '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
         '<td>' + sharedCell + '</td>' +
         '<td>' + quotesCell + '</td>' +
+        '<td>' + custSharedCell + '</td>' +
+        '<td>' + custQuoteCell + '</td>' +
         '<td class="docCell">' + attCell + '</td>' +
         '<td>' + (canManageRfqRecords() ? '<div class="rowActions">' +
           '<button type="button" class="editBtn" data-edit="' + escapeHtml(r.id) + '">Edit</button>' +
@@ -1220,6 +1343,176 @@
     });
   }
 
+  // ---- "Dessimate Quote" panel (Admin/Super Admin only, edit mode only) ------
+  var dessimateQuoteAttachmentsState = [];
+  function activeDessimateQuoteAttachmentCount(){ return dessimateQuoteAttachmentsState.length; }
+  function renderDessimateQuoteAttachmentsList(){
+    var listEl = document.getElementById('dessimateQuoteAttachmentsList');
+    var countEl = document.getElementById('dessimateQuoteAttachCount');
+    var inputEl = document.getElementById('dessimateQuoteAttachmentsDocInput');
+    var count = activeDessimateQuoteAttachmentCount();
+    countEl.textContent = '(' + count + ' / ' + ATTACHMENTS_MAX + ')';
+    if (!count) {
+      listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>';
+    } else {
+      listEl.innerHTML = dessimateQuoteAttachmentsState.map(function(entry, idx){
+        var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
+        var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+        var viewBtn = entry.kind === 'pending'
+          ? '<button type="button" data-dqpreview-idx="' + idx + '">Preview</button>'
+          : '<button type="button" data-dqview-idx="' + idx + '">View</button>';
+        return '<div class="attachRow">' +
+          '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+          '<div class="attachLinks">' + viewBtn +
+            '<span class="removeLink" style="cursor:pointer;" data-dqremove-idx="' + idx + '">Remove</span>' +
+          '</div></div>';
+      }).join('');
+    }
+    inputEl.disabled = count >= ATTACHMENTS_MAX;
+    listEl.querySelectorAll('[data-dqpreview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = dessimateQuoteAttachmentsState[Number(btn.getAttribute('data-dqpreview-idx'))];
+        if (entry) openDocViewer({ filename: entry.filename, mimeType: entry.mimeType, bytes: entry.bytes });
+      });
+    });
+    listEl.querySelectorAll('[data-dqview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = dessimateQuoteAttachmentsState[Number(btn.getAttribute('data-dqview-idx'))];
+        if (entry) openDocViewer({ filename: entry.doc.filename, mimeType: entry.doc.mimeType, path: entry.doc.path });
+      });
+    });
+    listEl.querySelectorAll('[data-dqremove-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        dessimateQuoteAttachmentsState.splice(Number(btn.getAttribute('data-dqremove-idx')), 1);
+        renderDessimateQuoteAttachmentsList();
+      });
+    });
+  }
+  document.getElementById('dessimateQuoteAttachmentsDocInput').addEventListener('change', async function(){
+    var files = this.files ? Array.from(this.files) : [];
+    this.value = '';
+    if (!files.length) return;
+    var errEl = document.getElementById('dessimateQuoteAttachError');
+    errEl.textContent = '';
+    var room = ATTACHMENTS_MAX - activeDessimateQuoteAttachmentCount();
+    if (files.length > room) {
+      errEl.textContent = room <= 0 ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached.' : 'Only ' + room + ' more file(s) can be added.';
+      files = files.slice(0, Math.max(room, 0));
+    }
+    for (var i = 0; i < files.length; i++) {
+      try {
+        var bytes = await readFileAsBytes(files[i]);
+        dessimateQuoteAttachmentsState.push({ kind: 'pending', bytes: bytes, filename: files[i].name, mimeType: files[i].type || 'application/octet-stream' });
+      } catch (e) {
+        alert('Could not read "' + files[i].name + '": ' + (e && e.message ? e.message : e));
+      }
+    }
+    renderDessimateQuoteAttachmentsList();
+  });
+
+  var dessimateQuoteLineValues = {}; // lineId -> { price, toolingCost }
+  function renderDessimateQuoteLines(rfq){
+    var bodyEl = document.getElementById('dessimateQuoteLinesTableBody');
+    var lines = rfq.lines || [];
+    if (!lines.length) {
+      bodyEl.innerHTML = '<tr><td colspan="4" class="readCell">No parts listed on this RFQ yet.</td></tr>';
+      return;
+    }
+    bodyEl.innerHTML = lines.map(function(l){
+      var v = dessimateQuoteLineValues[l.lineId] || { price: '', toolingCost: '' };
+      return '<tr data-dq-line-id="' + escapeHtml(l.lineId) + '">' +
+        '<td class="readCell">' + escapeHtml(l.partNumber || '—') + '</td>' +
+        '<td class="readCell">' + escapeHtml(l.partName || '—') + '</td>' +
+        '<td><input type="number" step="any" min="0" data-dq-field="price" value="' + escapeHtml(v.price) + '"></td>' +
+        '<td><input type="number" step="any" min="0" data-dq-field="toolingCost" value="' + escapeHtml(v.toolingCost) + '"></td>' +
+        '</tr>';
+    }).join('');
+    bodyEl.querySelectorAll('tr').forEach(function(tr){
+      var lineId = tr.getAttribute('data-dq-line-id');
+      tr.querySelectorAll('[data-dq-field]').forEach(function(el){
+        var field = el.getAttribute('data-dq-field');
+        el.addEventListener('input', function(){
+          if (!dessimateQuoteLineValues[lineId]) dessimateQuoteLineValues[lineId] = { price: '', toolingCost: '' };
+          dessimateQuoteLineValues[lineId][field] = el.value;
+        });
+      });
+    });
+  }
+
+  function renderDessimateQuotePanel(rfq){
+    var section = document.getElementById('dessimateQuoteSection');
+    if (!canManageDessimateQuote() || !editingId) { section.style.display = 'none'; return; }
+    section.style.display = 'block';
+    var q = rfq.dessimateQuote || { lines: [], attachments: [], notes: '', submitted: false, submittedAt: null, submittedBy: '' };
+    dessimateQuoteLineValues = {};
+    (q.lines || []).forEach(function(l){
+      dessimateQuoteLineValues[l.lineId] = {
+        price: (l.price === undefined || l.price === null) ? '' : l.price,
+        toolingCost: (l.toolingCost === undefined || l.toolingCost === null) ? '' : l.toolingCost
+      };
+    });
+    renderDessimateQuoteLines(rfq);
+    document.getElementById('f_dessimateQuoteNotes').value = q.notes || '';
+    dessimateQuoteAttachmentsState = (q.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderDessimateQuoteAttachmentsList();
+    var statusEl = document.getElementById('dessimateQuoteStatus');
+    statusEl.textContent = q.submitted
+      ? 'Submitted to the customer ' + (q.submittedAt ? new Date(q.submittedAt).toLocaleString() : '') + (q.submittedBy ? ' by ' + q.submittedBy : '') + '. Further saves here are live to the customer immediately.'
+      : 'Draft — not visible to the customer yet. Click "Submit to Customer" when ready.';
+  }
+
+  async function saveDessimateQuote(submit){
+    if (!editingId) return;
+    var errEl = document.getElementById('dessimateQuoteError');
+    errEl.textContent = '';
+
+    var lines = Object.keys(dessimateQuoteLineValues)
+      .filter(function(lineId){ var v = dessimateQuoteLineValues[lineId]; return v.price !== '' || v.toolingCost !== ''; })
+      .map(function(lineId){ return { lineId: lineId, price: Number(dessimateQuoteLineValues[lineId].price) || 0, toolingCost: Number(dessimateQuoteLineValues[lineId].toolingCost) || 0 }; });
+
+    var attachmentsPayload = [];
+    try {
+      for (var i = 0; i < dessimateQuoteAttachmentsState.length; i++) {
+        var entry = dessimateQuoteAttachmentsState[i];
+        if (entry.kind === 'existing') {
+          attachmentsPayload.push(entry.doc);
+        } else {
+          var safeName = (entry.filename || 'file').replace(/[\\/]/g, '_');
+          var path = RFQ_DESSIMATE_QUOTE_DOC_FOLDER + '/' + editingId + '/' + Date.now() + '-' + i + '-' + safeName;
+          await ghPutFile(path, entry.bytes, 'Upload Dessimate Quote attachment for RFQ ' + editingId);
+          attachmentsPayload.push({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length });
+        }
+      }
+    } catch (err) {
+      errEl.textContent = 'Could not upload an attachment (' + (err && err.message ? err.message : err) + ').';
+      return;
+    }
+
+    var btn = document.getElementById(submit ? 'submitDessimateQuoteBtn' : 'saveDessimateQuoteDraftBtn');
+    var originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = submit ? 'Submitting…' : 'Saving…';
+    try {
+      var res = await apiFetch('rfqs/' + encodeURIComponent(editingId) + '/dessimate-quote', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lines: lines, attachments: attachmentsPayload, notes: document.getElementById('f_dessimateQuoteNotes').value.trim(), submit: !!submit })
+      });
+      var data = {}; try { data = await res.json(); } catch(e){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      var rfq = lastRfqs.find(function(x){ return x.id === editingId; });
+      if (rfq) { rfq.dessimateQuote = data; renderDessimateQuotePanel(rfq); }
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not save the Dessimate Quote.';
+    } finally {
+      btn.disabled = false; btn.textContent = originalText;
+    }
+  }
+  document.getElementById('saveDessimateQuoteDraftBtn').addEventListener('click', function(){ saveDessimateQuote(false); });
+  document.getElementById('submitDessimateQuoteBtn').addEventListener('click', function(){
+    if (confirm('Submit this quote to the customer? They will immediately be able to see the price, tooling cost, notes, and attachments.')) saveDessimateQuote(true);
+  });
+  // -----------------------------------------------------------------------------
+
   function resetForm(){
     document.getElementById('rfqForm').reset();
     document.getElementById('modalError').textContent = '';
@@ -1228,10 +1521,12 @@
     renderAttachmentsList();
     lineRows = [];
     document.getElementById('f_sharedWithSuppliers_list').innerHTML = sharedWithSuppliersChecklistOptions([]);
+    document.getElementById('f_sharedWithCustomers_list').innerHTML = sharedWithCustomersChecklistOptions([]);
     document.getElementById('f_notes').value = '';
     document.getElementById('f_rfqNumber').value = '';
     document.getElementById('f_rfqDate').value = '';
     document.getElementById('quotesReceivedSection').style.display = 'none';
+    document.getElementById('dessimateQuoteSection').style.display = 'none';
     renderLines();
   }
 
@@ -1258,8 +1553,10 @@
     document.getElementById('f_rfqDate').value = rfq.rfqDate || '';
     document.getElementById('f_notes').value = rfq.notes || '';
     document.getElementById('f_sharedWithSuppliers_list').innerHTML = sharedWithSuppliersChecklistOptions(rfq.sharedWithSuppliers || []);
+    document.getElementById('f_sharedWithCustomers_list').innerHTML = sharedWithCustomersChecklistOptions(rfq.sharedWithCustomers || []);
     renderLines();
     renderQuotesReceived(rfq);
+    renderDessimateQuotePanel(rfq);
     document.getElementById('rfqModalOverlay').classList.add('open');
   }
   function closeModal(){ document.getElementById('rfqModalOverlay').classList.remove('open'); }
@@ -1295,7 +1592,8 @@
       rfqDate: document.getElementById('f_rfqDate').value,
       notes: document.getElementById('f_notes').value.trim(),
       lines: lineRows.filter(function(r){ return r.partNumber || r.partName; }),
-      sharedWithSuppliers: currentlyShared
+      sharedWithSuppliers: currentlyShared,
+      sharedWithCustomers: getSelectedSharedWithCustomers()
     };
 
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
@@ -1525,6 +1823,78 @@
     } finally {
       saveBtn.disabled = false; saveBtn.textContent = 'Save My Quote';
     }
+  });
+  // -----------------------------------------------------------------------------
+
+  // ---- Customer view (Customer only, read-only) -------------------------------
+  // scopeRfqs already stripped everything a Customer shouldn't see (Supplier
+  // sharing/quotes) and gates dessimateQuote to a "not submitted yet" shape
+  // until Admin/Super Admin submits - this just renders whatever the API
+  // handed back, no client-side gating of its own to get wrong.
+  function openCustomerViewModal(id){
+    var rfq = lastRfqs.find(function(x){ return x.id === id; });
+    if (!rfq) return;
+    document.getElementById('customerViewTitle').textContent = 'RFQ ' + rfq.rfqNumber;
+    document.getElementById('customerViewSub').textContent = rfq.rfqDate ? 'RFQ Date: ' + rfq.rfqDate : '';
+
+    var lines = rfq.lines || [];
+    document.getElementById('customerViewLinesTableBody').innerHTML = lines.length
+      ? lines.map(function(l){ return '<tr><td class="readCell">' + escapeHtml(l.partNumber || '—') + '</td><td class="readCell">' + escapeHtml(l.partName || '—') + '</td></tr>'; }).join('')
+      : '<tr><td colspan="2" class="readCell">No parts listed yet.</td></tr>';
+
+    var attListEl = document.getElementById('customerViewAttachmentsList');
+    var atts = rfq.dessimateAttachments || [];
+    attListEl.innerHTML = atts.length
+      ? atts.map(function(a, idx){
+          return '<div class="attachRow"><span class="attachName" title="' + escapeHtml(a.filename) + '">' + escapeHtml(a.filename) + '</span>' +
+            '<div class="attachLinks"><button type="button" data-cv-att-idx="' + idx + '">View</button></div></div>';
+        }).join('')
+      : '<div class="attachEmpty">No files attached yet.</div>';
+    attListEl.querySelectorAll('[data-cv-att-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var a = atts[Number(btn.getAttribute('data-cv-att-idx'))];
+        if (a) openDocViewer({ filename: a.filename, mimeType: a.mimeType, path: a.path });
+      });
+    });
+
+    var quoteBodyEl = document.getElementById('customerViewQuoteBody');
+    var q = rfq.dessimateQuote;
+    if (!q || !q.submitted) {
+      quoteBodyEl.innerHTML = '<p style="font-size:13px; color:var(--label); margin:0;">Dessimate hasn’t submitted a quote for this RFQ yet.</p>';
+    } else {
+      var linesById = {};
+      lines.forEach(function(l){ linesById[l.lineId] = l; });
+      var qLinesHtml = (q.lines || []).map(function(ql){
+        var line = linesById[ql.lineId];
+        var label = line ? (line.partNumber || line.partName || '(unnamed part)') : '(part)';
+        return '<div class="quoteLineRow"><span class="qty">' + escapeHtml(label) + '</span>' +
+          '<span class="amt">Unit ' + money(ql.price) + ' &middot; Tooling ' + money(ql.toolingCost) + '</span></div>';
+      }).join('') || '<div class="quoteLineRow"><span class="qty">No line pricing provided.</span></div>';
+      var qAttHtml = (q.attachments || []).length
+        ? q.attachments.map(function(a, idx){
+            return '<button type="button" class="quietLink" style="padding:4px 10px; font-size:11.5px; margin:4px 6px 0 0;" data-cv-quote-att-idx="' + idx + '">' + escapeHtml(a.filename) + '</button>';
+          }).join('')
+        : '<span class="quoteMeta">No files attached.</span>';
+      quoteBodyEl.innerHTML = '<div class="quoteCard">' +
+        '<div class="quoteCardHead"><h4>Quote</h4><span class="quoteMeta">' + (q.submittedAt ? escapeHtml(new Date(q.submittedAt).toLocaleString()) : '') + '</span></div>' +
+        qLinesHtml +
+        (q.notes ? '<p style="font-size:12.5px; color:var(--ink); margin:8px 0 0;">' + escapeHtml(q.notes) + '</p>' : '') +
+        '<div style="margin-top:8px;">' + qAttHtml + '</div>' +
+        '</div>';
+      quoteBodyEl.querySelectorAll('[data-cv-quote-att-idx]').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var a = q.attachments[Number(btn.getAttribute('data-cv-quote-att-idx'))];
+          if (a) openDocViewer({ filename: a.filename, mimeType: a.mimeType, path: a.path });
+        });
+      });
+    }
+
+    document.getElementById('customerViewModalOverlay').classList.add('open');
+  }
+  function closeCustomerViewModal(){ document.getElementById('customerViewModalOverlay').classList.remove('open'); }
+  document.getElementById('customerViewCloseBtn').addEventListener('click', closeCustomerViewModal);
+  document.getElementById('customerViewModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'customerViewModalOverlay') closeCustomerViewModal();
   });
   // -----------------------------------------------------------------------------
 

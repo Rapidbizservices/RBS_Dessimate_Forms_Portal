@@ -460,6 +460,45 @@ linked here for a fast overview if you're updating an existing deployment.
   note) was seeded into R2 via `wrangler r2 object put` so the feature ships
   with a real downloadable file rather than a broken link on day one.
 
+## Rev2.9 changes
+
+- **RFQ: Customer-facing side** — the RFQ module (Rev2.8) is now visible to
+  `customer` logins too, gated by a new `sharedWithCustomers: string[]`
+  field (a "Share With Customers" checklist, edited the same Team Member+
+  way as "Share With Suppliers"). A Customer sees only the RFQ number,
+  part lines, and `dessimateAttachments` (drawings/3D files) - never
+  anything Supplier-related (`sharedWithSuppliers`/`supplierQuotes` are
+  `delete`d from a Customer's copy in `scopeRfqs`, not just emptied, and
+  the RFQ's own internal `notes` field is blanked out too) - matching the
+  brief's "no access to Supplier data at all even if they find a
+  workaround" the same way a Supplier already can't see Customer data on
+  the same RFQ (checked both ways now).
+- **"Dessimate Quote" back to the Customer** — a new `dessimateQuote`
+  object on the RFQ record (`{lines:[{lineId,price,toolingCost}],
+  attachments, notes, submitted, submittedAt, submittedBy}`), editable only
+  by Admin/Super Admin (the brief names them specifically - a stricter bar
+  than the Team Member+ that manages the rest of an RFQ) through a new,
+  separate `PUT /rfqs/<id>/dessimate-quote` endpoint
+  (`handleUpdateRfqDessimateQuote`) - kept out of the general RFQ PUT/
+  `validateRfqFields` entirely, same "never in fields" pattern already used
+  for `rfqNumber`/`supplierQuotes`. `submitted` is the gate `scopeRfqs`
+  checks before a Customer login can see any of it: Admin/Super Admin can
+  save a draft (price/tooling cost per line, attachments, notes) any number
+  of times with `submit: false` with zero Customer visibility, and only a
+  `submit: true` call (the "Submit to Customer" button, separate from "Save
+  Draft") stamps `submittedAt`/`submittedBy` and flips the gate - matching
+  "only after the team hits Submit should the customer see the response."
+  Once submitted, further saves are immediately live (no re-hide/re-submit
+  cycle - the brief only describes the first reveal). Attachments upload
+  through the normal `ghPutFile`-then-PUT pattern (Admin already has
+  unrestricted `/contents/` write access, unlike a Supplier), to a new
+  `rfq_dessimate_quote_docs/<rfqId>/...` folder;
+  `isContentsPathAllowedForExternal` gained a Customer-only branch for it,
+  gated on both `sharedWithCustomers` membership and `dessimateQuote.
+  submitted` - re-checked fresh from storage on every file request, not
+  just at list-time, so a draft attachment's path is unreachable even if a
+  Customer somehow already had it.
+
 ## The dashboard (`index.html`)
 
 `index.html` is a persistent left sidebar with a content pane next to it —
