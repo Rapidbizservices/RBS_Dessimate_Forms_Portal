@@ -388,7 +388,6 @@
 
       <div class="modalSection">
         <h3>Line Items</h3>
-        <datalist id="partsDatalist_inv"></datalist>
         <div class="linesWrap">
           <table class="linesTable">
             <thead>
@@ -1109,20 +1108,28 @@
     return { partNumber: '', description: '', revision: '', uom: '', qtyShipped: '', unitPrice: '' };
   }
 
-  function renderPartsDatalist(){
-    var dl = document.getElementById('partsDatalist_inv');
-    if (dl) dl.innerHTML = lastParts.map(function(p){ return '<option value="' + escapeHtml(p.partNumber) + '">'; }).join('');
+  // Rev2.10: back to a Parts-module-linked dropdown (was free-typed with a
+  // datalist since Rev2.4) - per customer feedback, a stray typed value
+  // that doesn't match any real Part was too easy to end up with. Same
+  // partOptions()/select pattern Dessimate PO already uses, including the
+  // "(not in Parts list)" fallback so an already-saved legacy value still
+  // shows and doesn't silently vanish.
+  function partOptions(currentValue){
+    var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
+      var sel = (p.partNumber === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(p.partNumber) + '"' + sel + '>' + escapeHtml(p.partNumber) + '</option>';
+    }).join('');
+    if (currentValue && !lastParts.some(function(p){ return p.partNumber === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Parts list)</option>';
+    }
+    return html;
   }
   function renderLines(){
     var bodyEl = document.getElementById('linesTableBody');
-    renderPartsDatalist();
     bodyEl.innerHTML = lineRows.map(function(row, idx){
       var ext = (Number(row.qtyShipped) || 0) * (Number(row.unitPrice) || 0);
       return '<tr data-line-idx="' + idx + '">' +
-        // Rev2.4: free-typed now (was a dropdown-only select), matching
-        // Description - a datalist still offers Parts-master suggestions,
-        // and picking/typing an exact match still auto-fills Description.
-        '<td><input type="text" list="partsDatalist_inv" data-line-field="partNumber" value="' + escapeHtml(row.partNumber) + '"></td>' +
+        '<td><select data-line-field="partNumber">' + partOptions(row.partNumber) + '</select></td>' +
         '<td><input type="text" data-line-field="description" value="' + escapeHtml(row.description) + '"></td>' +
         '<td><input type="text" data-line-field="revision" value="' + escapeHtml(row.revision) + '"></td>' +
         '<td><input type="text" data-line-field="uom" value="' + escapeHtml(row.uom) + '"></td>' +
