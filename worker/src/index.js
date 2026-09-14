@@ -3711,17 +3711,23 @@ async function buildDessimateInvoicePdf(inv, selfOrg, customerOrg) {
     opts = opts || {};
     page.drawText(str == null ? '' : String(str), { x: x, y: yy, size: size, font: opts.bold ? fontBold : font, color: opts.color || ink });
   }
-  // Greedy word-wrap to a max pixel width at the given font size.
+  // A user-typed "\n" (e.g. From/Ship To's street/city-state-zip break) is
+  // always honored as a forced line break; each resulting line is then
+  // greedy word-wrapped to maxWidth same as before - matching the Dessimate
+  // PO PDF's wrapLines fix for the same issue.
   function wrapLines(str, maxWidth, size) {
-    const words = (str || '').split(/\s+/).filter(Boolean);
     const lines = [];
-    let cur = '';
-    words.forEach(function (w) {
-      const attempt = cur ? cur + ' ' + w : w;
-      if (cur && font.widthOfTextAtSize(attempt, size) > maxWidth) { lines.push(cur); cur = w; }
-      else cur = attempt;
+    (str || '').split(/\r?\n/).forEach(function (raw) {
+      const words = raw.split(/\s+/).filter(Boolean);
+      if (!words.length) return;
+      let cur = '';
+      words.forEach(function (w) {
+        const attempt = cur ? cur + ' ' + w : w;
+        if (cur && font.widthOfTextAtSize(attempt, size) > maxWidth) { lines.push(cur); cur = w; }
+        else cur = attempt;
+      });
+      if (cur) lines.push(cur);
     });
-    if (cur) lines.push(cur);
     return lines;
   }
   // Thousands-separated currency, matching the reference template - kept
@@ -3753,19 +3759,27 @@ async function buildDessimateInvoicePdf(inv, selfOrg, customerOrg) {
 
   let ry = hy;
   rightText('INVOICE', pageWidth - margin, ry, 26, { bold: true, color: brandBlue }); ry -= 30;
+  // Values are left-aligned starting right after the label (not right-flush
+  // against the page edge), and the whole block sits a bit further right
+  // than before - both per customer markup, matching the Dessimate PO PDF's
+  // identity-block fix.
+  const idValueMaxWidth = 68;
+  const idLabelEdge = pageWidth - margin - idValueMaxWidth - 10;
+  const idValueX = idLabelEdge + 10;
+  function idRow(label, value, size) {
+    rightText(label, idLabelEdge, ry, size, { bold: true });
+    const valLines = wrapLines(String(value || ''), idValueMaxWidth, size);
+    if (!valLines.length) valLines.push('');
+    valLines.forEach(function (vl, i) { leftText(vl, idValueX, ry - i * (size + 2), size); });
+    ry -= (size + 5) + Math.max(0, valLines.length - 1) * (size + 2);
+  }
   const poRefDisplay = (Array.isArray(inv.customerPoRefs) && inv.customerPoRefs.length) ? inv.customerPoRefs.join(', ') : (inv.customerPoRef || '');
-  [
-    ['Invoice Number:', inv.invoiceNumber || ''],
-    ['Purchase Order Number:', poRefDisplay],
-    ['Date:', inv.invoiceDate || ''],
-    ['Terms:', inv.paymentTerms || ''],
-    ['Due Date:', ''],
-    ['Shipment #:', inv.shipmentNumber || '']
-  ].forEach(function (row) {
-    rightText(row[0], pageWidth - margin - 100, ry, 10, { bold: true });
-    rightText(row[1], pageWidth - margin, ry, 10);
-    ry -= 15;
-  });
+  idRow('Invoice Number:', inv.invoiceNumber || '', 10);
+  idRow('Purchase Order Number:', poRefDisplay, 10);
+  idRow('Date:', inv.invoiceDate || '', 10);
+  idRow('Terms:', inv.paymentTerms || '', 10);
+  idRow('Due Date:', '', 10);
+  idRow('Shipment #:', inv.shipmentNumber || '', 10);
 
   // ---- Self org name/address/contact (left column under the logo) ----------
   // Rev2.4: inv.fromAddress overrides the Self org's default (first) address
@@ -3776,7 +3790,7 @@ async function buildDessimateInvoicePdf(inv, selfOrg, customerOrg) {
   let selfAddrText = inv.fromAddress;
   if (!selfAddrText) {
     const a0 = (selfOrg && Array.isArray(selfOrg.addresses) && selfOrg.addresses[0]) ? selfOrg.addresses[0] : null;
-    selfAddrText = a0 ? [a0.line1, a0.line2].filter(Boolean).join(', ') : '';
+    selfAddrText = a0 ? [a0.line1, a0.line2].filter(Boolean).join('\n') : '';
   }
   wrapLines(selfAddrText, colGap - margin - 10, 9).forEach(function (line) { leftText(line, margin, ly, 9); ly -= 12; });
 
@@ -3789,12 +3803,14 @@ async function buildDessimateInvoicePdf(inv, selfOrg, customerOrg) {
   // Rev2.4: Ship To is now populated from a dropdown of the customer
   // organization's saved addresses (still free-text underneath, so it can be
   // hand-edited/overridden) rather than typed from scratch every time.
+  // Street and city/state/zip print on separate forced lines (not
+  // comma-joined) per customer markup, matching the Dessimate PO PDF fix.
   const by = Math.min(ly, cy) - 18;
   leftText('Bill To:', margin, by, 10, { bold: true });
   leftText('Ship To:', colGap, by, 10, { bold: true });
   let by1 = by - 13;
   const billAddr0 = (customerOrg && Array.isArray(customerOrg.addresses) && customerOrg.addresses[0]) ? customerOrg.addresses[0] : null;
-  const billAddrText = billAddr0 ? [billAddr0.line1, billAddr0.line2].filter(Boolean).join(', ') : '';
+  const billAddrText = billAddr0 ? [billAddr0.line1, billAddr0.line2].filter(Boolean).join('\n') : '';
   [inv.customer].concat(wrapLines(billAddrText, colGap - margin - 10, 9))
     .filter(Boolean).forEach(function (line) { leftText(line, margin, by1, 9); by1 -= 12; });
   let by2 = by - 13;

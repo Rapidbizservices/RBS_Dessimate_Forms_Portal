@@ -359,13 +359,13 @@
         <h3>From (Dessimate address)</h3>
         <p class="modalSectionHint">Defaults to Dessimate's first saved address — pick a different one, or edit the text directly.</p>
         <select id="f_fromAddressSelect"></select>
-        <input type="text" id="f_fromAddress" style="margin-top:8px;">
+        <textarea id="f_fromAddress" rows="2" style="display:block; width:100%; margin-top:8px; font-family:inherit; font-size:14px; padding:9px 10px; border:1px solid var(--line); border-radius:6px; resize:vertical;"></textarea>
       </div>
       <div class="modalSection">
         <h3>Ship To</h3>
         <p class="modalSectionHint">Pick one of the customer's saved addresses, or type a different one.</p>
         <select id="f_shipToSelect"></select>
-        <input type="text" id="f_shipTo" style="margin-top:8px;">
+        <textarea id="f_shipTo" rows="2" style="display:block; width:100%; margin-top:8px; font-family:inherit; font-size:14px; padding:9px 10px; border:1px solid var(--line); border-radius:6px; resize:vertical;"></textarea>
       </div>
 
       <div class="modalSection">
@@ -990,7 +990,14 @@
     }
     return html;
   }
+  // Comma-joined, single line - only for the dropdown option's visible
+  // label, which can't usefully show two lines.
   function addressLine(a){ return a ? [a.line1, a.line2].filter(Boolean).join(', ') : ''; }
+  // Newline-joined - what actually fills the From/Ship To textarea (and
+  // then inv.fromAddress/inv.shipTo), so street and city/state/zip print on
+  // separate forced lines in the PDF instead of one comma-joined blob
+  // (matching the Dessimate PO fix for the same issue).
+  function addressLines(a){ return a ? [a.line1, a.line2].filter(Boolean).join('\n') : ''; }
   // Shared by the "From" (Self org) and "Ship To" (Customer org) address
   // dropdowns - selecting an option fills the paired free-text input, which
   // stays editable afterward (Rev2.4).
@@ -998,8 +1005,9 @@
     var addrs = (org && org.addresses) || [];
     if (!addrs.length) return '<option value="">— No saved addresses —</option>';
     return '<option value="">— Pick a saved address —</option>' + addrs.map(function(a){
-      var text = addressLine(a);
-      return '<option value="' + escapeHtml(text) + '">' + escapeHtml((a.label ? a.label + ': ' : '') + text) + '</option>';
+      var label = addressLine(a);
+      var value = addressLines(a);
+      return '<option value="' + escapeHtml(value) + '">' + escapeHtml((a.label ? a.label + ': ' : '') + label) + '</option>';
     }).join('');
   }
   // -----------------------------------------------------------------------------
@@ -1250,7 +1258,7 @@
     document.getElementById('f_shipmentNumber').innerHTML = shipmentNumberOptions('');
     document.getElementById('f_paymentTerms').innerHTML = paymentTermsOptions('');
     document.getElementById('f_fromAddressSelect').innerHTML = orgAddressOptions(selfOrg());
-    document.getElementById('f_fromAddress').value = addressLine(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
+    document.getElementById('f_fromAddress').value = addressLines(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
     document.getElementById('f_shipToSelect').innerHTML = orgAddressOptions(null);
     document.getElementById('f_shipTo').value = '';
     document.getElementById('f_status').value = 'Unpaid';
@@ -1308,7 +1316,7 @@
     document.getElementById('f_paymentTerms').innerHTML = paymentTermsOptions(inv.paymentTerms || '');
     var custOrg = lastOrgs.find(function(o){ return o.name === inv.customer; });
     document.getElementById('f_fromAddressSelect').innerHTML = orgAddressOptions(selfOrg());
-    document.getElementById('f_fromAddress').value = inv.fromAddress || addressLine(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
+    document.getElementById('f_fromAddress').value = inv.fromAddress || addressLines(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
     document.getElementById('f_shipToSelect').innerHTML = orgAddressOptions(custOrg);
     document.getElementById('f_shipTo').value = inv.shipTo || '';
     document.getElementById('f_currency').value = inv.currency || '';
@@ -1343,7 +1351,7 @@
     var custOrg = lastOrgs.find(function(o){ return o.name === src.customer; });
     document.getElementById('f_shipToSelect').innerHTML = orgAddressOptions(custOrg);
     document.getElementById('f_shipTo').value = src.shipTo || '';
-    document.getElementById('f_fromAddress').value = src.fromAddress || addressLine(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
+    document.getElementById('f_fromAddress').value = src.fromAddress || addressLines(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
     document.getElementById('f_currency').value = src.currency || '';
     document.getElementById('f_incoterms').value = src.incoterms || '';
     document.getElementById('f_notes').value = src.notes || '';
