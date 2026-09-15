@@ -3543,10 +3543,16 @@ async function handlePeekDessimateInvoiceNumber(env, origin) {
   return json({ invoiceNumber: state.obj.nextDessimateInvoiceNumber }, 200, origin);
 }
 
+// Rev2.11: a deleted invoice's number no longer stays permanently reserved -
+// only an active (non-deleted) invoice counts as "taken", per customer
+// feedback ("we care more for the invoice number... want to be able to
+// reuse the numbers"). This reversed the original Rev2.4 design (see the
+// comment on handleListDeletedDessimateInvoices below, now stale) which
+// deliberately never reused a deleted invoice's number.
 async function dessimateInvoiceNumberTaken(env, invoiceNumber, excludeId) {
   const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
   const target = String(invoiceNumber).toLowerCase();
-  return state.items.some(function (o) { return o.id !== excludeId && String(o.invoiceNumber).toLowerCase() === target; });
+  return state.items.some(function (o) { return !o.deleted && o.id !== excludeId && String(o.invoiceNumber).toLowerCase() === target; });
 }
 
 function sanitizeDessimateInvoiceLine(l) {
@@ -3731,10 +3737,14 @@ async function handleDeleteDessimateInvoice(env, origin, id) {
   return json({ ok: true }, 200, origin);
 }
 
-// Rev2.4: Dessimate Invoice delete has always been a soft delete (Invoice
-// Numbers are never reused) but there was previously no way to see what had
-// been deleted. Admin+ only, same access floor as the Dessimate Invoice
-// module's writes - a deleted invoice is billing history, not routine data.
+// Rev2.4: Dessimate Invoice delete has always been a soft delete, so a
+// deleted invoice can still be reviewed/restored here. Admin+ only, same
+// access floor as the Dessimate Invoice module's writes - a deleted invoice
+// is billing history, not routine data. (Rev2.11: its Invoice Number is no
+// longer permanently reserved once deleted - see dessimateInvoiceNumberTaken -
+// so by the time someone comes back to restore one, that number may already
+// have been reused by a newer invoice; handleRestoreDessimateInvoice below
+// checks for that and blocks the restore rather than creating a duplicate.)
 async function handleListDeletedDessimateInvoices(env, origin) {
   const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
   const deleted = state.items.filter(function (o) { return o.deleted; }).map(sanitizeDessimateInvoice);
@@ -3742,6 +3752,12 @@ async function handleListDeletedDessimateInvoices(env, origin) {
 }
 
 async function handleRestoreDessimateInvoice(env, origin, id) {
+  const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
+  const existing = state.items.find(function (o) { return o.id === id; });
+  if (!existing) return json({ message: 'Not found.' }, 404, origin);
+  if (await dessimateInvoiceNumberTaken(env, existing.invoiceNumber, id)) {
+    return json({ message: 'Can\'t restore — Invoice Number ' + existing.invoiceNumber + ' is now in use by another invoice. Change that invoice\'s number first, or give this one a different number after restoring.' }, 409, origin);
+  }
   let saved = null;
   const result = await mutateJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
