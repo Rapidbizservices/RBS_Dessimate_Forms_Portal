@@ -1272,7 +1272,11 @@
     });
     listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
       btn.addEventListener('click', function(){
-        attachmentsState.splice(Number(btn.getAttribute('data-remove-idx')), 1);
+        var idx = Number(btn.getAttribute('data-remove-idx'));
+        var entry = attachmentsState[idx];
+        var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
+        if (!confirm('Remove "' + name + '"?')) return;
+        attachmentsState.splice(idx, 1);
         renderAttachmentsList();
       });
     });
@@ -1322,6 +1326,7 @@
     });
     bodyEl.querySelectorAll('[data-line-remove]').forEach(function(btn){
       btn.addEventListener('click', function(){
+        if (!confirm('Remove this line?')) return;
         lineRows.splice(parseInt(this.getAttribute('data-line-remove'), 10), 1);
         renderLines();
       });
@@ -1423,7 +1428,11 @@
     });
     listEl.querySelectorAll('[data-dqremove-idx]').forEach(function(btn){
       btn.addEventListener('click', function(){
-        dessimateQuoteAttachmentsState.splice(Number(btn.getAttribute('data-dqremove-idx')), 1);
+        var idx = Number(btn.getAttribute('data-dqremove-idx'));
+        var entry = dessimateQuoteAttachmentsState[idx];
+        var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
+        if (!confirm('Remove "' + name + '"?')) return;
+        dessimateQuoteAttachmentsState.splice(idx, 1);
         renderDessimateQuoteAttachmentsList();
       });
     });
@@ -1720,7 +1729,11 @@
     });
     listEl.querySelectorAll('[data-qremove-idx]').forEach(function(btn){
       btn.addEventListener('click', function(){
-        quoteAttachmentsState.splice(Number(btn.getAttribute('data-qremove-idx')), 1);
+        var idx = Number(btn.getAttribute('data-qremove-idx'));
+        var entry = quoteAttachmentsState[idx];
+        var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
+        if (!confirm('Remove "' + name + '"?')) return;
+        quoteAttachmentsState.splice(idx, 1);
         renderQuoteAttachmentsList();
       });
     });

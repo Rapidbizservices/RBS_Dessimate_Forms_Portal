@@ -908,6 +908,7 @@
     });
     bodyEl.querySelectorAll('[data-line-remove]').forEach(function(btn){
       btn.addEventListener('click', function(){
+        if (!confirm('Remove this line?')) return;
         lineRows.splice(parseInt(this.getAttribute('data-line-remove'), 10), 1);
         renderLines();
         updatePoTotal();
@@ -973,7 +974,11 @@
     });
     listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
       btn.addEventListener('click', function(){
-        attachmentsState.splice(Number(btn.getAttribute('data-remove-idx')), 1);
+        var idx = Number(btn.getAttribute('data-remove-idx'));
+        var entry = attachmentsState[idx];
+        var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
+        if (!confirm('Remove "' + name + '"?')) return;
+        attachmentsState.splice(idx, 1);
         renderAttachmentsList();
       });
     });

@@ -828,6 +828,7 @@
     });
     var removeLink = document.getElementById('stampRemoveLink');
     if (removeLink) removeLink.addEventListener('click', function(){
+      if (!confirm('Remove the current approver stamp?')) return;
       stampState.removed = true;
       renderStampRow();
     });

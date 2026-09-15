@@ -1221,7 +1221,10 @@
     listEl.querySelectorAll('[data-doc-field-remove]').forEach(function(btn){
       btn.addEventListener('click', function(){
         var k = btn.getAttribute('data-doc-field-remove');
-        (docData[k] || []).splice(Number(btn.getAttribute('data-doc-field-idx2')), 1);
+        var i = Number(btn.getAttribute('data-doc-field-idx2'));
+        var entry = (docData[k] || [])[i];
+        if (!confirm('Remove "' + (entry ? entry.filename : 'this file') + '"? This page autosaves, so it will be gone shortly after you confirm.')) return;
+        (docData[k] || []).splice(i, 1);
         renderDocFieldList(k);
         scheduleAutosave();
       });

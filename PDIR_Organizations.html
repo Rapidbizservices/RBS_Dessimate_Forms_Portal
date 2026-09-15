@@ -818,6 +818,7 @@
     });
     var removeLink = document.getElementById('logoRemoveLink');
     if (removeLink) removeLink.addEventListener('click', function(){
+      if (!confirm('Remove the current logo?')) return;
       logoState.removed = true;
       renderLogoRow();
     });
@@ -865,6 +866,7 @@
     });
     listEl.querySelectorAll('[data-addr-remove]').forEach(function(btn){
       btn.addEventListener('click', function(){
+        if (!confirm('Remove this address?')) return;
         addressState.splice(parseInt(this.getAttribute('data-addr-remove'), 10), 1);
         renderAddressList();
       });
@@ -890,6 +892,7 @@
     });
     listEl.querySelectorAll('[data-term-remove]').forEach(function(btn){
       btn.addEventListener('click', function(){
+        if (!confirm('Remove this payment terms entry?')) return;
         termsState.splice(parseInt(this.getAttribute('data-term-remove'), 10), 1);
         renderTermsList();
       });
@@ -935,6 +938,7 @@
     });
     var removeLink = linksEl.querySelector('[data-doc-remove]');
     if (removeLink) removeLink.addEventListener('click', function(){
+      if (!confirm('Remove "' + (state.existing ? state.existing.filename : 'this file') + '"?')) return;
       state.removed = true;
       renderNamedDocRow(key);
     });
@@ -963,7 +967,10 @@
     });
     listEl.querySelectorAll('[data-gen-remove]').forEach(function(btn){
       btn.addEventListener('click', function(){
-        genericState.splice(parseInt(this.getAttribute('data-gen-remove'), 10), 1);
+        var idx = parseInt(this.getAttribute('data-gen-remove'), 10);
+        var item = genericState[idx];
+        if (!confirm('Remove "' + (item ? item.filename : 'this file') + '"?')) return;
+        genericState.splice(idx, 1);
         renderGenericList();
       });
     });
