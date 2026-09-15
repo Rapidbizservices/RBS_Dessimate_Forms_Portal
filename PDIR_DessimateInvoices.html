@@ -28,16 +28,20 @@
   .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
 
   .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .homeBtn, .addBtn{
+  .homeBtn, .addBtn, .outlineBtn{
     font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
     border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
   }
-  .homeBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
-  .homeBtn:hover{ background:#eef1fa; }
+  .homeBtn, .outlineBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .homeBtn:hover, .outlineBtn:hover{ background:#eef1fa; }
   /* Hidden when this page is loaded inside the DSCM dashboard shell's content
      frame (index.html) - the sidebar there is the primary navigation, so this
      page's own cross-links would just duplicate it. Standalone loads (direct
-     visit, bookmark, another page's link opening a new tab) are unaffected. */
+     visit, bookmark, another page's link opening a new tab) are unaffected.
+     .outlineBtn (below) shares .homeBtn's outlined look but is deliberately
+     NOT included here - it's for same-page feature buttons like "Deleted
+     Invoices", which still need to work when embedded, unlike an actual
+     cross-page navigation link. */
   html[data-embedded] .homeBtn{ display:none !important; }
   /* Embedded in the dashboard's iframe: the sidebar already has its own
      Log out, so a second one here (which would also silently sign the
@@ -241,7 +245,7 @@
       <a class="homeBtn" href="PDIR_Organizations.html">Organizations</a>
       <a class="homeBtn" href="APQP.html">APQP</a>
       <a class="homeBtn" href="Instructions.html">Instructions</a>
-      <button type="button" class="homeBtn" id="deletedInvBtn" style="display:none;">Deleted Invoices</button>
+      <button type="button" class="outlineBtn" id="deletedInvBtn" style="display:none;">Deleted Invoices</button>
       <button type="button" class="addBtn" id="addInvBtn" style="display:none;">Add Dessimate Invoice</button>
     </div>
   </div>
