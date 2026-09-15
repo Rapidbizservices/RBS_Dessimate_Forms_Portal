@@ -342,6 +342,7 @@
               <tr>
                 <th style="min-width:180px;">Part Number</th>
                 <th style="min-width:220px;">Part Name</th>
+                <th style="min-width:110px;">Files</th>
                 <th></th>
               </tr>
             </thead>
@@ -421,6 +422,25 @@
   </div>
 </div>
 
+<!-- Per-Part Attachments sub-modal (Rev2.11) - opened from a "Files" button
+     on a line row inside the Add/Edit RFQ modal above; can be open at the
+     same time as that modal, so it needs to paint on top of it. -->
+<div class="modalOverlay" id="partAttachModalOverlay" style="z-index:1700;">
+  <div class="modalCard" style="max-width:520px;">
+    <h2 id="partAttachModalTitle">Part Attachments</h2>
+    <p class="modalSub">Drawings, 3D (.stp/.step) files, or anything else specific to this part.</p>
+    <div id="partAttachmentsList" class="attachmentsList"></div>
+    <div class="docRow">
+      <div class="docMain">
+        <input type="file" id="partAttachmentsDocInput" multiple>
+      </div>
+    </div>
+    <div class="modalBtns">
+      <button type="button" class="saveBtn" id="partAttachModalCloseBtn">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- "My Quote" modal (Supplier only) -->
 <div class="modalOverlay" id="quoteModalOverlay">
   <div class="modalCard">
@@ -448,6 +468,7 @@
               <th style="min-width:150px;">Part Name</th>
               <th style="min-width:130px;">Unit Price</th>
               <th style="min-width:130px;">Tooling Cost</th>
+              <th style="min-width:110px;">Files</th>
             </tr>
           </thead>
           <tbody id="quoteLinesTableBody"></tbody>
@@ -489,7 +510,7 @@
       <h3 style="border-top:none; padding-top:0;">Parts</h3>
       <div class="linesWrap">
         <table class="linesTable">
-          <thead><tr><th style="min-width:150px;">Part Number</th><th style="min-width:220px;">Part Name</th></tr></thead>
+          <thead><tr><th style="min-width:150px;">Part Number</th><th style="min-width:220px;">Part Name</th><th style="min-width:110px;">Files</th></tr></thead>
           <tbody id="customerViewLinesTableBody"></tbody>
         </table>
       </div>
@@ -659,6 +680,10 @@
   function buildAttachmentDocPath(rfqId, filename, idx){
     var safeName = (filename || 'file').replace(/[\\/]/g, '_');
     return RFQ_DOC_FOLDER + '/' + rfqId + '/attachments/' + Date.now() + '-' + idx + '-' + safeName;
+  }
+  function buildLineAttachmentDocPath(rfqId, lineId, filename, idx){
+    var safeName = (filename || 'file').replace(/[\\/]/g, '_');
+    return RFQ_DOC_FOLDER + '/' + rfqId + '/parts/' + lineId + '/' + Date.now() + '-' + idx + '-' + safeName;
   }
   function readFileAsBytes(file){
     return new Promise(function(resolve, reject){
@@ -1242,7 +1267,18 @@
 
   // ---- Add / Edit RFQ modal (Team Member+) -------------------------------------
   var editingId = null;
-  var lineRows = []; // { lineId, partNumber, partName }
+  var lineRows = []; // { lineId, partNumber, partName, attachments }
+  // Rev2.11: a real lineId is generated client-side the moment a part row
+  // is added (not left blank for the backend to fill in on save) - each
+  // part's attachments need a stable folder to upload into
+  // (rfq_docs/<rfqId>/parts/<lineId>/...) the instant a file is chosen,
+  // well before the RFQ itself is saved. The backend still accepts and
+  // keeps a client-provided lineId as-is (see validateRfqFields), so this
+  // doesn't change anything about existing RFQs/lines.
+  function genClientId(){
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
 
   var attachmentsState = [];
   function activeAttachmentCount(){ return attachmentsState.length; }
@@ -1320,14 +1356,16 @@
     renderAttachmentsList();
   });
 
-  function newLineRow(){ return { lineId: '', partNumber: '', partName: '' }; }
+  function newLineRow(){ return { lineId: genClientId(), partNumber: '', partName: '', attachments: [] }; }
 
   function renderLines(){
     var bodyEl = document.getElementById('linesTableBody');
     bodyEl.innerHTML = lineRows.map(function(row, idx){
+      var attCount = (row.attachments || []).length;
       return '<tr data-line-idx="' + idx + '">' +
         '<td><input type="text" data-line-field="partNumber" value="' + escapeHtml(row.partNumber) + '"></td>' +
         '<td><input type="text" data-line-field="partName" value="' + escapeHtml(row.partName) + '"></td>' +
+        '<td><button type="button" class="quietLink" data-part-attach="' + idx + '">' + (attCount ? 'Files (' + attCount + ')' : 'Add files') + '</button></td>' +
         '<td><button type="button" class="lineRemoveBtn" data-line-remove="' + idx + '">Remove</button></td>' +
         '</tr>';
     }).join('');
@@ -1337,6 +1375,9 @@
         var field = el.getAttribute('data-line-field');
         el.addEventListener('input', function(){ lineRows[idx][field] = el.value; });
       });
+    });
+    bodyEl.querySelectorAll('[data-part-attach]').forEach(function(btn){
+      btn.addEventListener('click', function(){ openPartAttachModal(parseInt(btn.getAttribute('data-part-attach'), 10)); });
     });
     bodyEl.querySelectorAll('[data-line-remove]').forEach(function(btn){
       btn.addEventListener('click', async function(){
@@ -1350,6 +1391,85 @@
     lineRows.push(newLineRow());
     renderLines();
   });
+
+  // ---- Per-Part Attachments sub-modal (Rev2.11) ------------------------------
+  // Operates directly on lineRows[currentPartAttachIdx].attachments - nothing
+  // here talks to the backend; files are only actually uploaded when the
+  // whole RFQ is saved (rfqForm's submit handler below), same as the
+  // RFQ-level attachmentsState. "Files (N)"/"Add files" on the line row
+  // itself (renderLines above) reflects the count live once this closes.
+  var currentPartAttachIdx = -1;
+  function renderPartAttachList(){
+    var row = lineRows[currentPartAttachIdx];
+    var listEl = document.getElementById('partAttachmentsList');
+    if (!row) { listEl.innerHTML = ''; return; }
+    var atts = row.attachments || [];
+    if (!atts.length) { listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>'; return; }
+    listEl.innerHTML = atts.map(function(entry, idx){
+      var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+      var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
+      var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+      return '<div class="attachRow">' +
+        '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+        '<div class="attachLinks">' +
+          '<button type="button" data-part-view-idx="' + idx + '">View</button>' +
+          '<span class="removeLink" style="cursor:pointer;" data-part-remove-idx="' + idx + '">Remove</span>' +
+        '</div></div>';
+    }).join('');
+    listEl.querySelectorAll('[data-part-view-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = atts[Number(btn.getAttribute('data-part-view-idx'))];
+        if (!entry) return;
+        if (entry.kind === 'pending') openDocViewer({ filename: entry.filename, mimeType: entry.mimeType, bytes: entry.bytes });
+        else openDocViewer({ filename: entry.doc.filename, mimeType: entry.doc.mimeType, path: entry.doc.path });
+      });
+    });
+    listEl.querySelectorAll('[data-part-remove-idx]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var idx = Number(btn.getAttribute('data-part-remove-idx'));
+        var entry = atts[idx];
+        var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
+        if (!(await confirmDialog('Remove "' + name + '"?'))) return;
+        atts.splice(idx, 1);
+        renderPartAttachList();
+      });
+    });
+  }
+  function openPartAttachModal(idx){
+    currentPartAttachIdx = idx;
+    var row = lineRows[idx];
+    document.getElementById('partAttachModalTitle').textContent = 'Attachments — ' + (row.partNumber || row.partName || 'this part');
+    renderPartAttachList();
+    document.getElementById('partAttachModalOverlay').classList.add('open');
+  }
+  function closePartAttachModal(){
+    document.getElementById('partAttachModalOverlay').classList.remove('open');
+    currentPartAttachIdx = -1;
+    renderLines(); // refresh the "Files (N)" button on the line row underneath
+  }
+  document.getElementById('partAttachModalCloseBtn').addEventListener('click', closePartAttachModal);
+  document.getElementById('partAttachModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'partAttachModalOverlay') closePartAttachModal();
+  });
+  document.getElementById('partAttachmentsDocInput').addEventListener('change', async function(){
+    var files = this.files ? Array.from(this.files) : [];
+    this.value = '';
+    if (!files.length || currentPartAttachIdx === -1) return;
+    var row = lineRows[currentPartAttachIdx];
+    if (!row) return;
+    if (!row.attachments) row.attachments = [];
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      try {
+        var bytes = await readFileAsBytes(file);
+        row.attachments.push({ kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' });
+      } catch (e) {
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      }
+    }
+    renderPartAttachList();
+  });
+  // -----------------------------------------------------------------------------
 
   document.getElementById('useSystemRfqBtn').addEventListener('click', async function(){
     var btn = this;
@@ -1608,7 +1728,14 @@
     document.getElementById('attachError').textContent = '';
     attachmentsState = (rfq.dessimateAttachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
     renderAttachmentsList();
-    lineRows = (rfq.lines || []).map(function(l){ return { lineId: l.lineId, partNumber: l.partNumber, partName: l.partName }; });
+    lineRows = (rfq.lines || []).map(function(l){
+      return {
+        lineId: l.lineId || genClientId(),
+        partNumber: l.partNumber,
+        partName: l.partName,
+        attachments: (l.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; })
+      };
+    });
     document.getElementById('modalTitle').textContent = 'Edit RFQ ' + rfq.rfqNumber;
     document.getElementById('modalSub').textContent = 'RFQ Number can be changed any time.';
     document.getElementById('f_rfqNumber').value = rfq.rfqNumber;
@@ -1649,11 +1776,14 @@
       ))) return;
     }
 
+    var linesForCreate = lineRows.filter(function(r){ return r.partNumber || r.partName; })
+      .map(function(r){ return { lineId: r.lineId, partNumber: r.partNumber, partName: r.partName, attachments: [] }; });
+
     var baseFields = {
       rfqNumber: document.getElementById('f_rfqNumber').value.trim(),
       rfqDate: document.getElementById('f_rfqDate').value,
       notes: document.getElementById('f_notes').value.trim(),
-      lines: lineRows.filter(function(r){ return r.partNumber || r.partName; }),
+      lines: linesForCreate,
       sharedWithSuppliers: currentlyShared,
       sharedWithCustomers: getSelectedSharedWithCustomers()
     };
@@ -1681,9 +1811,28 @@
         }
       }
 
+      var linesWithAttachments = [];
+      for (var li = 0; li < lineRows.length; li++) {
+        var row = lineRows[li];
+        if (!(row.partNumber || row.partName)) continue;
+        var linePayload = [];
+        var rowAtts = row.attachments || [];
+        for (var ai = 0; ai < rowAtts.length; ai++) {
+          var attEntry = rowAtts[ai];
+          if (attEntry.kind === 'existing') {
+            linePayload.push(attEntry.doc);
+          } else {
+            var linePath = buildLineAttachmentDocPath(rfqId, row.lineId, attEntry.filename, ai);
+            await ghPutFile(linePath, attEntry.bytes, 'Upload attachment for RFQ ' + (baseFields.rfqNumber || rfqId) + ' part ' + (row.partNumber || row.partName));
+            linePayload.push({ path: linePath, filename: attEntry.filename, mimeType: attEntry.mimeType, size: attEntry.bytes.length });
+          }
+        }
+        linesWithAttachments.push({ lineId: row.lineId, partNumber: row.partNumber, partName: row.partName, attachments: linePayload });
+      }
+
       var putRes = await apiFetch('rfqs/' + encodeURIComponent(rfqId), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({}, baseFields, { dessimateAttachments: attachmentsPayload }))
+        body: JSON.stringify(Object.assign({}, baseFields, { lines: linesWithAttachments, dessimateAttachments: attachmentsPayload }))
       });
       var putData = {}; try { putData = await putRes.json(); } catch(e){}
       if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
@@ -1778,25 +1927,37 @@
     var bodyEl = document.getElementById('quoteLinesTableBody');
     var lines = rfq.lines || [];
     if (!lines.length) {
-      bodyEl.innerHTML = '<tr><td colspan="4" class="readCell">No parts listed on this RFQ yet.</td></tr>';
+      bodyEl.innerHTML = '<tr><td colspan="5" class="readCell">No parts listed on this RFQ yet.</td></tr>';
       return;
     }
     bodyEl.innerHTML = lines.map(function(l){
       var v = quoteLineValues[l.lineId] || { price: '', toolingCost: '' };
+      var atts = l.attachments || [];
+      var filesCell = atts.length
+        ? atts.map(function(a, ai){ return '<div><span class="quietLink" data-line-file="' + escapeHtml(l.lineId) + '" data-line-file-idx="' + ai + '">' + escapeHtml(a.filename) + '</span></div>'; }).join('')
+        : '<span class="readCell">—</span>';
       return '<tr data-line-id="' + escapeHtml(l.lineId) + '">' +
         '<td class="readCell">' + escapeHtml(l.partNumber || '—') + '</td>' +
         '<td class="readCell">' + escapeHtml(l.partName || '—') + '</td>' +
         '<td><input type="number" step="any" min="0" data-quote-field="price" value="' + escapeHtml(v.price) + '"></td>' +
         '<td><input type="number" step="any" min="0" data-quote-field="toolingCost" value="' + escapeHtml(v.toolingCost) + '"></td>' +
+        '<td>' + filesCell + '</td>' +
         '</tr>';
     }).join('');
     bodyEl.querySelectorAll('tr').forEach(function(tr){
       var lineId = tr.getAttribute('data-line-id');
+      var line = lines.find(function(l){ return l.lineId === lineId; });
       tr.querySelectorAll('[data-quote-field]').forEach(function(el){
         var field = el.getAttribute('data-quote-field');
         el.addEventListener('input', function(){
           if (!quoteLineValues[lineId]) quoteLineValues[lineId] = { price: '', toolingCost: '' };
           quoteLineValues[lineId][field] = el.value;
+        });
+      });
+      tr.querySelectorAll('[data-line-file]').forEach(function(el){
+        el.addEventListener('click', function(){
+          var a = line && line.attachments && line.attachments[Number(el.getAttribute('data-line-file-idx'))];
+          if (a) openDocViewer({ filename: a.filename, mimeType: a.mimeType, path: a.path });
         });
       });
     });
@@ -1904,9 +2065,23 @@
     document.getElementById('customerViewSub').textContent = rfq.rfqDate ? 'RFQ Date: ' + fmtDateMDY(rfq.rfqDate) : '';
 
     var lines = rfq.lines || [];
-    document.getElementById('customerViewLinesTableBody').innerHTML = lines.length
-      ? lines.map(function(l){ return '<tr><td class="readCell">' + escapeHtml(l.partNumber || '—') + '</td><td class="readCell">' + escapeHtml(l.partName || '—') + '</td></tr>'; }).join('')
-      : '<tr><td colspan="2" class="readCell">No parts listed yet.</td></tr>';
+    var linesBodyEl = document.getElementById('customerViewLinesTableBody');
+    linesBodyEl.innerHTML = lines.length
+      ? lines.map(function(l, li){
+          var atts = l.attachments || [];
+          var filesCell = atts.length
+            ? atts.map(function(a, ai){ return '<div><span class="quietLink" data-cv-line-file="' + li + '" data-cv-line-file-idx="' + ai + '">' + escapeHtml(a.filename) + '</span></div>'; }).join('')
+            : '<span class="readCell">—</span>';
+          return '<tr><td class="readCell">' + escapeHtml(l.partNumber || '—') + '</td><td class="readCell">' + escapeHtml(l.partName || '—') + '</td><td>' + filesCell + '</td></tr>';
+        }).join('')
+      : '<tr><td colspan="3" class="readCell">No parts listed yet.</td></tr>';
+    linesBodyEl.querySelectorAll('[data-cv-line-file]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var line = lines[Number(el.getAttribute('data-cv-line-file'))];
+        var a = line && line.attachments && line.attachments[Number(el.getAttribute('data-cv-line-file-idx'))];
+        if (a) openDocViewer({ filename: a.filename, mimeType: a.mimeType, path: a.path });
+      });
+    });
 
     var attListEl = document.getElementById('customerViewAttachmentsList');
     var atts = rfq.dessimateAttachments || [];

@@ -3014,7 +3014,14 @@ function sanitizeRfqLine(l) {
     lineId: (l && l.lineId) || '',
     lineNo: 0, // overwritten by index in sanitizeRfq
     partNumber: (l && l.partNumber) || '',
-    partName: (l && l.partName) || ''
+    partName: (l && l.partName) || '',
+    // Rev2.11: per-part attachments (drawings/3D/etc., separate from the
+    // RFQ-level dessimateAttachments) - stored under
+    // rfq_docs/<rfqId>/parts/<lineId>/..., already covered by the existing
+    // rfq_docs/<rfqId>/.+ allowlist branch in
+    // isContentsPathAllowedForExternal, no backend access-control change
+    // needed for Supplier/Customer viewers to reach these.
+    attachments: sanitizeOrgDocList(l && l.attachments)
   };
 }
 function sanitizeRfqSupplierQuoteLine(l) {
@@ -3146,7 +3153,8 @@ function validateRfqFields(body) {
       return {
         lineId: (l && l.lineId ? String(l.lineId).trim() : '') || cryptoRandomId(),
         partNumber: ((l && l.partNumber) || '').toString().trim(),
-        partName: ((l && l.partName) || '').toString().trim()
+        partName: ((l && l.partName) || '').toString().trim(),
+        attachments: sanitizeOrgDocList(l && l.attachments)
       };
     })
     .filter(function (l) { return l.partNumber || l.partName; });
