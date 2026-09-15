@@ -363,6 +363,7 @@
           </table>
         </div>
         <button type="button" class="addLineBtn" id="addLineBtn">+ Add Part</button>
+        <button type="button" class="addLineBtn" id="downloadAllPartFilesBtn" style="margin-left:8px;">Download All Attachments</button>
       </div>
 
       <div class="modalSection">
@@ -487,6 +488,7 @@
           <tbody id="quoteLinesTableBody"></tbody>
         </table>
       </div>
+      <button type="button" class="addLineBtn" id="quoteDownloadAllBtn">Download All Attachments (by Part)</button>
     </div>
 
     <div class="modalSection">
@@ -527,6 +529,7 @@
           <tbody id="customerViewLinesTableBody"></tbody>
         </table>
       </div>
+      <button type="button" class="addLineBtn" id="customerViewDownloadAllBtn">Download All Attachments (by Part)</button>
     </div>
 
     <div class="modalSection">
@@ -1069,6 +1072,109 @@
     e.preventDefault();
     downloadTemplateToDisk();
   });
+
+  // ---- Bulk "Download All" (Rev2.12) -------------------------------------------
+  // A browser can't write real folders to disk from a page, so a .zip with
+  // one subfolder per part number stands in for that - the user's OS/zip
+  // tool recreates the folders on extract. JSZip is lazy-loaded from jsdelivr
+  // on first use, same pattern already used for the STEP viewer's
+  // three.js/occt-import-js (see loadScriptOnce above).
+  var JSZIP_CDN = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+  function sanitizeZipSegment(name){
+    var s = (name || '').toString().trim().replace(/[\\/:*?"<>|]/g, '_');
+    return s || 'Unnamed';
+  }
+  function uniqueZipName(usedSet, name){
+    if (!usedSet[name]) { usedSet[name] = true; return name; }
+    var dot = name.lastIndexOf('.');
+    var base = dot > 0 ? name.slice(0, dot) : name;
+    var ext = dot > 0 ? name.slice(dot) : '';
+    var n = 2, candidate;
+    do { candidate = base + ' (' + n + ')' + ext; n++; } while (usedSet[candidate]);
+    usedSet[candidate] = true;
+    return candidate;
+  }
+  // Accepts either shape an attachment entry can be in on this page: a
+  // client-side editing-state entry ({kind:'pending', bytes,...} or
+  // {kind:'existing', doc:{...}}) or a plain server-sanitized doc pointer
+  // ({path, filename, mimeType}) as seen in Supplier/Customer read-only views.
+  function normalizeAttachmentEntry(entry){
+    if (!entry) return null;
+    if (entry.kind === 'pending') return { filename: entry.filename, bytes: entry.bytes };
+    if (entry.kind === 'existing') return { filename: entry.doc.filename, path: entry.doc.path };
+    return { filename: entry.filename, path: entry.path };
+  }
+  // groups: [{ label, attachments: [entry,...] }, ...] - one zip folder per
+  // group, skipping any group with no files. Files not already held
+  // locally (bytes) are fetched from R2 via ghGetFileBytes on demand.
+  async function downloadAttachmentsAsZip(zipBaseName, groups){
+    var nonEmpty = groups.filter(function(g){ return g.attachments && g.attachments.length; });
+    if (!nonEmpty.length) { alert('No attachments to download.'); return; }
+    await loadScriptOnce(JSZIP_CDN);
+    var zip = new window.JSZip();
+    var usedFolders = {};
+    for (var gi = 0; gi < nonEmpty.length; gi++) {
+      var folderName = uniqueZipName(usedFolders, sanitizeZipSegment(nonEmpty[gi].label));
+      var folder = zip.folder(folderName);
+      var usedFiles = {};
+      var atts = nonEmpty[gi].attachments;
+      for (var i = 0; i < atts.length; i++) {
+        var norm = normalizeAttachmentEntry(atts[i]);
+        if (!norm) continue;
+        var bytes = norm.bytes;
+        if (!bytes) {
+          bytes = await ghGetFileBytes(norm.path);
+          if (!bytes) continue;
+        }
+        var fname = uniqueZipName(usedFiles, sanitizeZipSegment(norm.filename || ('file-' + (i + 1))));
+        folder.file(fname, bytes);
+      }
+    }
+    var blob = await zip.generateAsync({ type: 'blob' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = sanitizeZipSegment(zipBaseName) + '.zip';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+  }
+  async function runDownloadAll(btn, zipBaseName, groups){
+    var origText = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Preparing…';
+    try {
+      await downloadAttachmentsAsZip(zipBaseName, groups);
+    } catch (e) {
+      alert('Could not build the download (' + (e && e.message ? e.message : e) + ').');
+    } finally {
+      btn.disabled = false; btn.textContent = origText;
+    }
+  }
+  document.getElementById('downloadAllPartFilesBtn').addEventListener('click', function(){
+    var groups = lineRows.filter(function(r){ return r.partNumber || r.partName; }).map(function(r){
+      return { label: r.partNumber || r.partName, attachments: r.attachments || [] };
+    });
+    groups.push({ label: 'General Attachments', attachments: attachmentsState });
+    var zipName = 'RFQ_' + (document.getElementById('f_rfqNumber').value.trim() || 'Attachments');
+    runDownloadAll(this, zipName, groups);
+  });
+  document.getElementById('quoteDownloadAllBtn').addEventListener('click', function(){
+    var rfq = lastRfqs.find(function(x){ return x.id === quoteRfqId; });
+    if (!rfq) return;
+    var groups = (rfq.lines || []).map(function(l){
+      return { label: l.partNumber || l.partName || 'Part', attachments: l.attachments || [] };
+    });
+    groups.push({ label: 'General Attachments', attachments: rfq.dessimateAttachments || [] });
+    runDownloadAll(this, 'RFQ_' + rfq.rfqNumber, groups);
+  });
+  document.getElementById('customerViewDownloadAllBtn').addEventListener('click', function(){
+    var rfq = lastRfqs.find(function(x){ return x.id === customerViewRfqId; });
+    if (!rfq) return;
+    var groups = (rfq.lines || []).map(function(l){
+      return { label: l.partNumber || l.partName || 'Part', attachments: l.attachments || [] };
+    });
+    groups.push({ label: 'General Attachments', attachments: rfq.dessimateAttachments || [] });
+    runDownloadAll(this, 'RFQ_' + rfq.rfqNumber, groups);
+  });
+  // -----------------------------------------------------------------------------
 
   // ---- Quote-format template card (Admin+) ------------------------------------
   async function loadTemplateStatus(){
@@ -2087,9 +2193,11 @@
   // sharing/quotes) and gates dessimateQuote to a "not submitted yet" shape
   // until Admin/Super Admin submits - this just renders whatever the API
   // handed back, no client-side gating of its own to get wrong.
+  var customerViewRfqId = null;
   function openCustomerViewModal(id){
     var rfq = lastRfqs.find(function(x){ return x.id === id; });
     if (!rfq) return;
+    customerViewRfqId = id;
     document.getElementById('customerViewTitle').textContent = 'RFQ ' + rfq.rfqNumber;
     document.getElementById('customerViewSub').textContent = rfq.rfqDate ? 'RFQ Date: ' + fmtDateMDY(rfq.rfqDate) : '';
 
