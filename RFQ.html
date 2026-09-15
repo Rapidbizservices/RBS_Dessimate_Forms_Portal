@@ -355,6 +355,7 @@
               <tr>
                 <th style="min-width:180px;">Part Number</th>
                 <th style="min-width:220px;">Part Name</th>
+                <th style="min-width:110px;">EAU</th>
                 <th style="min-width:110px;">Files</th>
                 <th></th>
               </tr>
@@ -480,6 +481,7 @@
             <tr>
               <th style="min-width:150px;">Part Number</th>
               <th style="min-width:150px;">Part Name</th>
+              <th style="min-width:100px;">EAU</th>
               <th style="min-width:130px;">Unit Price</th>
               <th style="min-width:130px;">Tooling Cost</th>
               <th style="min-width:200px;">Files</th>
@@ -525,7 +527,7 @@
       <h3 style="border-top:none; padding-top:0;">Parts</h3>
       <div class="linesWrap">
         <table class="linesTable">
-          <thead><tr><th style="min-width:150px;">Part Number</th><th style="min-width:220px;">Part Name</th><th style="min-width:200px;">Files</th></tr></thead>
+          <thead><tr><th style="min-width:150px;">Part Number</th><th style="min-width:220px;">Part Name</th><th style="min-width:100px;">EAU</th><th style="min-width:200px;">Files</th></tr></thead>
           <tbody id="customerViewLinesTableBody"></tbody>
         </table>
       </div>
@@ -1494,7 +1496,7 @@
     renderAttachmentsList();
   });
 
-  function newLineRow(){ return { lineId: genClientId(), partNumber: '', partName: '', attachments: [] }; }
+  function newLineRow(){ return { lineId: genClientId(), partNumber: '', partName: '', eau: '', attachments: [] }; }
 
   function renderLines(){
     var bodyEl = document.getElementById('linesTableBody');
@@ -1503,6 +1505,7 @@
       return '<tr data-line-idx="' + idx + '">' +
         '<td><input type="text" data-line-field="partNumber" value="' + escapeHtml(row.partNumber) + '"></td>' +
         '<td><input type="text" data-line-field="partName" value="' + escapeHtml(row.partName) + '"></td>' +
+        '<td><input type="text" data-line-field="eau" placeholder="e.g. 5,000" value="' + escapeHtml(row.eau) + '"></td>' +
         '<td><button type="button" class="quietLink" data-part-attach="' + idx + '">' + (attCount ? 'Files (' + attCount + ')' : 'Add files') + '</button></td>' +
         '<td><button type="button" class="lineRemoveBtn" data-line-remove="' + idx + '">Remove</button></td>' +
         '</tr>';
@@ -1871,6 +1874,7 @@
         lineId: l.lineId || genClientId(),
         partNumber: l.partNumber,
         partName: l.partName,
+        eau: l.eau || '',
         attachments: (l.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; })
       };
     });
@@ -1915,7 +1919,7 @@
     }
 
     var linesForCreate = lineRows.filter(function(r){ return r.partNumber || r.partName; })
-      .map(function(r){ return { lineId: r.lineId, partNumber: r.partNumber, partName: r.partName, attachments: [] }; });
+      .map(function(r){ return { lineId: r.lineId, partNumber: r.partNumber, partName: r.partName, eau: r.eau, attachments: [] }; });
 
     var baseFields = {
       rfqNumber: document.getElementById('f_rfqNumber').value.trim(),
@@ -1965,7 +1969,7 @@
             linePayload.push({ path: linePath, filename: attEntry.filename, mimeType: attEntry.mimeType, size: attEntry.bytes.length });
           }
         }
-        linesWithAttachments.push({ lineId: row.lineId, partNumber: row.partNumber, partName: row.partName, attachments: linePayload });
+        linesWithAttachments.push({ lineId: row.lineId, partNumber: row.partNumber, partName: row.partName, eau: row.eau, attachments: linePayload });
       }
 
       var putRes = await apiFetch('rfqs/' + encodeURIComponent(rfqId), {
@@ -2065,7 +2069,7 @@
     var bodyEl = document.getElementById('quoteLinesTableBody');
     var lines = rfq.lines || [];
     if (!lines.length) {
-      bodyEl.innerHTML = '<tr><td colspan="5" class="readCell">No parts listed on this RFQ yet.</td></tr>';
+      bodyEl.innerHTML = '<tr><td colspan="6" class="readCell">No parts listed on this RFQ yet.</td></tr>';
       return;
     }
     bodyEl.innerHTML = lines.map(function(l){
@@ -2074,6 +2078,7 @@
       return '<tr data-line-id="' + escapeHtml(l.lineId) + '">' +
         '<td class="readCell">' + escapeHtml(l.partNumber || '—') + '</td>' +
         '<td class="readCell">' + escapeHtml(l.partName || '—') + '</td>' +
+        '<td class="readCell">' + escapeHtml(l.eau || '—') + '</td>' +
         '<td><input type="number" step="any" min="0" data-quote-field="price" value="' + escapeHtml(v.price) + '"></td>' +
         '<td><input type="number" step="any" min="0" data-quote-field="toolingCost" value="' + escapeHtml(v.toolingCost) + '"></td>' +
         '<td>' + filesCell + '</td>' +
@@ -2206,9 +2211,9 @@
     linesBodyEl.innerHTML = lines.length
       ? lines.map(function(l, li){
           var filesCell = renderFileChipList(l.attachments, 'data-cv-line-file', li, 'data-cv-line-file-idx');
-          return '<tr><td class="readCell">' + escapeHtml(l.partNumber || '—') + '</td><td class="readCell">' + escapeHtml(l.partName || '—') + '</td><td>' + filesCell + '</td></tr>';
+          return '<tr><td class="readCell">' + escapeHtml(l.partNumber || '—') + '</td><td class="readCell">' + escapeHtml(l.partName || '—') + '</td><td class="readCell">' + escapeHtml(l.eau || '—') + '</td><td>' + filesCell + '</td></tr>';
         }).join('')
-      : '<tr><td colspan="3" class="readCell">No parts listed yet.</td></tr>';
+      : '<tr><td colspan="4" class="readCell">No parts listed yet.</td></tr>';
     linesBodyEl.querySelectorAll('[data-cv-line-file]').forEach(function(el){
       el.addEventListener('click', function(){
         var line = lines[Number(el.getAttribute('data-cv-line-file'))];

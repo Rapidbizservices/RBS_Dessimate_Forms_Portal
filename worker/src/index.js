@@ -3015,6 +3015,12 @@ function sanitizeRfqLine(l) {
     lineNo: 0, // overwritten by index in sanitizeRfq
     partNumber: (l && l.partNumber) || '',
     partName: (l && l.partName) || '',
+    // Rev2.13: Estimated Annual Volume - a Dessimate-set spec on the part
+    // itself (like partNumber/partName), not something a Supplier submits
+    // per-quote, so it lives here rather than on sanitizeRfqSupplierQuoteLine.
+    // Kept as a free-text string (not Number) since Suppliers often expect
+    // something like "5,000" or "10k/yr", not a strict numeric field.
+    eau: (l && l.eau) || '',
     // Rev2.11: per-part attachments (drawings/3D/etc., separate from the
     // RFQ-level dessimateAttachments) - stored under
     // rfq_docs/<rfqId>/parts/<lineId>/..., already covered by the existing
@@ -3154,6 +3160,7 @@ function validateRfqFields(body) {
         lineId: (l && l.lineId ? String(l.lineId).trim() : '') || cryptoRandomId(),
         partNumber: ((l && l.partNumber) || '').toString().trim(),
         partName: ((l && l.partName) || '').toString().trim(),
+        eau: ((l && l.eau) || '').toString().trim(),
         attachments: sanitizeOrgDocList(l && l.attachments)
       };
     })
