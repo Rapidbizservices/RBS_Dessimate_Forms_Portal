@@ -2697,7 +2697,6 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, customerInfo, stamp
   idRow('Purchase Order Number:', po.poNumber, 10);
   idRow('Date:', fmtDateMDY(po.poDate), 10);
   idRow('Terms:', po.paymentTerms || '', 10);
-  idRow('Due Date:', '', 10);
   idRow('Currency:', po.currency || '', 10);
   if (poRefDisplay) idRow('Customer PO Ref:', poRefDisplay, 9);
 
@@ -2743,7 +2742,7 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, customerInfo, stamp
       wrapLines(line, colW - 12, 9).forEach(function (l) { leftText(l, col3, y4, 9); y4 -= 11; });
     });
     if (customerInfo.poNumbers && customerInfo.poNumbers.length) {
-      leftText('PO Number: ' + customerInfo.poNumbers.join(', '), col3, y4, 9, { bold: true }); y4 -= 11;
+      leftText('PO: ' + customerInfo.poNumbers.join(', '), col3, y4, 9, { bold: true }); y4 -= 11;
     }
   }
 
