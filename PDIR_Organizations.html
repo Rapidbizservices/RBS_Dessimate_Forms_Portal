@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <title>Organizations &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
+<link rel="stylesheet" href="confirm-dialog.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -404,6 +405,7 @@
 </div>
 
 <script src="office-viewer.js"></script>
+<script src="confirm-dialog.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -753,7 +755,7 @@
 
   async function deleteOrg(id){
     var org = lastOrgs.find(function(o){ return o.id === id; });
-    if (!confirm('Remove ' + (org ? org.name : 'this organization') + '? This can\'t be undone (its uploaded files stay in the repo, just unlinked).')) return;
+    if (!(await confirmDialog('Remove ' + (org ? org.name : 'this organization') + '? This can\'t be undone (its uploaded files stay in the repo, just unlinked).'))) return;
     requireAuthThen(async function(){
       try {
         var res = await apiFetch('organizations/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -817,8 +819,8 @@
       openDocViewer({ filename: logoState.existing.filename, mimeType: logoState.existing.mimeType, path: logoState.existing.path });
     });
     var removeLink = document.getElementById('logoRemoveLink');
-    if (removeLink) removeLink.addEventListener('click', function(){
-      if (!confirm('Remove the current logo?')) return;
+    if (removeLink) removeLink.addEventListener('click', async function(){
+      if (!(await confirmDialog('Remove the current logo?'))) return;
       logoState.removed = true;
       renderLogoRow();
     });
@@ -865,8 +867,8 @@
       inp.addEventListener('input', function(){ addressState[parseInt(this.getAttribute('data-addr-line2'), 10)].line2 = this.value; });
     });
     listEl.querySelectorAll('[data-addr-remove]').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        if (!confirm('Remove this address?')) return;
+      btn.addEventListener('click', async function(){
+        if (!(await confirmDialog('Remove this address?'))) return;
         addressState.splice(parseInt(this.getAttribute('data-addr-remove'), 10), 1);
         renderAddressList();
       });
@@ -891,8 +893,8 @@
       inp.addEventListener('input', function(){ termsState[parseInt(this.getAttribute('data-term-value'), 10)] = this.value; });
     });
     listEl.querySelectorAll('[data-term-remove]').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        if (!confirm('Remove this payment terms entry?')) return;
+      btn.addEventListener('click', async function(){
+        if (!(await confirmDialog('Remove this payment terms entry?'))) return;
         termsState.splice(parseInt(this.getAttribute('data-term-remove'), 10), 1);
         renderTermsList();
       });
@@ -937,8 +939,8 @@
       openDocViewer({ filename: state.existing.filename, mimeType: state.existing.mimeType, path: state.existing.path });
     });
     var removeLink = linksEl.querySelector('[data-doc-remove]');
-    if (removeLink) removeLink.addEventListener('click', function(){
-      if (!confirm('Remove "' + (state.existing ? state.existing.filename : 'this file') + '"?')) return;
+    if (removeLink) removeLink.addEventListener('click', async function(){
+      if (!(await confirmDialog('Remove "' + (state.existing ? state.existing.filename : 'this file') + '"?'))) return;
       state.removed = true;
       renderNamedDocRow(key);
     });
@@ -966,10 +968,10 @@
       });
     });
     listEl.querySelectorAll('[data-gen-remove]').forEach(function(btn){
-      btn.addEventListener('click', function(){
+      btn.addEventListener('click', async function(){
         var idx = parseInt(this.getAttribute('data-gen-remove'), 10);
         var item = genericState[idx];
-        if (!confirm('Remove "' + (item ? item.filename : 'this file') + '"?')) return;
+        if (!(await confirmDialog('Remove "' + (item ? item.filename : 'this file') + '"?'))) return;
         genericState.splice(idx, 1);
         renderGenericList();
       });

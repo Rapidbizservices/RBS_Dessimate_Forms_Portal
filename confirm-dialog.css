@@ -1,0 +1,25 @@
+/* confirm-dialog.css — styling for the shared confirmDialog() overlay
+   (confirm-dialog.js), matching the site's own auth-overlay/card look. */
+.confirmDialogOverlay{
+  display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+  z-index:3000; align-items:center; justify-content:center; padding:20px;
+}
+.confirmDialogOverlay.open{ display:flex; }
+.confirmDialogCard{
+  background:#fff; border-radius:10px; padding:22px 24px; width:100%; max-width:380px;
+  box-shadow:0 20px 60px rgba(0,0,0,.3);
+}
+.confirmDialogMessage{
+  font-size:14px; color:var(--ink,#1c1c1e); line-height:1.5; margin-bottom:20px; white-space:pre-line;
+}
+.confirmDialogBtns{ display:flex; justify-content:flex-end; gap:10px; }
+.confirmDialogBtns button{
+  font-family:inherit; font-size:13.5px; font-weight:700; border-radius:7px;
+  padding:9px 16px; cursor:pointer; border:1px solid transparent;
+}
+.confirmDialogCancel{ color:var(--label,#5b5f66); background:#f4f5f8; border-color:var(--line,#dde0e6); }
+.confirmDialogCancel:hover{ background:#e9ebef; }
+.confirmDialogOk{ color:#fff; background:var(--brand,#2b4ea3); }
+.confirmDialogOk:hover{ background:var(--brand-dark,#1c3877); }
+.confirmDialogOk.danger{ background:#b23b3b; }
+.confirmDialogOk.danger:hover{ background:#8f2e2e; }

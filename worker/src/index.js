@@ -2827,17 +2827,23 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, customerInfo, stamp
 
   const sigBoxH = 60;
   page.drawRectangle({ x: margin, y: fy - sigBoxH, width: leftColW, height: sigBoxH, color: rgb(1, 1, 1), borderColor: lineGray, borderWidth: 0.75 });
-  leftText('Approver', margin + 8, fy - 14, 9, { bold: true, color: labelGray });
-  leftText('Signature', margin + 8, fy - 25, 9, { bold: true, color: labelGray });
   // ---- Approver stamp (PO only - never the Dessimate Invoice) ---------------
+  // "Approver Signature" (drawn below, after the stamp) is vertically
+  // centered on the stamp image itself, not the box - falls back to the
+  // box's own center when there's no stamp to align to.
+  let stampCenterY = fy - sigBoxH / 2;
   if (stampBytes) {
     try {
       let img;
       try { img = await pdfDoc.embedPng(stampBytes); } catch (e) { img = await pdfDoc.embedJpg(stampBytes); }
       const dims = img.scaleToFit(120, 42);
-      page.drawImage(img, { x: margin + 80, y: fy - sigBoxH + 8, width: dims.width, height: dims.height });
+      const stampY = fy - sigBoxH + 8;
+      page.drawImage(img, { x: margin + 80, y: stampY, width: dims.width, height: dims.height });
+      stampCenterY = stampY + dims.height / 2;
     } catch (e) { /* stamp image unreadable/unsupported format - leave the PO unstamped rather than fail generation */ }
   }
+  leftText('Approver', margin + 8, stampCenterY + 6, 9, { bold: true, color: labelGray });
+  leftText('Signature', margin + 8, stampCenterY - 5, 9, { bold: true, color: labelGray });
 
   const totalBoxX = margin + leftColW + 30;
   const totalBoxW = tableRight - totalBoxX;

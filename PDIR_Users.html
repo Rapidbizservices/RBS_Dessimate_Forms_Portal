@@ -1,6 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>Users &mdash; DSCM</title>
+<link rel="stylesheet" href="confirm-dialog.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -321,6 +322,7 @@
   </div>
 </div>
 
+<script src="confirm-dialog.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -653,7 +655,7 @@
     var u = lastUsers.find(function(x){ return x.id === id; });
     if (!u) return;
     var label = u.name || u.username;
-    if (!confirm('Log in as ' + label + '? You\'ll see exactly what they see - come back to Users afterward and use "Return to my account" to switch back.')) return;
+    if (!(await confirmDialog('Log in as ' + label + '? You\'ll see exactly what they see - come back to Users afterward and use "Return to my account" to switch back.'))) return;
     try {
       var res = await apiFetch('admin/users/' + encodeURIComponent(id) + '/impersonate', { method: 'POST' });
       var data = {}; try { data = await res.json(); } catch(e){}
@@ -715,7 +717,7 @@
   async function deleteUser(id){
     var user = lastUsers.find(function(u){ return u.id === id; });
     var label = (user && (user.username || user.organization)) || 'this entry';
-    if (!confirm('Remove ' + label + ' from the user directory? This can\'t be undone.')) return;
+    if (!(await confirmDialog('Remove ' + label + ' from the user directory? This can\'t be undone.'))) return;
     requireAuthThen(async function(){
       try {
         var res = await apiFetch('admin/users/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -827,8 +829,8 @@
       openStampPreview({ path: stampState.existing.path }, stampState.existing.filename, stampState.existing.mimeType);
     });
     var removeLink = document.getElementById('stampRemoveLink');
-    if (removeLink) removeLink.addEventListener('click', function(){
-      if (!confirm('Remove the current approver stamp?')) return;
+    if (removeLink) removeLink.addEventListener('click', async function(){
+      if (!(await confirmDialog('Remove the current approver stamp?'))) return;
       stampState.removed = true;
       renderStampRow();
     });

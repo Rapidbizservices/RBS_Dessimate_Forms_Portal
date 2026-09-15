@@ -1,6 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>PSW Form Filler</title>
+<link rel="stylesheet" href="confirm-dialog.css">
 <style>
   :root{
     --brand:#2b4ea3;
@@ -269,6 +270,7 @@
 //# sourceMappingURL=pdf-lib.min.js.map
 </script>
 
+<script src="confirm-dialog.js"></script>
 <script>
 (function(){
   var form = document.getElementById('pswForm');
@@ -320,8 +322,8 @@
   form.addEventListener('change', save);
   load();
 
-  document.getElementById('clearBtn').addEventListener('click', function(){
-    if(!confirm('Clear everything you have filled in?')) return;
+  document.getElementById('clearBtn').addEventListener('click', async function(){
+    if(!(await confirmDialog('Clear everything you have filled in?'))) return;
     form.reset();
     try{ localStorage.removeItem('psw-filler-data'); }catch(e){}
   });

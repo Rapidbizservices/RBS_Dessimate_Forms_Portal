@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <title>APQP &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
+<link rel="stylesheet" href="confirm-dialog.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -327,6 +328,7 @@
 </div>
 
 <script src="office-viewer.js"></script>
+<script src="confirm-dialog.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -713,7 +715,7 @@
 
   async function deleteApqpRecord(id){
     var record = lastApqpRecords.find(function(r){ return r.id === id; });
-    if (!confirm('Remove ' + (record ? record.partNumber : 'this Part') + ' from APQP? Any uploaded files stay in the repo, just unlinked.')) return;
+    if (!(await confirmDialog('Remove ' + (record ? record.partNumber : 'this Part') + ' from APQP? Any uploaded files stay in the repo, just unlinked.'))) return;
     requireAuthThen(async function(){
       try {
         var res = await apiFetch('apqp/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -987,7 +989,7 @@
     var existing = (record.items[key] && record.items[key].files) || [];
     var target = existing[fileIdx];
     if (!target) return;
-    if (!confirm('Remove "' + target.filename + '"? The file itself stays in the repo, just unlinked from this checklist.')) return;
+    if (!(await confirmDialog('Remove "' + target.filename + '"? The file itself stays in the repo, just unlinked from this checklist.'))) return;
     try {
       var newFiles = existing.slice(0, fileIdx).concat(existing.slice(fileIdx + 1));
       var res = await apiFetch('apqp/' + encodeURIComponent(record.id) + '/items/' + encodeURIComponent(key), {

@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <title>RFQ &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
+<link rel="stylesheet" href="confirm-dialog.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -531,6 +532,7 @@
 </div>
 
 <script src="office-viewer.js"></script>
+<script src="confirm-dialog.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + file proxy) ------------------------------------
@@ -1213,7 +1215,7 @@
 
   async function deleteRfq(id){
     var r = lastRfqs.find(function(x){ return x.id === id; });
-    if (!confirm('Remove RFQ ' + (r ? r.rfqNumber : '') + '? This can\'t be undone.')) return;
+    if (!(await confirmDialog('Remove RFQ ' + (r ? r.rfqNumber : '') + '? This can\'t be undone.'))) return;
     requireAuthThen(async function(){
       try {
         var res = await apiFetch('rfqs/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -1271,11 +1273,11 @@
       });
     });
     listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
-      btn.addEventListener('click', function(){
+      btn.addEventListener('click', async function(){
         var idx = Number(btn.getAttribute('data-remove-idx'));
         var entry = attachmentsState[idx];
         var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
-        if (!confirm('Remove "' + name + '"?')) return;
+        if (!(await confirmDialog('Remove "' + name + '"?'))) return;
         attachmentsState.splice(idx, 1);
         renderAttachmentsList();
       });
@@ -1325,8 +1327,8 @@
       });
     });
     bodyEl.querySelectorAll('[data-line-remove]').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        if (!confirm('Remove this line?')) return;
+      btn.addEventListener('click', async function(){
+        if (!(await confirmDialog('Remove this line?'))) return;
         lineRows.splice(parseInt(this.getAttribute('data-line-remove'), 10), 1);
         renderLines();
       });
@@ -1427,11 +1429,11 @@
       });
     });
     listEl.querySelectorAll('[data-dqremove-idx]').forEach(function(btn){
-      btn.addEventListener('click', function(){
+      btn.addEventListener('click', async function(){
         var idx = Number(btn.getAttribute('data-dqremove-idx'));
         var entry = dessimateQuoteAttachmentsState[idx];
         var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
-        if (!confirm('Remove "' + name + '"?')) return;
+        if (!(await confirmDialog('Remove "' + name + '"?'))) return;
         dessimateQuoteAttachmentsState.splice(idx, 1);
         renderDessimateQuoteAttachmentsList();
       });
@@ -1556,8 +1558,8 @@
     }
   }
   document.getElementById('saveDessimateQuoteDraftBtn').addEventListener('click', function(){ saveDessimateQuote(false); });
-  document.getElementById('submitDessimateQuoteBtn').addEventListener('click', function(){
-    if (confirm('Submit this quote to the customer? They will immediately be able to see the price, tooling cost, notes, and attachments.')) saveDessimateQuote(true);
+  document.getElementById('submitDessimateQuoteBtn').addEventListener('click', async function(){
+    if (await confirmDialog('Submit this quote to the customer? They will immediately be able to see the price, tooling cost, notes, and attachments.')) saveDessimateQuote(true);
   });
   // -----------------------------------------------------------------------------
 
@@ -1629,10 +1631,10 @@
       var beingRemoved = previouslyShared.filter(function(org){
         return currentlyShared.indexOf(org) === -1 && existingRfq.supplierQuotes && existingRfq.supplierQuotes[org];
       });
-      if (beingRemoved.length && !confirm(
+      if (beingRemoved.length && !(await confirmDialog(
         beingRemoved.join(', ') + ' already submitted a quote on this RFQ. Unsharing hides this RFQ from ' +
         (beingRemoved.length === 1 ? 'them' : 'those suppliers') + ' going forward, but their submitted quote stays on file for your team to see. Continue?'
-      )) return;
+      ))) return;
     }
 
     var baseFields = {
@@ -1728,11 +1730,11 @@
       });
     });
     listEl.querySelectorAll('[data-qremove-idx]').forEach(function(btn){
-      btn.addEventListener('click', function(){
+      btn.addEventListener('click', async function(){
         var idx = Number(btn.getAttribute('data-qremove-idx'));
         var entry = quoteAttachmentsState[idx];
         var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
-        if (!confirm('Remove "' + name + '"?')) return;
+        if (!(await confirmDialog('Remove "' + name + '"?'))) return;
         quoteAttachmentsState.splice(idx, 1);
         renderQuoteAttachmentsList();
       });

@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <title>Dessimate POs &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
+<link rel="stylesheet" href="confirm-dialog.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -440,6 +441,7 @@
 </div>
 
 <script src="office-viewer.js"></script>
+<script src="confirm-dialog.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -1054,7 +1056,7 @@
 
   async function deletePo(id){
     var po = lastPos.find(function(p){ return p.id === id; });
-    if (!confirm('Remove Dessimate PO ' + (po ? po.poNumber : '') + ' (Shipment ' + (po ? po.shipmentNumber : '') + ')? This can\'t be undone.')) return;
+    if (!(await confirmDialog('Remove Dessimate PO ' + (po ? po.poNumber : '') + ' (Shipment ' + (po ? po.shipmentNumber : '') + ')? This can\'t be undone.'))) return;
     requireAuthThen(async function(){
       try {
         var res = await apiFetch('dessimate-pos/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -1116,11 +1118,11 @@
       });
     });
     listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
-      btn.addEventListener('click', function(){
+      btn.addEventListener('click', async function(){
         var idx = Number(btn.getAttribute('data-remove-idx'));
         var entry = attachmentsState[idx];
         var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
-        if (!confirm('Remove "' + name + '"?')) return;
+        if (!(await confirmDialog('Remove "' + name + '"?'))) return;
         attachmentsState.splice(idx, 1);
         renderAttachmentsList();
       });
@@ -1199,8 +1201,8 @@
       });
     });
     bodyEl.querySelectorAll('[data-line-remove]').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        if (!confirm('Remove this line?')) return;
+      btn.addEventListener('click', async function(){
+        if (!(await confirmDialog('Remove this line?'))) return;
         lineRows.splice(parseInt(this.getAttribute('data-line-remove'), 10), 1);
         renderLines();
         updatePoTotal();

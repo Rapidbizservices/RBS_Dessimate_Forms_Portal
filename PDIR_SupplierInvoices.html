@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <title>Supplier Invoices &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
+<link rel="stylesheet" href="confirm-dialog.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -371,6 +372,7 @@
 </div>
 
 <script src="office-viewer.js"></script>
+<script src="confirm-dialog.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -792,7 +794,7 @@
 
   async function deleteInvoice(id){
     var inv = lastInvoices.find(function(p){ return p.id === id; });
-    if (!confirm('Remove Supplier Invoice ' + (inv ? inv.invoiceNumber : '') + '? This can\'t be undone (its attached source PDF stays in the repo, just unlinked).')) return;
+    if (!(await confirmDialog('Remove Supplier Invoice ' + (inv ? inv.invoiceNumber : '') + '? This can\'t be undone (its attached source PDF stays in the repo, just unlinked).'))) return;
     requireAuthThen(async function(){
       try {
         var res = await apiFetch('supplier-invoices/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -856,8 +858,8 @@
       });
     });
     bodyEl.querySelectorAll('[data-line-remove]').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        if (!confirm('Remove this line?')) return;
+      btn.addEventListener('click', async function(){
+        if (!(await confirmDialog('Remove this line?'))) return;
         lineRows.splice(parseInt(this.getAttribute('data-line-remove'), 10), 1);
         renderLines();
         updateInvTotal();
@@ -909,8 +911,8 @@
       openDocViewer({ filename: sourcePdfState.existing.filename, mimeType: sourcePdfState.existing.mimeType, path: sourcePdfState.existing.path });
     });
     var removeLink = document.getElementById('srcRemoveLink');
-    if (removeLink) removeLink.addEventListener('click', function(){
-      if (!confirm('Remove the attached source invoice PDF?')) return;
+    if (removeLink) removeLink.addEventListener('click', async function(){
+      if (!(await confirmDialog('Remove the attached source invoice PDF?'))) return;
       sourcePdfState.removed = true;
       renderSourcePdfRow();
     });

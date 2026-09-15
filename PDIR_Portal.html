@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <title>PDIR Portal &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
+<link rel="stylesheet" href="confirm-dialog.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -275,6 +276,7 @@
 </div>
 
 <script src="office-viewer.js"></script>
+<script src="confirm-dialog.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -878,10 +880,10 @@
             setHidden(e.title, false);
           });
         } else {
-          row.querySelector('.pdir-delete').addEventListener('click', function(){
-            if (!confirm('Remove "' + e.title + '" from the Portal?\n\n' +
+          row.querySelector('.pdir-delete').addEventListener('click', async function(){
+            if (!(await confirmDialog('Remove "' + e.title + '" from the Portal?\n\n' +
               'This only hides it here — the PDF and draft files stay in the pdirs / pdir_drafts folders ' +
-              'of your GitHub repo, so an admin can still find them there or restore this from "Show removed PDIRs".')) return;
+              'of your GitHub repo, so an admin can still find them there or restore this from "Show removed PDIRs".'))) return;
             setHidden(e.title, true);
           });
         }

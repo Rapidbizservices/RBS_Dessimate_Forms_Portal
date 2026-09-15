@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <title>PDIR Form Filler &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
+<link rel="stylesheet" href="confirm-dialog.css">
 <style>
   :root{
     --brand:#2b4ea3;
@@ -407,6 +408,7 @@
 //# sourceMappingURL=pdf-lib.min.js.map
 </script>
 <script src="office-viewer.js"></script>
+<script src="confirm-dialog.js"></script>
 <script>
 (function(){
   var form = document.getElementById('pdirForm');
@@ -1219,11 +1221,11 @@
       });
     });
     listEl.querySelectorAll('[data-doc-field-remove]').forEach(function(btn){
-      btn.addEventListener('click', function(){
+      btn.addEventListener('click', async function(){
         var k = btn.getAttribute('data-doc-field-remove');
         var i = Number(btn.getAttribute('data-doc-field-idx2'));
         var entry = (docData[k] || [])[i];
-        if (!confirm('Remove "' + (entry ? entry.filename : 'this file') + '"? This page autosaves, so it will be gone shortly after you confirm.')) return;
+        if (!(await confirmDialog('Remove "' + (entry ? entry.filename : 'this file') + '"? This page autosaves, so it will be gone shortly after you confirm.'))) return;
         (docData[k] || []).splice(i, 1);
         renderDocFieldList(k);
         scheduleAutosave();
@@ -1399,8 +1401,8 @@
   form.addEventListener('input', function(){ save(); scheduleAutosave(); });
   form.addEventListener('change', function(){ save(); scheduleAutosave(); });
 
-  document.getElementById('clearBtn').addEventListener('click', function(){
-    if(!confirm('Clear everything you have filled in?')) return;
+  document.getElementById('clearBtn').addEventListener('click', async function(){
+    if(!(await confirmDialog('Clear everything you have filled in?'))) return;
     form.reset();
     photoData = {};
     photoGroupsEl.querySelectorAll('.preview').forEach(function(img){ img.style.display = 'none'; img.src = ''; });
