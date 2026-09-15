@@ -3,6 +3,7 @@
 <title>Supplier Invoices &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
 <link rel="stylesheet" href="confirm-dialog.css">
+<link rel="stylesheet" href="sortable-table.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -231,15 +232,15 @@
     <div id="errorState" class="state error" style="display:none;"></div>
     <div id="emptyState" class="state" style="display:none;">No Supplier Invoices yet. Click <strong>Add Supplier Invoice</strong> above to add the first one.</div>
     <table class="poTable" id="invTable" style="display:none;">
-      <thead>
+      <thead id="invTableHead">
         <tr>
-          <th>Invoice #</th>
-          <th>Supplier</th>
-          <th>Dessimate PO</th>
-          <th>Invoice Date</th>
-          <th>Due Date</th>
-          <th>Status</th>
-          <th>Total</th>
+          <th data-sort-key="invoiceNumber">Invoice #</th>
+          <th data-sort-key="supplier">Supplier</th>
+          <th data-sort-key="dessimatePoRef">Dessimate PO</th>
+          <th data-sort-key="invoiceDate">Invoice Date</th>
+          <th data-sort-key="dueDate">Due Date</th>
+          <th data-sort-key="status">Status</th>
+          <th data-sort-key="invoiceTotal">Total</th>
           <th>Invoice PDF</th>
           <th></th>
         </tr>
@@ -373,6 +374,7 @@
 
 <script src="office-viewer.js"></script>
 <script src="confirm-dialog.js"></script>
+<script src="sortable-table.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -720,6 +722,8 @@
 
   // ---- List table --------------------------------------------------------------
   var lastInvoices = [];
+  var invSortState = { key: null, dir: 1 };
+  window.SortableTable.makeSortableHeaders(document.getElementById('invTableHead'), invSortState, renderTable);
 
   async function loadInvoices(){
     var loadingEl = document.getElementById('loadingState');
@@ -752,7 +756,9 @@
     if (!lastInvoices.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var sorted = lastInvoices.slice().sort(function(a, b){ return (b.invoiceDate || '').localeCompare(a.invoiceDate || ''); });
+    var defaultOrder = lastInvoices.slice().sort(function(a, b){ return (b.invoiceDate || '').localeCompare(a.invoiceDate || ''); });
+    var sorted = window.SortableTable.sortItems(defaultOrder, invSortState, function(inv, key){ return inv[key]; });
+    window.SortableTable.updateSortIndicators(document.getElementById('invTableHead'), invSortState);
 
     bodyEl.innerHTML = sorted.map(function(inv){
       var docHtml = inv.sourcePdf

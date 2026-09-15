@@ -3,6 +3,7 @@
 <title>RFQ &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
 <link rel="stylesheet" href="confirm-dialog.css">
+<link rel="stylesheet" href="sortable-table.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -533,6 +534,7 @@
 
 <script src="office-viewer.js"></script>
 <script src="confirm-dialog.js"></script>
+<script src="sortable-table.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + file proxy) ------------------------------------
@@ -1091,6 +1093,7 @@
 
   // ---- List table ---------------------------------------------------------------
   var lastRfqs = [];
+  var rfqSortState = { key: null, dir: 1 };
 
   async function loadRfqs(){
     var loadingEl = document.getElementById('loadingState');
@@ -1127,10 +1130,15 @@
     }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var sorted = lastRfqs.slice().sort(function(a, b){ return (b.rfqNumber || 0) - (a.rfqNumber || 0); });
+    var defaultOrder = lastRfqs.slice().sort(function(a, b){ return (b.rfqNumber || 0) - (a.rfqNumber || 0); });
+    var sorted = window.SortableTable.sortItems(defaultOrder, rfqSortState, function(r, key){
+      return key === 'lineCount' ? (r.lines ? r.lines.length : 0) : r[key];
+    });
 
     if (isCustomerUser()) {
-      headEl.innerHTML = '<tr><th>RFQ Number</th><th>RFQ Date</th><th>Parts</th><th>Quote Status</th><th></th></tr>';
+      headEl.innerHTML = '<tr><th data-sort-key="rfqNumber">RFQ Number</th><th data-sort-key="rfqDate">RFQ Date</th><th data-sort-key="lineCount">Parts</th><th>Quote Status</th><th></th></tr>';
+      window.SortableTable.makeSortableHeaders(headEl, rfqSortState, renderTable);
+      window.SortableTable.updateSortIndicators(headEl, rfqSortState);
       bodyEl.innerHTML = sorted.map(function(r){
         var submitted = r.dessimateQuote && r.dessimateQuote.submitted;
         var statusHtml = submitted
@@ -1151,7 +1159,9 @@
     }
 
     if (isSupplierUser()) {
-      headEl.innerHTML = '<tr><th>RFQ Number</th><th>RFQ Date</th><th>Parts</th><th>Quote Status</th><th></th></tr>';
+      headEl.innerHTML = '<tr><th data-sort-key="rfqNumber">RFQ Number</th><th data-sort-key="rfqDate">RFQ Date</th><th data-sort-key="lineCount">Parts</th><th>Quote Status</th><th></th></tr>';
+      window.SortableTable.makeSortableHeaders(headEl, rfqSortState, renderTable);
+      window.SortableTable.updateSortIndicators(headEl, rfqSortState);
       bodyEl.innerHTML = sorted.map(function(r){
         var org = (r.sharedWithSuppliers && r.sharedWithSuppliers[0]) || '';
         var quote = r.supplierQuotes && r.supplierQuotes[org];
@@ -1172,7 +1182,9 @@
       return;
     }
 
-    headEl.innerHTML = '<tr><th>RFQ Number</th><th>RFQ Date</th><th>Parts</th><th>Shared With Suppliers</th><th>Supplier Quotes</th><th>Shared With Customers</th><th>Customer Quote</th><th>Files</th><th></th></tr>';
+    headEl.innerHTML = '<tr><th data-sort-key="rfqNumber">RFQ Number</th><th data-sort-key="rfqDate">RFQ Date</th><th data-sort-key="lineCount">Parts</th><th>Shared With Suppliers</th><th>Supplier Quotes</th><th>Shared With Customers</th><th>Customer Quote</th><th>Files</th><th></th></tr>';
+    window.SortableTable.makeSortableHeaders(headEl, rfqSortState, renderTable);
+    window.SortableTable.updateSortIndicators(headEl, rfqSortState);
     bodyEl.innerHTML = sorted.map(function(r){
       var sharedCount = (r.sharedWithSuppliers || []).length;
       var sharedCell = sharedCount ? escapeHtml(r.sharedWithSuppliers.join(', ')) : '<span style="color:var(--label);">—</span>';

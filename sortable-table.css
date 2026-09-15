@@ -1,0 +1,7 @@
+/* sortable-table.css — styling for click-to-sort column headers
+   (sortable-table.js). Assumes the existing table header already has some
+   base look (e.g. uppercase, colored background) - this only adds the
+   interactive affordance on top. */
+.sortableCol{ cursor:pointer; user-select:none; white-space:nowrap; }
+.sortableCol:hover{ text-decoration:underline; }
+.sortArrow{ display:inline-block; font-size:0.85em; letter-spacing:0; }

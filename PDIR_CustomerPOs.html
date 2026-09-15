@@ -3,6 +3,7 @@
 <title>Customer POs &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
 <link rel="stylesheet" href="confirm-dialog.css">
+<link rel="stylesheet" href="sortable-table.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -252,13 +253,13 @@
     <div id="errorState" class="state error" style="display:none;"></div>
     <div id="emptyState" class="state" style="display:none;">No Customer POs yet. Click <strong>Add Customer PO</strong> above to add the first one.</div>
     <table class="poTable" id="poTable" style="display:none;">
-      <thead>
+      <thead id="poTableHead">
         <tr>
-          <th>PO Number</th>
-          <th>Customer</th>
-          <th>PO Date</th>
-          <th>Lines</th>
-          <th>Total</th>
+          <th data-sort-key="poNumber">PO Number</th>
+          <th data-sort-key="customer">Customer</th>
+          <th data-sort-key="poDate">PO Date</th>
+          <th data-sort-key="lineCount">Lines</th>
+          <th data-sort-key="poTotal">Total</th>
           <th>Files</th>
           <th></th>
         </tr>
@@ -398,6 +399,7 @@
 
 <script src="office-viewer.js"></script>
 <script src="confirm-dialog.js"></script>
+<script src="sortable-table.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -748,6 +750,8 @@
 
   // ---- List table --------------------------------------------------------------
   var lastPos = [];
+  var poSortState = { key: null, dir: 1 };
+  window.SortableTable.makeSortableHeaders(document.getElementById('poTableHead'), poSortState, renderTable);
 
   // Linked in from a Dessimate PO's "Customer PO" reference
   // (PDIR_CustomerPOs.html?poNumber=<value>) - highlights and scrolls to the
@@ -801,7 +805,11 @@
     if (!lastPos.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var sorted = lastPos.slice().sort(function(a, b){ return (b.poDate || '').localeCompare(a.poDate || ''); });
+    var defaultOrder = lastPos.slice().sort(function(a, b){ return (b.poDate || '').localeCompare(a.poDate || ''); });
+    var sorted = window.SortableTable.sortItems(defaultOrder, poSortState, function(po, key){
+      return key === 'lineCount' ? (po.lines ? po.lines.length : 0) : po[key];
+    });
+    window.SortableTable.updateSortIndicators(document.getElementById('poTableHead'), poSortState);
 
     bodyEl.innerHTML = sorted.map(function(po){
       var attCount = (po.attachments || []).length;

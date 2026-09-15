@@ -3,6 +3,7 @@
 <title>Dessimate Invoices &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
 <link rel="stylesheet" href="confirm-dialog.css">
+<link rel="stylesheet" href="sortable-table.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -264,14 +265,14 @@
     <div id="errorState" class="state error" style="display:none;"></div>
     <div id="emptyState" class="state" style="display:none;">No Dessimate Invoices yet. Click <strong>Add Dessimate Invoice</strong> above to add the first one.</div>
     <table class="poTable" id="invTable" style="display:none;">
-      <thead>
+      <thead id="invTableHead">
         <tr>
-          <th>Invoice #</th>
-          <th>Customer</th>
-          <th>Invoice Date</th>
-          <th>Status</th>
-          <th>Lines</th>
-          <th>Total</th>
+          <th data-sort-key="invoiceNumber">Invoice #</th>
+          <th data-sort-key="customer">Customer</th>
+          <th data-sort-key="invoiceDate">Invoice Date</th>
+          <th data-sort-key="status">Status</th>
+          <th data-sort-key="lineCount">Lines</th>
+          <th data-sort-key="invoiceTotal">Total</th>
           <th>PDF</th>
           <th></th>
         </tr>
@@ -471,6 +472,7 @@
 
 <script src="office-viewer.js"></script>
 <script src="confirm-dialog.js"></script>
+<script src="sortable-table.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -1043,6 +1045,8 @@
 
   // ---- List table --------------------------------------------------------------
   var lastInvoices = [];
+  var invSortState = { key: null, dir: 1 };
+  window.SortableTable.makeSortableHeaders(document.getElementById('invTableHead'), invSortState, renderTable);
 
   async function loadInvoices(){
     var loadingEl = document.getElementById('loadingState');
@@ -1075,7 +1079,11 @@
     if (!lastInvoices.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var sorted = lastInvoices.slice().sort(function(a, b){ return (b.invoiceNumber || 0) - (a.invoiceNumber || 0); });
+    var defaultOrder = lastInvoices.slice().sort(function(a, b){ return (b.invoiceNumber || 0) - (a.invoiceNumber || 0); });
+    var sorted = window.SortableTable.sortItems(defaultOrder, invSortState, function(inv, key){
+      return key === 'lineCount' ? (inv.lines ? inv.lines.length : 0) : inv[key];
+    });
+    window.SortableTable.updateSortIndicators(document.getElementById('invTableHead'), invSortState);
 
     bodyEl.innerHTML = sorted.map(function(inv){
       var statusClass = inv.status === 'Paid' ? 'paid' : 'unpaid';

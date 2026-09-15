@@ -3,6 +3,7 @@
 <title>Organizations &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
 <link rel="stylesheet" href="confirm-dialog.css">
+<link rel="stylesheet" href="sortable-table.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -242,13 +243,13 @@
     <div id="errorState" class="state error" style="display:none;"></div>
     <div id="emptyState" class="state" style="display:none;">No organizations yet. Click <strong>Add Organization</strong> above to add the first one.</div>
     <table class="orgTable" id="orgTable" style="display:none;">
-      <thead>
+      <thead id="orgTableHead">
         <tr>
-          <th>Name</th>
-          <th>Relationship</th>
+          <th data-sort-key="name">Name</th>
+          <th data-sort-key="relationship">Relationship</th>
           <th>Address</th>
-          <th>Phone</th>
-          <th>Website</th>
+          <th data-sort-key="phone">Phone</th>
+          <th data-sort-key="website">Website</th>
           <th>Documents</th>
           <th></th>
         </tr>
@@ -406,6 +407,7 @@
 
 <script src="office-viewer.js"></script>
 <script src="confirm-dialog.js"></script>
+<script src="sortable-table.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -675,6 +677,8 @@
   // ---- Directory table --------------------------------------------------------
   var lastOrgs = [];
   var DOC_KEYS = [['companyPresentation', 'Presentation'], ['nda', 'NDA'], ['selfAssessment', 'Self-Assessment']];
+  var orgSortState = { key: null, dir: 1 };
+  window.SortableTable.makeSortableHeaders(document.getElementById('orgTableHead'), orgSortState, renderTable);
 
   function escapeHtml(s){
     return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
@@ -718,7 +722,9 @@
     if (!lastOrgs.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var sorted = lastOrgs.slice().sort(function(a, b){ return (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()); });
+    var defaultOrder = lastOrgs.slice().sort(function(a, b){ return (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()); });
+    var sorted = window.SortableTable.sortItems(defaultOrder, orgSortState, function(o, key){ return o[key]; });
+    window.SortableTable.updateSortIndicators(document.getElementById('orgTableHead'), orgSortState);
 
     bodyEl.innerHTML = sorted.map(function(o){
       var docBits = DOC_KEYS.map(function(kv){

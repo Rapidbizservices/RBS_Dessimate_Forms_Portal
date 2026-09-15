@@ -3,6 +3,7 @@
 <title>Parts &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
 <link rel="stylesheet" href="confirm-dialog.css">
+<link rel="stylesheet" href="sortable-table.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -240,14 +241,14 @@
     <div id="errorState" class="state error" style="display:none;"></div>
     <div id="emptyState" class="state" style="display:none;">No parts yet. Click <strong>Add Part</strong> above to add the first one.</div>
     <table class="partTable" id="partTable" style="display:none;">
-      <thead>
+      <thead id="partTableHead">
         <tr>
-          <th>Part Number</th>
-          <th>Description</th>
-          <th>Customer Part #</th>
-          <th>Rev</th>
-          <th>Status</th>
-          <th>Customer</th>
+          <th data-sort-key="partNumber">Part Number</th>
+          <th data-sort-key="name">Description</th>
+          <th data-sort-key="customerPartNumber">Customer Part #</th>
+          <th data-sort-key="revision">Rev</th>
+          <th data-sort-key="status">Status</th>
+          <th data-sort-key="customer">Customer</th>
           <th>Suppliers</th>
           <th>Attachments</th>
           <th></th>
@@ -387,6 +388,7 @@
 
 <script src="office-viewer.js"></script>
 <script src="confirm-dialog.js"></script>
+<script src="sortable-table.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -847,6 +849,8 @@
 
   // ---- Part table ---------------------------------------------------------
   var lastParts = [];
+  var partSortState = { key: null, dir: 1 };
+  window.SortableTable.makeSortableHeaders(document.getElementById('partTableHead'), partSortState, renderTable);
 
   async function loadParts(){
     var loadingEl = document.getElementById('loadingState');
@@ -879,7 +883,9 @@
     if (!lastParts.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var sorted = lastParts.slice().sort(function(a, b){ return (a.partNumber || '').toLowerCase().localeCompare((b.partNumber || '').toLowerCase()); });
+    var defaultOrder = lastParts.slice().sort(function(a, b){ return (a.partNumber || '').toLowerCase().localeCompare((b.partNumber || '').toLowerCase()); });
+    var sorted = window.SortableTable.sortItems(defaultOrder, partSortState, function(p, key){ return p[key]; });
+    window.SortableTable.updateSortIndicators(document.getElementById('partTableHead'), partSortState);
 
     bodyEl.innerHTML = sorted.map(function(p){
       var suppliersText = (p.suppliers || []).length ? escapeHtml(p.suppliers.join(', ')) : '—';

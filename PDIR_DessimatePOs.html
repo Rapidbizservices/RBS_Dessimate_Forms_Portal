@@ -3,6 +3,7 @@
 <title>Dessimate POs &mdash; DSCM</title>
 <link rel="stylesheet" href="office-viewer.css">
 <link rel="stylesheet" href="confirm-dialog.css">
+<link rel="stylesheet" href="sortable-table.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -268,16 +269,16 @@
     <div id="errorState" class="state error" style="display:none;"></div>
     <div id="emptyState" class="state" style="display:none;">No Dessimate POs yet. Click <strong>Add Dessimate PO</strong> above to add the first one.</div>
     <table class="poTable" id="poTable" style="display:none;">
-      <thead>
+      <thead id="poTableHead">
         <tr>
-          <th>PO Number</th>
-          <th>Shipment #</th>
-          <th>Supplier</th>
+          <th data-sort-key="poNumber">PO Number</th>
+          <th data-sort-key="shipmentNumber">Shipment #</th>
+          <th data-sort-key="supplier">Supplier</th>
           <th>Customer PO</th>
           <th>Related</th>
-          <th>PO Date</th>
-          <th>Lines</th>
-          <th>Total</th>
+          <th data-sort-key="poDate">PO Date</th>
+          <th data-sort-key="lineCount">Lines</th>
+          <th data-sort-key="poTotal">Total</th>
           <th>PDF</th>
           <th>Files</th>
           <th></th>
@@ -442,6 +443,7 @@
 
 <script src="office-viewer.js"></script>
 <script src="confirm-dialog.js"></script>
+<script src="sortable-table.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -931,6 +933,8 @@
 
   // ---- List table --------------------------------------------------------------
   var lastPos = [];
+  var poSortState = { key: null, dir: 1 };
+  window.SortableTable.makeSortableHeaders(document.getElementById('poTableHead'), poSortState, renderTable);
 
   // Linked in from a Supplier Invoice's "Dessimate PO" reference
   // (PDIR_DessimatePOs.html?poNumber=<value>) - highlights and scrolls to the
@@ -985,7 +989,11 @@
     if (!lastPos.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var sorted = lastPos.slice().sort(function(a, b){ return (b.poNumber || 0) - (a.poNumber || 0); });
+    var defaultOrder = lastPos.slice().sort(function(a, b){ return (b.poNumber || 0) - (a.poNumber || 0); });
+    var sorted = window.SortableTable.sortItems(defaultOrder, poSortState, function(po, key){
+      return key === 'lineCount' ? (po.lines ? po.lines.length : 0) : po[key];
+    });
+    window.SortableTable.updateSortIndicators(document.getElementById('poTableHead'), poSortState);
     var byId = {};
     lastPos.forEach(function(p){ byId[p.id] = p; });
 

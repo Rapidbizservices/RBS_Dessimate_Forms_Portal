@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <title>Users &mdash; DSCM</title>
 <link rel="stylesheet" href="confirm-dialog.css">
+<link rel="stylesheet" href="sortable-table.css">
 <script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
 <style>
   :root{
@@ -199,15 +200,15 @@
     <div id="errorState" class="state error" style="display:none;"></div>
     <div id="emptyState" class="state" style="display:none;">No users yet. Click <strong>Add User</strong> above to add the first one.</div>
     <table class="userTable" id="userTable" style="display:none;">
-      <thead>
+      <thead id="userTableHead">
         <tr>
-          <th>Name</th>
-          <th>Organization</th>
-          <th>Relationship</th>
-          <th>Access</th>
-          <th>Role</th>
-          <th>Email</th>
-          <th>Phone</th>
+          <th data-sort-key="displayName">Name</th>
+          <th data-sort-key="organization">Organization</th>
+          <th data-sort-key="relationship">Relationship</th>
+          <th data-sort-key="accessLevel">Access</th>
+          <th data-sort-key="role">Role</th>
+          <th data-sort-key="email">Email</th>
+          <th data-sort-key="phone">Phone</th>
           <th>Status</th>
           <th></th>
         </tr>
@@ -323,6 +324,7 @@
 </div>
 
 <script src="confirm-dialog.js"></script>
+<script src="sortable-table.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
@@ -523,6 +525,8 @@
 
   // ---- Directory table --------------------------------------------------------
   var lastUsers = [];
+  var userSortState = { key: null, dir: 1 };
+  window.SortableTable.makeSortableHeaders(document.getElementById('userTableHead'), userSortState, renderTable);
   var ACCESS_LEVEL_LABELS = {
     super_admin: 'Super Admin', admin: 'Admin', team_member: 'Team Member',
     supplier: 'Supplier', customer: 'Customer'
@@ -588,11 +592,15 @@
     emptyEl.style.display = 'none';
     tableEl.style.display = 'table';
 
-    var sorted = lastUsers.slice().sort(function(a, b){
+    var defaultOrder = lastUsers.slice().sort(function(a, b){
       var an = (a.name || a.username || a.organization || '').toLowerCase();
       var bn = (b.name || b.username || b.organization || '').toLowerCase();
       return an.localeCompare(bn);
     });
+    var sorted = window.SortableTable.sortItems(defaultOrder, userSortState, function(u, key){
+      return key === 'displayName' ? (u.name || u.username || u.organization || '') : u[key];
+    });
+    window.SortableTable.updateSortIndicators(document.getElementById('userTableHead'), userSortState);
 
     bodyEl.innerHTML = sorted.map(function(u){
       var displayName = u.name || u.username || u.organization || '(no name)';
