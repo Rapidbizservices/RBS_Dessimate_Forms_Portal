@@ -122,6 +122,10 @@
   .modalCard input, .modalCard select{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
     padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
   .modalGrid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 14px; }
+  .releaseRow{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink); font-weight:600;
+    align-self:end; margin-bottom:20px; }
+  .releaseRow input{ width:auto; margin:0; }
+  .releaseRow .hint{ font-weight:400; color:var(--label); }
 
   .numberBanner{ display:flex; gap:20px; flex-wrap:wrap; background:#f7f8fb; border:1px solid var(--line);
     border-radius:8px; padding:12px 14px; margin-bottom:16px; font-size:12.5px; color:var(--label); }
@@ -357,7 +361,11 @@
         <label>Approver <span style="font-weight:400;">(stamps the generated PDF)</span>
           <select id="f_approver"></select>
         </label>
-        <span></span>
+        <div class="releaseRow">
+          <input type="checkbox" id="f_released">
+          <label style="margin:0; display:inline;" for="f_released">Release PO to Vendor</label>
+          <span class="hint">(hidden from the Supplier until checked)</span>
+        </div>
         <span></span>
       </div>
 
@@ -1357,6 +1365,7 @@
     document.getElementById('f_currency').value = po.currency || '';
     document.getElementById('f_incoterms').value = po.incoterms || '';
     document.getElementById('f_approver').innerHTML = approverOptions(po.approverUsername || '');
+    document.getElementById('f_released').checked = !!po.released;
     renderLines();
     document.getElementById('poModalOverlay').classList.add('open');
   }
@@ -1393,6 +1402,7 @@
       notes: document.getElementById('f_notes').value.trim(),
       approverUsername: approverSelect.value,
       approverName: approverName,
+      released: document.getElementById('f_released').checked,
       lines: lineRows.filter(function(r){ return r.partNumber; }),
       relatedPoIds: getSelectedRelatedPoIds()
     };

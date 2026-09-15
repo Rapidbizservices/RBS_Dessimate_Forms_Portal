@@ -2250,10 +2250,18 @@ const DESSIMATE_PO_DOC_FOLDER = 'dessimate_po_docs';
 // ownership check scopeDessimatePos already uses for the list itself
 // (o.supplier === organization). Returns the org name on file, or null if
 // the PO doesn't exist.
+// Returns null (treated as "not allowed" by the caller) both when the PO
+// doesn't exist and when it simply hasn't been released to its Supplier yet
+// - same gate scopeDessimatePos applies to the list/PDF, kept in sync here
+// so a Supplier can't reach an unreleased PO's attachments by path either.
 async function resolveDessimatePoOwner(env, poId) {
   const state = await readJsonArrayFile(env, DESSIMATE_POS_FILE_PATH);
   const po = state.items.find(function (o) { return o.id === poId; });
-  return po ? (po.supplier || '') : null;
+  // released undefined (pre-Rev2.11 PO, raw storage) grandfathers in as
+  // released - same rule sanitizeDessimatePo applies; only an explicit
+  // false holds it back.
+  if (!po || po.released === false) return null;
+  return po.supplier || '';
 }
 
 const COUNTERS_FILE_PATH = 'data/counters.json';
@@ -2377,6 +2385,14 @@ function sanitizeDessimatePo(o) {
     poTotal: Math.round(lines.reduce(function (sum, l) { return sum + l.extendedPrice; }, 0) * 100) / 100,
     approverUsername: o.approverUsername || '',
     approverName: o.approverName || '',
+    // Rev2.11: undefined (any PO saved before this field existed) is treated
+    // as already-released, so this doesn't retroactively hide every PO a
+    // Supplier could already see - only a PO explicitly created/edited with
+    // the checkbox left unchecked (stored as false, not undefined) is held
+    // back. See scopeDessimatePos/resolveDessimatePoOwner, which apply the
+    // exact same rule to raw storage reads that don't go through this
+    // sanitizer.
+    released: o.released !== false,
     relatedPoIds: Array.isArray(o.relatedPoIds) ? o.relatedPoIds.filter(Boolean) : [],
     attachments: sanitizeOrgDocList(o.attachments),
     createdAt: o.createdAt || null
@@ -2417,10 +2433,13 @@ function syncRelatedPoLinks(items, poId, requestedIds) {
 // Dessimate's own commercial relationship with its Customer - not the
 // Supplier's business). A Customer login has no relationship to a Dessimate
 // PO at all (that's Dessimate <-> Supplier, not Dessimate <-> Customer), so
-// it sees none of these.
+// it sees none of these. Rev2.11: a PO also stays completely invisible to
+// its Supplier until explicitly released (the "release to Vendor" checkbox
+// next to Approver) - before that, it's a draft Dessimate is still working
+// on, not something to hand to the Supplier yet.
 function scopeDessimatePos(pos, accessLevel, organization) {
   if (accessLevel === 'supplier') {
-    const visible = pos.filter(function (o) { return organization && o.supplier === organization; });
+    const visible = pos.filter(function (o) { return organization && o.supplier === organization && o.released; });
     // A related PO could belong to a different Supplier that this login has
     // no visibility into at all - trimming relatedPoIds down to only what's
     // in this same visible set keeps a Supplier login from learning that
@@ -2466,6 +2485,12 @@ function validateDessimatePoFields(body, origin) {
     lines: lines,
     approverUsername: (body.approverUsername || '').toString().trim(),
     approverName: (body.approverName || '').toString().trim(),
+    // Rev2.11: a Dessimate PO stays invisible to the Supplier it's issued to
+    // (list, PDF, and attachments alike - see scopeDessimatePos/
+    // resolveDessimatePoOwner) until explicitly released, checked here next
+    // to the Approver fields per the product brief ("a checkmark next to
+    // approved signature to release PO to Vendor side").
+    released: !!body.released,
     relatedPoIds: Array.isArray(body.relatedPoIds)
       ? Array.from(new Set(body.relatedPoIds.map(function (v) { return (v || '').toString(); }).filter(Boolean)))
       : []
