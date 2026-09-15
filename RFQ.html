@@ -159,6 +159,19 @@
   .attachRow .attachLinks button:hover{ text-decoration:underline; }
   .attachRow .attachLinks .removeLink{ color:#b23b3b; }
   .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
+
+  /* Per-part file chips (Files column on RFQ line tables) - deliberately not
+     .quietLink (that's a bordered/padded button and looks like stacked
+     buttons overlapping when several files sit in one narrow table cell). */
+  .fileChipList{ display:flex; flex-direction:column; gap:5px; padding:2px 0; min-width:0; }
+  .fileChip{ display:flex; align-items:center; gap:6px; min-width:0; max-width:100%; cursor:pointer;
+    background:none; border:none; padding:0; font-family:inherit; text-align:left; }
+  .fileChipExt{ flex:0 0 auto; font-size:9px; font-weight:700; letter-spacing:.2px; color:#fff;
+    background:var(--brand); border-radius:4px; padding:2px 5px; line-height:1.3; }
+  .fileChipName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:11.5px; font-weight:600; color:var(--brand); }
+  .fileChip:hover .fileChipName{ text-decoration:underline; }
+  .fileChipEmpty{ color:var(--label); font-style:italic; font-size:12px; }
   .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
     padding:9px 0; font-size:12.5px; }
   .docRow .docMain{ flex:1 1 auto; min-width:0; }
@@ -468,7 +481,7 @@
               <th style="min-width:150px;">Part Name</th>
               <th style="min-width:130px;">Unit Price</th>
               <th style="min-width:130px;">Tooling Cost</th>
-              <th style="min-width:110px;">Files</th>
+              <th style="min-width:200px;">Files</th>
             </tr>
           </thead>
           <tbody id="quoteLinesTableBody"></tbody>
@@ -510,7 +523,7 @@
       <h3 style="border-top:none; padding-top:0;">Parts</h3>
       <div class="linesWrap">
         <table class="linesTable">
-          <thead><tr><th style="min-width:150px;">Part Number</th><th style="min-width:220px;">Part Name</th><th style="min-width:110px;">Files</th></tr></thead>
+          <thead><tr><th style="min-width:150px;">Part Number</th><th style="min-width:220px;">Part Name</th><th style="min-width:200px;">Files</th></tr></thead>
           <tbody id="customerViewLinesTableBody"></tbody>
         </table>
       </div>
@@ -991,6 +1004,25 @@
     return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
       return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
     });
+  }
+  function fileExtLabel(filename){
+    var m = /\.([a-z0-9]+)$/i.exec(filename || '');
+    return m ? m[1].toUpperCase().slice(0, 4) : 'FILE';
+  }
+  // Renders a part line's attachments as a tidy vertical list of file chips
+  // (extension badge + filename, ellipsis-truncated with a full-name
+  // tooltip) instead of one file per row spilling out of a narrow table
+  // column. `rowAttr`/`rowVal` identify the owning line (e.g. lineId or
+  // row index) and `idxAttr` carries the attachment's index within it;
+  // the caller wires up a matching click handler after rendering.
+  function renderFileChipList(atts, rowAttr, rowVal, idxAttr){
+    if (!atts || !atts.length) return '<span class="fileChipEmpty">&mdash;</span>';
+    return '<div class="fileChipList">' + atts.map(function(a, ai){
+      return '<button type="button" class="fileChip" ' + rowAttr + '="' + escapeHtml(rowVal) + '" ' + idxAttr + '="' + ai + '" title="' + escapeHtml(a.filename) + '">' +
+        '<span class="fileChipExt">' + escapeHtml(fileExtLabel(a.filename)) + '</span>' +
+        '<span class="fileChipName">' + escapeHtml(a.filename) + '</span>' +
+        '</button>';
+    }).join('') + '</div>';
   }
   // Display-only date formatting (MM/DD/YYYY, site-wide standard) - never
   // changes what's actually stored. Handles a plain "YYYY-MM-DD" (from an
@@ -1932,10 +1964,7 @@
     }
     bodyEl.innerHTML = lines.map(function(l){
       var v = quoteLineValues[l.lineId] || { price: '', toolingCost: '' };
-      var atts = l.attachments || [];
-      var filesCell = atts.length
-        ? atts.map(function(a, ai){ return '<div><span class="quietLink" data-line-file="' + escapeHtml(l.lineId) + '" data-line-file-idx="' + ai + '">' + escapeHtml(a.filename) + '</span></div>'; }).join('')
-        : '<span class="readCell">—</span>';
+      var filesCell = renderFileChipList(l.attachments, 'data-line-file', l.lineId, 'data-line-file-idx');
       return '<tr data-line-id="' + escapeHtml(l.lineId) + '">' +
         '<td class="readCell">' + escapeHtml(l.partNumber || '—') + '</td>' +
         '<td class="readCell">' + escapeHtml(l.partName || '—') + '</td>' +
@@ -2068,10 +2097,7 @@
     var linesBodyEl = document.getElementById('customerViewLinesTableBody');
     linesBodyEl.innerHTML = lines.length
       ? lines.map(function(l, li){
-          var atts = l.attachments || [];
-          var filesCell = atts.length
-            ? atts.map(function(a, ai){ return '<div><span class="quietLink" data-cv-line-file="' + li + '" data-cv-line-file-idx="' + ai + '">' + escapeHtml(a.filename) + '</span></div>'; }).join('')
-            : '<span class="readCell">—</span>';
+          var filesCell = renderFileChipList(l.attachments, 'data-cv-line-file', li, 'data-cv-line-file-idx');
           return '<tr><td class="readCell">' + escapeHtml(l.partNumber || '—') + '</td><td class="readCell">' + escapeHtml(l.partName || '—') + '</td><td>' + filesCell + '</td></tr>';
         }).join('')
       : '<tr><td colspan="3" class="readCell">No parts listed yet.</td></tr>';
