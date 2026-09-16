@@ -148,7 +148,7 @@
   .attachCount{ font-weight:400; font-size:12.5px; color:var(--label); }
   .modalSectionHint{ font-size:12px; color:var(--label); margin:2px 0 8px; }
   .attachmentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
-  .attachRow{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+  .attachRow{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:2px 12px;
     padding:7px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
   .attachRow .attachName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .attachRow .attachName.pending{ color:#a06a1c; }
@@ -157,6 +157,7 @@
     background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
   .attachRow .attachLinks button:hover{ text-decoration:underline; }
   .attachRow .attachLinks .removeLink{ color:#b23b3b; }
+  .attachRow .attachMeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
   .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
 
   .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
@@ -795,6 +796,44 @@
       return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
     });
   }
+  // Display-only date formatting (MM/DD/YYYY, site-wide standard). Handles a
+  // plain "YYYY-MM-DD" without going through a Date object (avoids a
+  // timezone-shift off-by-one-day bug); a full ISO timestamp is parsed and
+  // shown in local time. Anything else passes through unchanged.
+  function fmtDateMDY(s){
+    var str = (s == null ? '' : String(s)).trim();
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    if (m) return m[2] + '/' + m[3] + '/' + m[1];
+    if (str) {
+      var d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+      }
+    }
+    return str;
+  }
+  // Rev2.14: "Uploaded by X on MM/DD/YYYY" caption for an attachment -
+  // accepts a client-side editing-state entry ({kind:'pending'|'existing'})
+  // or a plain server-sanitized doc pointer. '' for a doc saved before this
+  // field existed, rather than showing a misleading "Uploaded by Unknown".
+  function attachMetaHtml(x, cls){
+    if (!x) return '';
+    if (x.kind === 'pending') {
+      var session = getSession();
+      return '<div class="' + cls + '">Will upload as ' + escapeHtml((session && session.username) || 'you') + '</div>';
+    }
+    var doc = x.kind === 'existing' ? x.doc : x;
+    if (!doc || (!doc.uploadedBy && !doc.uploadedAt)) return '';
+    var when = doc.uploadedAt ? fmtDateMDY(doc.uploadedAt) : '';
+    return '<div class="' + cls + '">Uploaded by ' + escapeHtml(doc.uploadedBy || 'Unknown') + (when ? ' on ' + when : '') + '</div>';
+  }
+  // Stamped onto a freshly-uploaded attachment's doc pointer at the moment
+  // it's actually saved (see the ghPutFile call site below) - an
+  // already-existing doc's stamp is left untouched.
+  function stampUpload(){
+    var session = getSession();
+    return { uploadedBy: (session && session.username) || '', uploadedAt: new Date().toISOString() };
+  }
 
   // ---- Organizations (for the Customer dropdown + Suppliers checklist) ------
   var allOrgs = [];
@@ -961,7 +1000,7 @@
           '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
           '<div class="attachLinks">' + viewBtn +
             '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' +
-          '</div></div>';
+          '</div>' + attachMetaHtml(entry, 'attachMeta') + '</div>';
       }).join('');
     }
     inputEl.disabled = count >= PART_ATTACHMENTS_MAX;
@@ -1107,7 +1146,7 @@
         } else {
           var path = buildAttachmentDocPath(partId, entry.filename, i);
           await ghPutFile(path, entry.bytes, 'Upload attachment for part ' + baseFields.partNumber);
-          attachmentsPayload.push({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length });
+          attachmentsPayload.push(Object.assign({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length }, stampUpload()));
         }
       }
 

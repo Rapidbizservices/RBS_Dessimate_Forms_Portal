@@ -157,7 +157,7 @@
     background:var(--brand); border:none; border-radius:7px; padding:9px 16px; text-decoration:none; margin-top:14px; }
   .pswShortcut:hover{ background:var(--brand-dark); }
 
-  .fileChip{ display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--line);
+  .fileChip{ display:flex; flex-wrap:wrap; align-items:center; gap:2px 10px; padding:8px 10px; border:1px solid var(--line);
     border-radius:7px; margin-bottom:6px; font-size:12.5px; }
   .fileChip .fname{ flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
   .fileChip .fsize{ flex:0 0 auto; color:var(--label); white-space:nowrap; }
@@ -167,6 +167,7 @@
   .fileChip .viewFileBtn:hover{ background:#eef1fa; }
   .fileChip .removeFileBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
   .fileChip .removeFileBtn:hover{ background:#fbeaea; }
+  .fileChip .fmeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
   .noFiles{ font-size:12.5px; color:var(--label); margin-bottom:8px; }
   .addFileLabel{ display:inline-block; font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand);
     background:#fff; border:1px solid var(--line); border-radius:7px; padding:7px 14px; cursor:pointer; }
@@ -899,11 +900,15 @@
       listEl.innerHTML = '<div class="noFiles">No files uploaded yet.</div>';
     } else {
       listEl.innerHTML = it.files.map(function(f, idx){
+        var metaHtml = (f.uploadedBy || f.uploadedAt)
+          ? '<span class="fmeta">Uploaded by ' + escapeHtml(f.uploadedBy || 'Unknown') + (f.uploadedAt ? ' on ' + escapeHtml(formatWhen(f.uploadedAt)) : '') + '</span>'
+          : '';
         return '<div class="fileChip">' +
           '<span class="fname">' + escapeHtml(f.filename) + '</span>' +
           '<span class="fsize">' + fileSize(f.size) + '</span>' +
           '<button type="button" class="viewFileBtn" data-view-file="' + idx + '">View</button>' +
           '<button type="button" class="removeFileBtn" data-remove-file="' + idx + '">Remove</button>' +
+          metaHtml +
         '</div>';
       }).join('');
       listEl.querySelectorAll('[data-view-file]').forEach(function(btn){
@@ -966,8 +971,12 @@
       var bytes = await readFileAsBytes(file);
       var path = buildApqpFilePath(record.id, key, file.name);
       await ghPutFile(path, bytes, 'Upload ' + ITEM_LABELS[key] + ' file for ' + record.partNumber);
+      var session = getSession();
       var existing = (record.items[key] && record.items[key].files) || [];
-      var newFiles = existing.concat([{ path: path, filename: file.name, mimeType: file.type || 'application/octet-stream', size: bytes.length }]);
+      var newFiles = existing.concat([{
+        path: path, filename: file.name, mimeType: file.type || 'application/octet-stream', size: bytes.length,
+        uploadedBy: (session && session.username) || '', uploadedAt: new Date().toISOString()
+      }]);
       var res = await apiFetch('apqp/' + encodeURIComponent(record.id) + '/items/' + encodeURIComponent(key), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: newFiles })
       });

@@ -156,11 +156,12 @@
   .termRow .addrRemove:hover{ background:#fbeaea; }
 
   .genericList{ list-style:none; margin:0 0 10px; padding:0; }
-  .genericList li{ display:flex; align-items:center; justify-content:space-between; gap:10px;
+  .genericList li{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:2px 10px;
     padding:8px 0; border-bottom:1px solid #eef0f4; font-size:12.5px; }
   .genericList li:last-child{ border-bottom:none; }
   .genericList .genName{ flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
   .genericList .genPending{ color:#a06a1c; font-style:italic; font-weight:600; }
+  .genericList .genMeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
   .addFileBtn{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand); background:#fff;
     border:1px solid var(--line); border-radius:7px; padding:7px 14px; cursor:pointer; }
   .addFileBtn:hover{ background:#eef1fa; }
@@ -685,6 +686,38 @@
       return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
     });
   }
+  // Display-only date formatting (MM/DD/YYYY, site-wide standard). Handles a
+  // plain "YYYY-MM-DD" without going through a Date object (avoids a
+  // timezone-shift off-by-one-day bug); a full ISO timestamp is parsed and
+  // shown in local time. Anything else passes through unchanged.
+  function fmtDateMDY(s){
+    var str = (s == null ? '' : String(s)).trim();
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    if (m) return m[2] + '/' + m[3] + '/' + m[1];
+    if (str) {
+      var d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+      }
+    }
+    return str;
+  }
+  // Rev2.14: "Uploaded by X on MM/DD/YYYY" caption text (plain string, not
+  // HTML - used both in a .textContent status line and inline markup) for
+  // an already-saved doc pointer. '' for a doc saved before this field
+  // existed, rather than showing a misleading "Uploaded by Unknown".
+  function uploadMetaText(doc){
+    if (!doc || (!doc.uploadedBy && !doc.uploadedAt)) return '';
+    var when = doc.uploadedAt ? fmtDateMDY(doc.uploadedAt) : '';
+    return 'Uploaded by ' + (doc.uploadedBy || 'Unknown') + (when ? ' on ' + when : '');
+  }
+  // Stamped onto a freshly-uploaded doc pointer at the moment it's actually
+  // saved (see each ghPutFile call site below) - an already-existing doc's
+  // stamp is left untouched.
+  function stampUpload(){
+    var session = getSession();
+    return { uploadedBy: (session && session.username) || '', uploadedAt: new Date().toISOString() };
+  }
   function linkify(url){
     if (!url) return '';
     var href = /^https?:\/\//i.test(url) ? url : ('https://' + url);
@@ -927,7 +960,8 @@
       statusEl.className = 'docStatus ok';
       links = '<button type="button" data-doc-preview-pending="' + key + '">Preview</button>';
     } else if (state.existing && !state.removed) {
-      statusEl.textContent = 'Attached: ' + state.existing.filename;
+      var meta = uploadMetaText(state.existing);
+      statusEl.textContent = 'Attached: ' + state.existing.filename + (meta ? ' — ' + meta : '');
       statusEl.className = 'docStatus ok';
       links = '<button type="button" data-doc-view="' + key + '">View</button>' +
         '<span class="removeLink" style="cursor:pointer;" data-doc-remove="' + key + '">Remove</span>';
@@ -958,12 +992,14 @@
     listEl.innerHTML = genericState.map(function(item, idx){
       var name = item.filename + (item.kind === 'pending' ? '' : '');
       var pendingTag = item.kind === 'pending' ? '<span class="genPending">(pending upload)</span> ' : '';
+      var meta = item.kind === 'pending' ? '' : uploadMetaText(item);
       return '<li>' +
         '<span class="genName">' + pendingTag + escapeHtml(name) + '</span>' +
         '<span class="docLinks">' +
           '<button type="button" data-gen-view="' + idx + '">View</button>' +
           '<span class="removeLink" style="cursor:pointer;" data-gen-remove="' + idx + '">Remove</span>' +
         '</span>' +
+        (meta ? '<span class="genMeta">' + escapeHtml(meta) + '</span>' : '') +
       '</li>';
     }).join('');
     listEl.querySelectorAll('[data-gen-view]').forEach(function(btn){
@@ -1101,7 +1137,7 @@
         if (state.pending) {
           var path = buildNamedDocPath(orgId, key, state.pending.filename);
           await ghPutFile(path, state.pending.bytes, 'Upload ' + key + ' for organization ' + baseFields.name);
-          docsPayload[key] = { path: path, filename: state.pending.filename, mimeType: state.pending.mimeType, size: state.pending.bytes.length };
+          docsPayload[key] = Object.assign({ path: path, filename: state.pending.filename, mimeType: state.pending.mimeType, size: state.pending.bytes.length }, stampUpload());
         } else if (state.removed) {
           docsPayload[key] = null;
         } else {
@@ -1117,7 +1153,7 @@
         } else {
           var genPath = buildGenericDocPath(orgId, item.localId, item.filename);
           await ghPutFile(genPath, item.bytes, 'Upload additional document for organization ' + baseFields.name);
-          genericPayload.push({ id: item.localId, path: genPath, filename: item.filename, mimeType: item.mimeType, size: item.bytes.length });
+          genericPayload.push(Object.assign({ id: item.localId, path: genPath, filename: item.filename, mimeType: item.mimeType, size: item.bytes.length }, stampUpload()));
         }
       }
 

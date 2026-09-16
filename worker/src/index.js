@@ -1372,7 +1372,13 @@ function sanitizeOrgDoc(d) {
     path: d.path,
     filename: d.filename || '',
     mimeType: d.mimeType || 'application/octet-stream',
-    size: typeof d.size === 'number' ? d.size : 0
+    size: typeof d.size === 'number' ? d.size : 0,
+    // Rev2.14: who uploaded this file and when, client-stamped at the point
+    // a file is actually saved (see each page's ghPutFile call sites) -
+    // '' / null for any doc saved before this field existed, so nothing
+    // already on file gets retroactively (and wrongly) attributed to anyone.
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
   };
 }
 
@@ -1717,7 +1723,11 @@ function sanitizeApqpDoc(d) {
     path: d.path,
     filename: d.filename || '',
     mimeType: d.mimeType || 'application/octet-stream',
-    size: typeof d.size === 'number' ? d.size : 0
+    size: typeof d.size === 'number' ? d.size : 0,
+    // Rev2.14: see sanitizeOrgDoc's matching comment - client-stamped at
+    // upload time, '' / null for anything saved before this field existed.
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
   };
 }
 function sanitizeApqpComment(c) {
@@ -3326,7 +3336,12 @@ async function handleSubmitRfqQuote(request, env, origin, id, organization, user
     const safeFilename = String(a.filename).replace(/[^A-Za-z0-9._-]/g, '_');
     const path = RFQ_QUOTE_DOC_FOLDER + '/' + id + '/' + slugifyOrgName(organization) + '/' + Date.now() + '-' + i + '-' + safeFilename;
     await env.FILES.put(path, bytes);
-    attachments.push({ id: cryptoRandomId(), path: path, filename: a.filename, mimeType: a.mimeType || 'application/octet-stream', size: bytes.length });
+    // Stamped server-side (not trusting a client-sent uploadedBy) since this
+    // handler already knows the authenticated username for certain - unlike
+    // every other attachment flow in this app, which builds its doc pointer
+    // entirely client-side and is stamped there instead (see ghPutFile call
+    // sites across the other pages).
+    attachments.push({ id: cryptoRandomId(), path: path, filename: a.filename, mimeType: a.mimeType || 'application/octet-stream', size: bytes.length, uploadedBy: username || '', uploadedAt: new Date().toISOString() });
   }
   attachments = attachments.slice(0, PART_ATTACHMENTS_MAX);
 
