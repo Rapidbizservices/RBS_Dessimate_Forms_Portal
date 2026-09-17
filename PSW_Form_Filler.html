@@ -397,6 +397,29 @@
         } catch(e) { console.warn('Checkbox not found in PDF:', el.name); }
       });
 
+      // Flatten: bake every field's current appearance into normal page
+      // content and drop the AcroForm entirely, so the downloaded PDF is a
+      // plain, non-fillable, print-ready document - not an editable form
+      // anyone could accidentally re-open and change. pdf-lib's flatten()
+      // removes the field objects themselves but leaves now-dangling
+      // widget refs in each page's /Annots array, so those are cleaned up
+      // here too along with the (now-empty) /AcroForm catalog entry.
+      pdfForm.flatten();
+      pdfDoc.getPages().forEach(function(page){
+        var annotsRef = page.node.get(PDFLib.PDFName.of('Annots'));
+        if (!annotsRef) return;
+        var annots = pdfDoc.context.lookup(annotsRef);
+        if (!annots) return;
+        var kept = [];
+        for (var i = 0; i < annots.size(); i++) {
+          var ref = annots.get(i);
+          if (pdfDoc.context.lookup(ref)) kept.push(ref);
+        }
+        if (kept.length) page.node.set(PDFLib.PDFName.of('Annots'), pdfDoc.context.obj(kept));
+        else page.node.delete(PDFLib.PDFName.of('Annots'));
+      });
+      pdfDoc.catalog.delete(PDFLib.PDFName.of('AcroForm'));
+
       var pdfBytes = await pdfDoc.save();
 
       function safe(v){ return (v || '').toString().trim().replace(/[^a-z0-9-]+/gi, '_').replace(/^_+|_+$/g, ''); }
