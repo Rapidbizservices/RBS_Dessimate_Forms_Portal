@@ -237,10 +237,17 @@
       <label class="field">Customer Tracking Number (Optional) <input type="text" name="customer_tracking_number"></label>
     </div>
     <div class="grid4 row">
-      <label class="field">Customer Signature <input type="text" name="customer_signature"></label>
+      <label class="field">Customer Signature <input type="text" name="customer_signature" placeholder="Type a name, or use the stamp below"></label>
       <label class="field">Date <input type="text" name="customer_sig_date" placeholder="MM/DD/YYYY"></label>
       <label class="field">Print Name <input type="text" name="customer_print_name"></label>
       <label class="field">Title <input type="text" name="customer_title"></label>
+    </div>
+    <div class="row" style="margin-top:4px;">
+      <label class="field" style="max-width:360px;">
+        Or Use Your Stamp Instead (image file - PNG with a transparent background works best)
+        <input type="file" id="customerStampInput" accept="image/png,image/jpeg">
+      </label>
+      <div id="customerStampStatus" style="font-size:11.5px; color:var(--label); margin-top:4px;"></div>
     </div>
   </div>
 
@@ -322,10 +329,51 @@
   form.addEventListener('change', save);
   load();
 
+  // Customer's own stamp image, used in place of a typed Customer Signature
+  // (Rev2.15). Picked fresh each time - this page has no login/session of
+  // its own, so there's no per-user account to remember a stamp against;
+  // it just lives in memory for this page load and gets drawn onto the
+  // page (not into the tiny customer_signature field box, which is only
+  // 13pt tall - nowhere near big enough for a legible stamp) when the PDF
+  // is generated below.
+  var customerStamp = null; // { bytes: Uint8Array, mimeType: string, filename: string }
+  function readFileAsBytes(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onerror = function(){ reject(new Error('Could not read "' + file.name + '".')); };
+      reader.onload = function(){ resolve(new Uint8Array(reader.result)); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  document.getElementById('customerStampInput').addEventListener('change', async function(){
+    var file = this.files && this.files[0];
+    var statusEl = document.getElementById('customerStampStatus');
+    if (!file) { customerStamp = null; statusEl.textContent = ''; return; }
+    if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
+      alert('Please choose a PNG or JPG image for your stamp.');
+      this.value = '';
+      customerStamp = null; statusEl.textContent = '';
+      return;
+    }
+    try {
+      var bytes = await readFileAsBytes(file);
+      customerStamp = { bytes: bytes, mimeType: file.type, filename: file.name };
+      statusEl.textContent = 'Stamp ready: ' + file.name + ' (leave the Customer Signature box above blank).';
+      statusEl.style.color = '#187b46';
+    } catch (e) {
+      customerStamp = null;
+      statusEl.textContent = 'Could not read that image - please try again.';
+      statusEl.style.color = '#b23b3b';
+    }
+  });
+
   document.getElementById('clearBtn').addEventListener('click', async function(){
     if(!(await confirmDialog('Clear everything you have filled in?'))) return;
     form.reset();
     try{ localStorage.removeItem('psw-filler-data'); }catch(e){}
+    customerStamp = null;
+    document.getElementById('customerStampInput').value = '';
+    document.getElementById('customerStampStatus').textContent = '';
   });
 
   // The blank PDF template lives in this same repo/folder, right next to this
@@ -396,6 +444,35 @@
           if (el.checked) cb.check(); else cb.uncheck();
         } catch(e) { console.warn('Checkbox not found in PDF:', el.name); }
       });
+
+      // Draw the customer's stamp image over the Customer Signature line
+      // (Rev2.15), if one was chosen. The field itself is only 13pt tall -
+      // far too small to hold a legible stamp - so this draws straight
+      // onto the page at a size big enough to read, centered on the
+      // field's box and allowed to spill slightly into the surrounding
+      // whitespace above it, the same way a real rubber stamp pressed
+      // onto a printed form naturally overlaps whatever's nearby.
+      if (customerStamp) {
+        try {
+          var stampImg = customerStamp.mimeType === 'image/png'
+            ? await pdfDoc.embedPng(customerStamp.bytes)
+            : await pdfDoc.embedJpg(customerStamp.bytes);
+          var sigWidget = pdfForm.getTextField('customer_signature').acroField.getWidgets()[0];
+          var sigRect = sigWidget.getRectangle();
+          var maxW = sigRect.width;
+          var maxH = 40;
+          var scale = Math.min(maxW / stampImg.width, maxH / stampImg.height);
+          var drawW = stampImg.width * scale;
+          var drawH = stampImg.height * scale;
+          var centerX = sigRect.x + sigRect.width / 2;
+          var centerY = sigRect.y + sigRect.height / 2;
+          var sigPage = pdfDoc.getPages()[0];
+          sigPage.drawImage(stampImg, { x: centerX - drawW / 2, y: centerY - drawH / 2, width: drawW, height: drawH });
+        } catch (e) {
+          console.error(e);
+          alert('Could not place your stamp on the PDF (' + (e && e.message ? e.message : e) + '). The rest of the form was still filled in.');
+        }
+      }
 
       // Flatten: bake every field's current appearance into normal page
       // content and drop the AcroForm entirely, so the downloaded PDF is a
