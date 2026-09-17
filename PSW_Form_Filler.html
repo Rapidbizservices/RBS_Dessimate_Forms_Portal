@@ -254,9 +254,21 @@
 </form>
 
 <div class="actions">
-  <button id="createBtn" type="button" class="createBtn">Create Filled PDF</button>
+  <button id="createBtn" type="button" class="createBtn">Generate PDF Preview</button>
   <div id="status"></div>
   <button id="clearBtn" type="button" class="clearLink">Clear all fields</button>
+</div>
+
+<div class="card" id="previewCard" style="display:none;">
+  <h2>Preview</h2>
+  <p style="font-size:12.5px; color:var(--label); margin:0 0 10px;">
+    Review the PDF below. Nothing has been saved to your computer yet - when it looks right, click
+    "Download PDF" and choose where to save it.
+  </p>
+  <iframe id="previewFrame" title="PSW PDF preview" style="width:100%; height:75vh; border:1px solid var(--line); border-radius:8px; display:block;"></iframe>
+  <div style="margin-top:14px;">
+    <button id="downloadBtn" type="button" class="createBtn">Download PDF</button>
+  </div>
 </div>
 
 <script>!function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"function"==typeof define&&define.amd?define(["exports"],e):e((t=t||self).PDFLib={})}(this,(function(t){"use strict";
@@ -374,6 +386,11 @@
     customerStamp = null;
     document.getElementById('customerStampInput').value = '';
     document.getElementById('customerStampStatus').textContent = '';
+    if (previewObjectUrl) { URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = null; }
+    document.getElementById('previewFrame').src = 'about:blank';
+    document.getElementById('previewCard').style.display = 'none';
+    lastPdfBytes = null;
+    lastSuggestedName = '';
   });
 
   // The blank PDF template lives in this same repo/folder, right next to this
@@ -506,35 +523,62 @@
       var stamp = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
       var suggestedName = 'PSW_' + partNo + '_' + stamp + '.pdf';
 
-      if (window.showSaveFilePicker) {
-        try {
-          var handle = await window.showSaveFilePicker({
-            suggestedName: suggestedName,
-            types: [{ description: 'PDF file', accept: { 'application/pdf': ['.pdf'] } }]
-          });
-          var writable = await handle.createWritable();
-          await writable.write(pdfBytes);
-          await writable.close();
-          status.textContent = 'Saved ' + handle.name + '.';
-        } catch (err) {
-          if (err && err.name === 'AbortError') {
-            status.textContent = 'Cancelled — no file was saved.';
-          } else {
-            downloadBlob(pdfBytes, suggestedName);
-            status.textContent = 'Downloaded ' + suggestedName + ' to your Downloads folder.';
-          }
-        }
-      } else {
-        downloadBlob(pdfBytes, suggestedName);
-        status.textContent = 'Downloaded ' + suggestedName + ' to your Downloads folder.';
-      }
+      // Nothing is saved to disk here anymore (Rev2.16) - just previewed.
+      // The actual save only happens when Download PDF is clicked below,
+      // so the user can look the PDF over first and back out (regenerate,
+      // tweak a field, try again) before anything lands on their machine.
+      lastPdfBytes = pdfBytes;
+      lastSuggestedName = suggestedName;
+      if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+      var blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      previewObjectUrl = URL.createObjectURL(blob);
+      document.getElementById('previewFrame').src = previewObjectUrl;
+      document.getElementById('previewCard').style.display = 'block';
+      document.getElementById('previewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      status.textContent = 'Preview ready below - nothing has been saved yet.';
     } catch (err) {
       console.error(err);
       status.textContent = 'Something went wrong. Please try again.';
       alert('Sorry, the PDF could not be created:\n' + (err && err.message ? err.message : err));
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Create Filled PDF';
+      btn.textContent = 'Generate PDF Preview';
+    }
+  });
+
+  var lastPdfBytes = null;
+  var lastSuggestedName = '';
+  var previewObjectUrl = null;
+  document.getElementById('downloadBtn').addEventListener('click', async function(){
+    var btn = this;
+    var status = document.getElementById('status');
+    if (!lastPdfBytes) return;
+    btn.disabled = true;
+    try {
+      if (window.showSaveFilePicker) {
+        try {
+          var handle = await window.showSaveFilePicker({
+            suggestedName: lastSuggestedName,
+            types: [{ description: 'PDF file', accept: { 'application/pdf': ['.pdf'] } }]
+          });
+          var writable = await handle.createWritable();
+          await writable.write(lastPdfBytes);
+          await writable.close();
+          status.textContent = 'Saved ' + handle.name + '.';
+        } catch (err) {
+          if (err && err.name === 'AbortError') {
+            status.textContent = 'Cancelled — no file was saved.';
+          } else {
+            downloadBlob(lastPdfBytes, lastSuggestedName);
+            status.textContent = 'Downloaded ' + lastSuggestedName + ' to your Downloads folder.';
+          }
+        }
+      } else {
+        downloadBlob(lastPdfBytes, lastSuggestedName);
+        status.textContent = 'Downloaded ' + lastSuggestedName + ' to your Downloads folder.';
+      }
+    } finally {
+      btn.disabled = false;
     }
   });
 })();
