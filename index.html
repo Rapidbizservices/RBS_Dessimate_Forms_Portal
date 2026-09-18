@@ -437,10 +437,13 @@
       minLevel: 'team_member',
       items: [
         { name: 'Dessimate POs', href: 'PDIR_DessimatePOs.html', levels: ['team_member', 'admin', 'super_admin', 'supplier'] },
-        // Rev2.16: a Supplier can create/edit their own Change Request here
-        // (not just view, unlike every other Production Module entry) - see
-        // worker/README.md. No Customer access - never part of the brief.
-        { name: 'Change Requests', href: 'PDIR_ChangeRequests.html', levels: ['team_member', 'admin', 'super_admin', 'supplier'] },
+        // Rev2.17: "Change Requests" now opens a chooser hub (Dessimate CRs
+        // vs. Customer SCRs) instead of going straight to the CR module - see
+        // PDIR_ChangeRequestsHub.html. A Supplier can still create/edit their
+        // own Change Request (Rev2.16, unchanged); a Customer now reaches
+        // Customer SCRs through this same entry, but a Supplier never sees
+        // the SCR tile inside the hub - see worker/README.md.
+        { name: 'Change Requests', href: 'PDIR_ChangeRequestsHub.html', levels: ['team_member', 'admin', 'super_admin', 'supplier', 'customer'] },
         { name: 'Supplier Invoices', href: 'PDIR_SupplierInvoices.html', levels: ['team_member', 'admin', 'super_admin', 'supplier'] },
         { name: 'PDIR', href: 'PDIR_Portal.html', levels: ['team_member', 'admin', 'super_admin', 'supplier', 'customer'] },
         { name: 'Parts', href: 'PDIR_Parts.html', levels: ['team_member', 'admin', 'super_admin', 'supplier', 'customer'] },

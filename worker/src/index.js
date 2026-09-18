@@ -192,6 +192,19 @@
  *                                        edit a CR where they're already the supplierOrg.
  *   DELETE /change-requests/<id>       - team_member or above required (a Supplier can create/edit
  *                                        their own CR, but never delete one - see module comment).
+ *   GET    /scrs                       - any signed-in user; scoped (team_member or above sees every
+ *                                        SCR; a Customer login sees only SCRs explicitly shared with
+ *                                        its org; a Supplier login sees none at all - zero access).
+ *   POST   /scrs                       - team_member or above required (Dessimate-staff-only end to
+ *                                        end, unlike the CR module - no Supplier write).
+ *   GET    /scrs/peek-number           - team_member or above required; preview of the next
+ *                                        auto-assigned SCR Number (does not consume it).
+ *   GET    /scrs/<id>/pdf/dessimate    - team_member or above required; Dessimate-branded PDF.
+ *   GET    /scrs/<id>/pdf/customer     - team_member or above, OR the Customer this record has been
+ *                                        shared with; that Customer's own branded PDF (their logo if
+ *                                        set on their Organization record, else their name).
+ *   PUT    /scrs/<id>                  - team_member or above required.
+ *   DELETE /scrs/<id>                  - team_member or above required.
  *   GET    /contents/<path...>        - reads one file from R2 (blocked for anything
  *                                        under data/ - see above), or lists a "directory"
  *                                        prefix, in a shape mirroring GitHub's old API.
@@ -689,6 +702,58 @@ export default {
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
           return await handleDeleteChangeRequest(env, origin, id);
         }
+      }
+
+      if (url.pathname === '/scrs') {
+        if (request.method === 'GET') {
+          // Any signed-in user is "ok" here - scopeScrs itself returns []
+          // for a Supplier (zero access, confirmed) and for a Customer with
+          // nothing shared to them yet, same non-gating GET pattern as
+          // every other scoped list route.
+          const auth = await requireAuthWithScope(request, env);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleListScrs(env, origin, auth.accessLevel, auth.organization);
+        }
+        if (request.method === 'POST') {
+          // Dessimate-staff-only end to end - see the module comment above.
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleCreateScr(request, env, origin, auth.username);
+        }
+      }
+
+      if (url.pathname === '/scrs/peek-number' && request.method === 'GET') {
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handlePeekScrNumber(env, origin);
+      }
+
+      // PDF export, two brandings. /pdf/dessimate is Team Member+ only (a
+      // Customer never sees Dessimate's own letterhead copy); /pdf/customer
+      // is Team Member+ OR the specific Customer this record has been
+      // shared with - handleGetScrPdf's own scopeScrs check still applies
+      // on top, so a Customer can never reach a record that isn't shared
+      // with them just by guessing an id.
+      if (/^\/scrs\/[^/]+\/pdf\/(dessimate|customer)$/.test(url.pathname) && request.method === 'GET') {
+        const parts = url.pathname.split('/');
+        const id = decodeURIComponent(parts[2]);
+        const variant = parts[4];
+        if (variant === 'dessimate') {
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleGetScrPdf(env, origin, id, auth.accessLevel, auth.organization, variant);
+        }
+        const auth = await requireAuthWithScope(request, env);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleGetScrPdf(env, origin, id, auth.accessLevel, auth.organization, variant);
+      }
+
+      if (url.pathname.startsWith('/scrs/')) {
+        const id = decodeURIComponent(url.pathname.slice('/scrs/'.length));
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        if (request.method === 'PUT') return await handleUpdateScr(request, env, origin, id);
+        if (request.method === 'DELETE') return await handleDeleteScr(env, origin, id);
       }
 
       if (url.pathname === '/supplier-invoices') {
@@ -2155,6 +2220,16 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
       const owner = await resolveDessimateInvoiceOwner(env, invDocsMatch[1]);
       return owner !== null && owner === organization;
     }
+    // A Customer can read the attachments on an SCR (scr_docs) only once
+    // Dessimate has explicitly shared that record with their org - same
+    // check scopeScrs itself uses for the list. A Supplier never reaches
+    // this at all (scr_docs has no branch under any Supplier check above -
+    // confirmed zero access to SCR, unlike every other module).
+    const scrDocsMatch = /^scr_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (scrDocsMatch) {
+      const scr = await resolveScrRecord(env, scrDocsMatch[1]);
+      return !!scr && Array.isArray(scr.sharedWithCustomers) && scr.sharedWithCustomers.indexOf(organization) !== -1;
+    }
   }
 
   return false;
@@ -2365,7 +2440,8 @@ const DEFAULT_COUNTERS = {
   shipmentYear: 26,
   nextShipmentSeq: 10,
   nextRfqNumber: 9009, // RFQ module - client's 9000-series, latest used was 9008
-  nextCrNumber: 1 // Change Request module - formatted "CR-###" (see reserveCrNumber)
+  nextCrNumber: 1, // Change Request module - formatted "CR-###" (see reserveCrNumber)
+  nextScrNumber: 1 // Customer SCR module - formatted "SCR-###" (see reserveScrNumber)
 };
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -3981,6 +4057,531 @@ async function handleGetChangeRequestPdf(env, origin, id, accessLevel, organizat
     return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
   }
   return pdfResponse(pdfBytes, 'Change Request ' + clean.crNumber + '.pdf', origin);
+}
+
+// ---- Customer SCR (Rev2.17) - "Supplier Change Request", the formal
+// document strictly between Dessimate and a Customer: same underlying
+// change-management idea as the CR module above, but a completely separate
+// record type modeled on the actual SCR00x templates (Sections A-E:
+// Supplier Info, Part Info, Deviation Info, an internal Approval/
+// Disapproval routing table across six Dessimate departments, and a
+// Disposition section). Unlike CR, this is Dessimate-staff-only end to
+// end - a Supplier has zero access (not even read), confirmed explicitly:
+// "customer SCRs are between Dessimate and customer only." A Customer only
+// ever sees a record once Dessimate has explicitly added their org to
+// sharedWithCustomers ("only when Dessimate team completes the work and is
+// ready to share with customer") - same RFQ-style opt-in share list, never
+// automatic. The generated PDF is available in two brandings (Dessimate's
+// own letterhead, or the specific shared Customer's own letterhead/logo)
+// since the source templates are the same form under two different
+// letterheads.
+const SCRS_FILE_PATH = 'data/scrs.json';
+const SCR_DOC_FOLDER = 'scr_docs';
+const SCR_APPROVAL_DEPARTMENTS = ['supplyChainManagement', 'supplierQuality', 'engineering', 'manufacturing', 'approval', 'productManagement'];
+
+// SCR Number is formatted "SCR-###" when system-assigned - same voluntary/
+// custom-value pattern as reserveCrNumber.
+async function reserveScrNumber(env, clientScrNumber) {
+  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+    let scrNumber;
+    if (clientScrNumber) {
+      scrNumber = clientScrNumber;
+      const m = /^SCR-(\d+)$/i.exec(clientScrNumber);
+      if (m) {
+        const seq = Number(m[1]);
+        if (seq >= obj.nextScrNumber) obj.nextScrNumber = seq + 1;
+      }
+    } else {
+      scrNumber = 'SCR-' + pad3(obj.nextScrNumber);
+      obj.nextScrNumber = obj.nextScrNumber + 1;
+    }
+    return { obj: obj, meta: { scrNumber: scrNumber } };
+  });
+  if (!result.ok) throw new Error(result.message);
+  return result.meta.scrNumber;
+}
+
+async function handlePeekScrNumber(env, origin) {
+  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
+  return json({ scrNumber: 'SCR-' + pad3(state.obj.nextScrNumber) }, 200, origin);
+}
+
+async function scrNumberTaken(env, scrNumber, excludeId) {
+  const state = await readJsonArrayFile(env, SCRS_FILE_PATH);
+  const target = String(scrNumber).toLowerCase();
+  return state.items.some(function (o) { return o.id !== excludeId && String(o.scrNumber).toLowerCase() === target; });
+}
+
+// One row of Section D's approval routing table (Acknowledgement/
+// Signature/Date/Approve-Disapprove/Comments per department).
+function sanitizeScrApproval(a) {
+  const source = a || {};
+  return {
+    acknowledged: !!source.acknowledged,
+    signature: (source.signature || '').toString(),
+    date: (source.date || '').toString(),
+    decision: (source.decision === 'approve' || source.decision === 'disapprove') ? source.decision : '',
+    comments: (source.comments || '').toString()
+  };
+}
+function sanitizeScrApprovals(approvals) {
+  const source = approvals || {};
+  const out = {};
+  SCR_APPROVAL_DEPARTMENTS.forEach(function (key) { out[key] = sanitizeScrApproval(source[key]); });
+  return out;
+}
+function validateScrApprovals(body) {
+  return sanitizeScrApprovals(body);
+}
+
+function sanitizeScr(o) {
+  return {
+    id: o.id,
+    scrNumber: o.scrNumber || '',
+    createdAt: o.createdAt || null,
+    createdBy: o.createdBy || '',
+    // A. Supplier Information
+    supplierOrg: o.supplierOrg || '',
+    supplierDate: o.supplierDate || '',
+    supplierContactName: o.supplierContactName || '',
+    supplierPhone: o.supplierPhone || '',
+    supplierFax: o.supplierFax || '',
+    // B. Part Information
+    partNumber: o.partNumber || '',
+    partDescription: o.partDescription || '',
+    revisionLevel: o.revisionLevel || '',
+    poNumber: o.poNumber || '',
+    quantity: o.quantity || '',
+    // C. Deviation Information
+    productRelated: !!o.productRelated,
+    processRelated: !!o.processRelated,
+    firstTime: !!o.firstTime,
+    repeat: !!o.repeat,
+    permanent: !!o.permanent,
+    temporary: !!o.temporary,
+    temporaryDuration: o.temporaryDuration || '',
+    supplierSubTier: !!o.supplierSubTier,
+    supplierSubTierDetail: o.supplierSubTierDetail || '',
+    currentRequirement: o.currentRequirement || '',
+    proposedDeviation: o.proposedDeviation || '',
+    reasonForDeviation: o.reasonForDeviation || '',
+    effectNone: !!o.effectNone,
+    effectNoneExplain: o.effectNoneExplain || '',
+    effectCost: !!o.effectCost,
+    effectDelivery: !!o.effectDelivery,
+    effectSchedule: !!o.effectSchedule,
+    effectReliability: !!o.effectReliability,
+    effectPerformance: !!o.effectPerformance,
+    effectOther: !!o.effectOther,
+    supplierQualityEngineerComment: o.supplierQualityEngineerComment || '',
+    plannedAffectivity: o.plannedAffectivity || '',
+    attachments: sanitizeOrgDocList(o.attachments),
+    // D. Approval/Disapproval
+    approvals: sanitizeScrApprovals(o.approvals),
+    // E. Disposition
+    drawingChangeRequired: (o.drawingChangeRequired === 'yes' || o.drawingChangeRequired === 'no') ? o.drawingChangeRequired : '',
+    drawingChangeCR: o.drawingChangeCR || '',
+    carRequired: (o.carRequired === 'yes' || o.carRequired === 'no') ? o.carRequired : '',
+    carNumber: o.carNumber || '',
+    finalDisposition: o.finalDisposition || '',
+    // Sharing - a Customer sees nothing here until their org is added
+    sharedWithCustomers: Array.isArray(o.sharedWithCustomers) ? o.sharedWithCustomers.filter(Boolean) : []
+  };
+}
+
+// Dessimate-staff-only end to end (create/update/delete), so there's no
+// isSupplier-style field-stripping branch here the way validateChangeRequestFields
+// has - every field is always accepted from a Team Member+ caller.
+function validateScrFields(body) {
+  return {
+    supplierOrg: (body.supplierOrg || '').toString().trim(),
+    supplierDate: (body.supplierDate || '').toString().trim(),
+    supplierContactName: (body.supplierContactName || '').toString().trim(),
+    supplierPhone: (body.supplierPhone || '').toString().trim(),
+    supplierFax: (body.supplierFax || '').toString().trim(),
+    partNumber: (body.partNumber || '').toString().trim(),
+    partDescription: (body.partDescription || '').toString().trim(),
+    revisionLevel: (body.revisionLevel || '').toString().trim(),
+    poNumber: (body.poNumber || '').toString().trim(),
+    quantity: (body.quantity || '').toString().trim(),
+    productRelated: !!body.productRelated,
+    processRelated: !!body.processRelated,
+    firstTime: !!body.firstTime,
+    repeat: !!body.repeat,
+    permanent: !!body.permanent,
+    temporary: !!body.temporary,
+    temporaryDuration: (body.temporaryDuration || '').toString().trim(),
+    supplierSubTier: !!body.supplierSubTier,
+    supplierSubTierDetail: (body.supplierSubTierDetail || '').toString().trim(),
+    currentRequirement: (body.currentRequirement || '').toString().trim(),
+    proposedDeviation: (body.proposedDeviation || '').toString().trim(),
+    reasonForDeviation: (body.reasonForDeviation || '').toString().trim(),
+    effectNone: !!body.effectNone,
+    effectNoneExplain: (body.effectNoneExplain || '').toString().trim(),
+    effectCost: !!body.effectCost,
+    effectDelivery: !!body.effectDelivery,
+    effectSchedule: !!body.effectSchedule,
+    effectReliability: !!body.effectReliability,
+    effectPerformance: !!body.effectPerformance,
+    effectOther: !!body.effectOther,
+    supplierQualityEngineerComment: (body.supplierQualityEngineerComment || '').toString().trim(),
+    plannedAffectivity: (body.plannedAffectivity || '').toString().trim(),
+    attachments: sanitizeOrgDocList(body.attachments),
+    approvals: validateScrApprovals(body.approvals),
+    drawingChangeRequired: (body.drawingChangeRequired === 'yes' || body.drawingChangeRequired === 'no') ? body.drawingChangeRequired : '',
+    drawingChangeCR: (body.drawingChangeCR || '').toString().trim(),
+    carRequired: (body.carRequired === 'yes' || body.carRequired === 'no') ? body.carRequired : '',
+    carNumber: (body.carNumber || '').toString().trim(),
+    finalDisposition: (body.finalDisposition || '').toString().trim(),
+    sharedWithCustomers: Array.isArray(body.sharedWithCustomers)
+      ? Array.from(new Set(body.sharedWithCustomers.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
+      : []
+  };
+}
+
+// Team Member+ sees every SCR. A Customer sees only ones explicitly shared
+// with their org, with sharedWithCustomers itself stripped down to just
+// their own name (no business seeing who else a record was shared with).
+// A Supplier sees nothing at all - confirmed explicitly, unlike CR.
+function scopeScrs(items, accessLevel, organization) {
+  if (accessLevel === 'customer') {
+    const visible = items.filter(function (o) { return organization && o.sharedWithCustomers.indexOf(organization) !== -1; });
+    return visible.map(function (o) { return Object.assign({}, o, { sharedWithCustomers: [organization] }); });
+  }
+  if (accessLevel === 'team_member' || accessLevel === 'admin' || accessLevel === 'super_admin') return items;
+  return [];
+}
+
+async function handleListScrs(env, origin, accessLevel, organization) {
+  const state = await readJsonArrayFile(env, SCRS_FILE_PATH);
+  const items = scopeScrs(state.items.map(sanitizeScr), accessLevel, organization);
+  return json({ scrs: items }, 200, origin);
+}
+
+async function handleCreateScr(request, env, origin, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const fields = validateScrFields(body);
+  if (!fields.supplierOrg) return json({ message: 'Supplier is required.' }, 400, origin);
+
+  const clientScrNumber = (body.scrNumber !== undefined && body.scrNumber !== null) ? String(body.scrNumber).trim() : '';
+  if (clientScrNumber && await scrNumberTaken(env, clientScrNumber, null)) {
+    return json({ message: 'That SCR Number is already in use.' }, 409, origin);
+  }
+  const scrNumber = await reserveScrNumber(env, clientScrNumber);
+
+  const newScr = Object.assign(
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), createdBy: username || '', scrNumber: scrNumber },
+    fields
+  );
+
+  const result = await mutateJsonArrayFile(env, SCRS_FILE_PATH, function (items) {
+    items.push(newScr);
+    return { items: items };
+  });
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeScr(newScr), 201, origin);
+}
+
+async function handleUpdateScr(request, env, origin, id) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const fields = validateScrFields(body);
+
+  let newScrNumber; // undefined = leave as-is
+  if (body.scrNumber !== undefined) {
+    const requested = (body.scrNumber === null ? '' : String(body.scrNumber)).trim();
+    if (!requested) return json({ message: 'SCR Number is required.' }, 400, origin);
+    if (await scrNumberTaken(env, requested, id)) {
+      return json({ message: 'That SCR Number is already in use.' }, 409, origin);
+    }
+    newScrNumber = requested;
+  }
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, SCRS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    Object.assign(target, fields);
+    if (newScrNumber !== undefined) target.scrNumber = newScrNumber;
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeScr(saved), 200, origin);
+}
+
+async function handleDeleteScr(env, origin, id) {
+  const result = await mutateJsonArrayFile(env, SCRS_FILE_PATH, function (items) {
+    const idx = items.findIndex(function (o) { return o.id === id; });
+    if (idx === -1) return null;
+    items.splice(idx, 1);
+    return { items: items };
+  }, { requireFound: true });
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json({ ok: true }, 200, origin);
+}
+
+// Used by isContentsPathAllowedForExternal's scr_docs branch and the PDF
+// route's Customer share check.
+async function resolveScrRecord(env, id) {
+  const state = await readJsonArrayFile(env, SCRS_FILE_PATH);
+  return state.items.find(function (o) { return o.id === id; }) || null;
+}
+
+// Single-page rendering of the SCR00x template layout - same drawn-from-
+// scratch pdf-lib approach as buildCrPdf/buildDessimatePoPdf. `letterhead`
+// is { orgName, logoBytes, logoMimeType } - the one thing that actually
+// differs between the "Dessimate" and "Customer" branded PDFs, since the
+// two source templates (SCR00x Dessimate Form Template.docx / SCR00x
+// Customer Form Template.doc) are otherwise the exact same form.
+async function buildScrPdf(scr, letterhead) {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const pageWidth = 612, pageHeight = 792; // US Letter
+  const margin = 40;
+  const contentW = pageWidth - margin * 2;
+
+  const brandBlue = rgb(0.106, 0.243, 0.706);
+  const ink = rgb(0.1, 0.1, 0.12);
+  const labelGray = rgb(0.42, 0.44, 0.49);
+  const lineGray = rgb(0.75, 0.76, 0.79);
+  const sectionBg = rgb(0.925, 0.941, 0.976);
+
+  const page = pdfDoc.addPage([pageWidth, pageHeight]);
+
+  let logoImg = null;
+  if (letterhead && letterhead.logoBytes) {
+    try {
+      logoImg = (letterhead.logoMimeType === 'image/png')
+        ? await pdfDoc.embedPng(letterhead.logoBytes)
+        : await pdfDoc.embedJpg(letterhead.logoBytes);
+    } catch (e) { logoImg = null; }
+  }
+
+  function leftText(str, x, yy, size, opts) {
+    opts = opts || {};
+    page.drawText(str == null ? '' : String(str), { x: x, y: yy, size: size, font: opts.bold ? fontBold : font, color: opts.color || ink });
+  }
+  function rightText(str, rightEdgeX, yy, size, opts) {
+    opts = opts || {};
+    const f = opts.bold ? fontBold : font;
+    const s = str == null ? '' : String(str);
+    page.drawText(s, { x: rightEdgeX - f.widthOfTextAtSize(s, size), y: yy, size: size, font: f, color: opts.color || ink });
+  }
+  function wrapLines(str, maxWidth, size, useFont) {
+    const f = useFont || font;
+    const out = [];
+    (str || '').split(/\r?\n/).forEach(function (raw) {
+      const words = raw.split(/\s+/).filter(Boolean);
+      if (!words.length) { out.push(''); return; }
+      let cur = '';
+      words.forEach(function (w) {
+        const attempt = cur ? cur + ' ' + w : w;
+        if (cur && f.widthOfTextAtSize(attempt, size) > maxWidth) { out.push(cur); cur = w; }
+        else cur = attempt;
+      });
+      if (cur) out.push(cur);
+    });
+    return out;
+  }
+  function fmtDateMDY(s) {
+    const str = (s || '').toString().trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    return m ? (m[2] + '/' + m[3] + '/' + m[1]) : str;
+  }
+  function checkbox(x, yy, checked, label, opts) {
+    opts = opts || {};
+    const size = 8.5;
+    page.drawRectangle({ x: x, y: yy, width: size, height: size, borderColor: ink, borderWidth: 1, color: checked ? ink : rgb(1, 1, 1) });
+    leftText(label, x + size + 4, yy + 0.5, opts.size || 9, { bold: opts.bold });
+  }
+  function sectionHeader(label, x, yy, w) {
+    page.drawRectangle({ x: x, y: yy - 14, width: w, height: 17, color: sectionBg });
+    leftText(label, x + 6, yy - 10, 9.5, { bold: true, color: brandBlue });
+  }
+
+  // ---- Header -----------------------------------------------------------------
+  let hy = pageHeight - 40;
+  const orgName = (letterhead && letterhead.orgName) || 'Dessimate';
+  if (logoImg) {
+    const dims = logoImg.scaleToFit(110, 60);
+    page.drawImage(logoImg, { x: margin, y: hy - dims.height, width: dims.width, height: dims.height });
+  } else {
+    leftText(orgName, margin, hy - 16, 17, { bold: true, color: brandBlue });
+  }
+  rightText('SUPPLIER CHANGE REQUEST', pageWidth - margin, hy - 17, 17, { bold: true, color: brandBlue });
+  rightText('Control Number: ' + (scr.scrNumber || ''), pageWidth - margin, hy - 35, 10.5, { bold: true });
+
+  let y = hy - 74;
+
+  // ---- A. Supplier Information / B. Part Information (two columns) ------------
+  const colW = contentW / 2 - 6;
+  const col2x = margin + contentW / 2 + 6;
+  sectionHeader('A. SUPPLIER INFORMATION', margin, y, colW);
+  sectionHeader('B. PART INFORMATION', col2x, y, colW);
+  y -= 20;
+  function fieldPair(labelA, valueA, labelB, valueB, size) {
+    leftText(labelA, margin, y, 8.5, { bold: true, color: labelGray });
+    leftText(valueA || '—', margin + 58, y, size || 9.5);
+    leftText(labelB, col2x, y, 8.5, { bold: true, color: labelGray });
+    leftText(valueB || '—', col2x + 68, y, size || 9.5);
+    y -= 16.5;
+  }
+  fieldPair('Date:', fmtDateMDY(scr.supplierDate), 'Number:', scr.partNumber);
+  fieldPair('Name:', scr.supplierOrg, 'Description:', scr.partDescription);
+  fieldPair('Contact:', scr.supplierContactName, 'Revision Level:', scr.revisionLevel);
+  fieldPair('Phone #:', scr.supplierPhone, 'P.O. Number:', scr.poNumber);
+  fieldPair('FAX #:', scr.supplierFax, 'Quantity:', scr.quantity);
+  y -= 10;
+
+  // ---- C. Deviation Information -------------------------------------------------
+  sectionHeader('C. DEVIATION INFORMATION', margin, y, contentW);
+  y -= 20;
+  leftText('Request is', margin, y, 8.5, { bold: true, color: labelGray });
+  y -= 15;
+  checkbox(margin, y, scr.productRelated, 'Product Related');
+  checkbox(margin + 120, y, scr.firstTime, '1st time');
+  checkbox(margin + 215, y, scr.permanent, 'Permanent');
+  checkbox(margin + 310, y, scr.supplierSubTier, 'Supplier Sub-Tier ' + (scr.supplierSubTierDetail || '____'));
+  y -= 16;
+  checkbox(margin, y, scr.processRelated, 'Process Related');
+  checkbox(margin + 120, y, scr.repeat, 'Repeat');
+  checkbox(margin + 215, y, scr.temporary, 'Temporary' + (scr.temporaryDuration ? ' (' + scr.temporaryDuration + ')' : ''));
+  y -= 21;
+
+  const devColW = contentW / 3 - 6;
+  const devCol2 = margin + devColW + 9;
+  const devCol3 = margin + (devColW + 9) * 2;
+  leftText('Current Requirement/Process', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText('Proposed Deviation', devCol2, y, 8.5, { bold: true, color: labelGray });
+  leftText('Reason for Deviation/Corrective Action', devCol3, y, 8.5, { bold: true, color: labelGray });
+  y -= 13;
+  const devLineCount = 4;
+  [
+    { x: margin, text: scr.currentRequirement },
+    { x: devCol2, text: scr.proposedDeviation },
+    { x: devCol3, text: scr.reasonForDeviation }
+  ].forEach(function (col) {
+    const lines = wrapLines(col.text, devColW - 4, 8.5).slice(0, devLineCount);
+    lines.forEach(function (line, i) { leftText(line, col.x, y - i * 11.5, 8.5); });
+  });
+  y -= devLineCount * 11.5 + 8;
+
+  leftText('This request has an effect on:', margin, y, 8.5, { bold: true, color: labelGray });
+  checkbox(margin + 155, y - 1, scr.effectNone, 'None (if none, explain why)');
+  y -= 15;
+  if (scr.effectNone && scr.effectNoneExplain) {
+    wrapLines(scr.effectNoneExplain, contentW - 8, 8.5).slice(0, 2).forEach(function (line) { leftText(line, margin + 4, y, 8.5); y -= 11.5; });
+  }
+  checkbox(margin, y, scr.effectCost, 'Cost');
+  checkbox(margin + 95, y, scr.effectDelivery, 'Delivery');
+  checkbox(margin + 200, y, scr.effectSchedule, 'Schedule');
+  checkbox(margin + 315, y, scr.effectReliability, 'Reliability');
+  checkbox(margin + 420, y, scr.effectPerformance, 'Performance');
+  checkbox(margin + 515, y, scr.effectOther, 'Other');
+  y -= 19;
+
+  leftText('Supplier Quality Engineer Comment:', margin, y, 8.5, { bold: true, color: labelGray });
+  y -= 12;
+  wrapLines(scr.supplierQualityEngineerComment, contentW - 8, 9).slice(0, 2).forEach(function (line) { leftText(line, margin + 4, y, 9); y -= 11.5; });
+  y -= 5;
+
+  leftText('Planned affectivity date/product serial number:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText(scr.plannedAffectivity || '—', margin + 232, y, 9.5);
+  y -= 17;
+
+  const attNames = (scr.attachments || []).map(function (a) { return a.filename; }).join(', ');
+  checkbox(margin, y, (scr.attachments || []).length > 0, 'Attachments' + (attNames ? ': ' + attNames : ':'));
+  y -= 24;
+
+  // ---- D. Approval/Disapproval ---------------------------------------------------
+  sectionHeader('D. APPROVAL/DISAPPROVAL  (Note: Supply Quality has final approval)', margin, y, contentW);
+  y -= 19;
+  const deptLabels = {
+    supplyChainManagement: 'Supply Chain Management', supplierQuality: 'Supplier Quality', engineering: 'Engineering',
+    manufacturing: 'Manufacturing', approval: 'Approval', productManagement: 'Product Management'
+  };
+  const rowColX = [margin, margin + 148, margin + 285, margin + 355, margin + 445];
+  leftText('Acknowledgement', rowColX[0], y, 8.5, { bold: true, color: labelGray });
+  leftText('Signature / Date', rowColX[1], y, 8.5, { bold: true, color: labelGray });
+  leftText('Approve/Disapprove', rowColX[3], y, 8.5, { bold: true, color: labelGray });
+  leftText('Comments', rowColX[4], y, 8.5, { bold: true, color: labelGray });
+  y -= 16;
+  SCR_APPROVAL_DEPARTMENTS.forEach(function (key) {
+    const a = scr.approvals[key];
+    checkbox(rowColX[0], y - 1, a.acknowledged, deptLabels[key], { size: 8.5 });
+    leftText((a.signature || '—') + '  /  ' + (fmtDateMDY(a.date) || '—'), rowColX[1], y, 8.5);
+    leftText(a.decision === 'approve' ? 'Approve' : (a.decision === 'disapprove' ? 'Disapprove' : '—'), rowColX[3], y, 8.5);
+    const commentLines = wrapLines(a.comments, pageWidth - margin - rowColX[4], 8).slice(0, 1);
+    leftText(commentLines[0] || '', rowColX[4], y, 8);
+    y -= 18;
+  });
+  y -= 10;
+
+  // ---- E. Disposition -------------------------------------------------------------
+  sectionHeader('E. DISPOSITION', margin, y, contentW);
+  y -= 20;
+  leftText('Drawing Change Required?', margin, y, 9, { bold: true, color: labelGray });
+  checkbox(margin + 165, y - 1, scr.drawingChangeRequired === 'yes', 'Yes');
+  checkbox(margin + 212, y - 1, scr.drawingChangeRequired === 'no', 'No');
+  leftText('If yes, CR# ' + (scr.drawingChangeCR || '____'), margin + 264, y, 9);
+  y -= 17;
+  leftText('Corrective Action Request Required?', margin, y, 9, { bold: true, color: labelGray });
+  checkbox(margin + 212, y - 1, scr.carRequired === 'yes', 'Yes');
+  checkbox(margin + 259, y - 1, scr.carRequired === 'no', 'No, CAR# ' + (scr.carNumber || '____'));
+  y -= 19;
+  leftText('Final Disposition/Comments: Accept/Reject', margin, y, 9, { bold: true, color: labelGray });
+  y -= 13;
+  wrapLines(scr.finalDisposition, contentW - 8, 9).slice(0, 3).forEach(function (line) { leftText(line, margin + 4, y, 9); y -= 11.5; });
+
+  // ---- Footer ---------------------------------------------------------------------
+  leftText(orgName + ' – Supplier Change Request – Form QF-SCR-01, Rev. A', margin, 24, 7.5, { color: labelGray });
+
+  return pdfDoc.save();
+}
+
+async function handleGetScrPdf(env, origin, id, accessLevel, organization, variant) {
+  const raw = await resolveScrRecord(env, id);
+  if (!raw) return json({ message: 'Not found.' }, 404, origin);
+  let clean = sanitizeScr(raw);
+  const scoped = scopeScrs([clean], accessLevel, organization);
+  if (!scoped.length) return json({ message: 'Not found.' }, 404, origin);
+  clean = scoped[0];
+
+  // A Customer login only ever gets the Customer-branded copy of their own
+  // shared record - never the Dessimate-branded one.
+  const effectiveVariant = (accessLevel === 'customer') ? 'customer' : variant;
+
+  let letterhead;
+  if (effectiveVariant === 'customer') {
+    const customerOrgName = (accessLevel === 'customer') ? organization : (clean.sharedWithCustomers[0] || '');
+    if (!customerOrgName) return json({ message: 'This SCR hasn’t been shared with a Customer yet.' }, 400, origin);
+    const orgState = await readJsonArrayFile(env, ORGANIZATIONS_FILE_PATH);
+    const customerOrg = orgState.items.map(sanitizeOrg).find(function (o) { return o.relationship === 'Customer' && o.name === customerOrgName; });
+    letterhead = { orgName: customerOrgName, logoBytes: null, logoMimeType: null };
+    if (customerOrg && customerOrg.logo && customerOrg.logo.path) {
+      try {
+        const bytes = await readGithubFileBytes(env, customerOrg.logo.path);
+        if (bytes) { letterhead.logoBytes = bytes; letterhead.logoMimeType = customerOrg.logo.mimeType; }
+      } catch (e) { /* falls back to org name text */ }
+    }
+  } else {
+    letterhead = { orgName: 'Dessimate', logoBytes: base64ToBytes(DESSIMATE_LOGO_JPG_BASE64), logoMimeType: 'image/jpeg' };
+  }
+
+  let pdfBytes;
+  try {
+    pdfBytes = await buildScrPdf(clean, letterhead);
+  } catch (e) {
+    return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
+  }
+  return pdfResponse(pdfBytes, 'SCR ' + clean.scrNumber + ' (' + (effectiveVariant === 'customer' ? letterhead.orgName : 'Dessimate') + ').pdf', origin);
 }
 
 // ---- Supplier Invoices (what a Supplier bills Dessimate against a

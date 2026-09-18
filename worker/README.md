@@ -873,6 +873,39 @@ auto-numbered. Click **View PDF** on any row to generate the
 the spot, the same drawn-from-scratch-on-the-backend approach as the
 Dessimate PO/Invoice PDFs.
 
+## Customer SCRs (SCR)
+
+A separate module from Dessimate CRs above — a Supplier Change Request
+shared between Dessimate and a Customer, once Dessimate has completed and
+released it. `PDIR_SCR.html`, stored in `data/scrs.json`. Reached through
+the same "Change Requests" sidebar entry as Dessimate CRs, now a chooser
+page (`PDIR_ChangeRequestsHub.html`) with a tile for each module.
+
+**Dessimate-staff-only, end to end** — unlike the CR module, there is no
+Supplier create/edit path here at all: Team Member+ fills in every section
+(Supplier & Part Information, Deviation Information, the six-department
+Approval/Disapproval table, and Disposition) and generates the PDF. **A
+Supplier login has no visibility or access whatsoever** — not even the
+tile on the chooser page appears for one, and the backend returns nothing
+for a Supplier's list/record/PDF/file requests, the one module in this app
+where Supplier access isn't just narrower, it's zero.
+
+A Customer only ever sees an SCR once Dessimate explicitly adds their
+organization to its **Share with Customer(s)** list — an opt-in, per-record
+share list (the same pattern RFQ uses for supplier quotes), never automatic.
+A shared SCR is read-only for that Customer, and they only ever see their
+own name in the share list even if others are on it.
+
+**SCR Number** is formatted `SCR-###` and auto-assigned like CR Number (a
+custom value is accepted too, and bumps the counter past it), Team Member+
+only. Because the two original templates (`SCR00x Dessimate Form
+Template.docx` / `SCR00x Customer Form Template.doc`) are the same form
+under two different letterheads, **View PDF** offers both a **Dessimate
+PDF** and a **Customer PDF** button for staff — same record, same layout,
+just Dessimate's own logo vs. the shared Customer organization's logo (or
+their name, if they have none on file) in the header. A Customer login
+always gets their own branded copy regardless of which button they click.
+
 ## About the GitHub repo's visibility
 
 Now that every page and file is fetched through this backend (using your
