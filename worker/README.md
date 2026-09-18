@@ -879,7 +879,10 @@ A separate module from Dessimate CRs above — a Supplier Change Request
 shared between Dessimate and a Customer, once Dessimate has completed and
 released it. `PDIR_SCR.html`, stored in `data/scrs.json`. Reached through
 the same "Change Requests" sidebar entry as Dessimate CRs, now a chooser
-page (`PDIR_ChangeRequestsHub.html`) with a tile for each module.
+page (`PDIR_ChangeRequestsHub.html`) with a tile for each module. Like CR's
+**Change Title**, an **SCR Title** field sits above Section A as a short
+subject line and appears on both the list view and the generated PDF —
+not part of the original template.
 
 **Dessimate-staff-only, end to end** — unlike the CR module, there is no
 Supplier create/edit path here at all: Team Member+ fills in every section

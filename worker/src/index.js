@@ -4140,6 +4140,10 @@ function sanitizeScr(o) {
     scrNumber: o.scrNumber || '',
     createdAt: o.createdAt || null,
     createdBy: o.createdBy || '',
+    // Not part of the original SCR00x template - added as a prominent
+    // "subject line" the same way CR's changeTitle was, so a reader knows
+    // what the SCR is about before reading Section A.
+    scrTitle: o.scrTitle || '',
     // A. Supplier Information
     supplierOrg: o.supplierOrg || '',
     supplierDate: o.supplierDate || '',
@@ -4194,6 +4198,7 @@ function sanitizeScr(o) {
 // has - every field is always accepted from a Team Member+ caller.
 function validateScrFields(body) {
   return {
+    scrTitle: (body.scrTitle || '').toString().trim(),
     supplierOrg: (body.supplierOrg || '').toString().trim(),
     supplierDate: (body.supplierDate || '').toString().trim(),
     supplierContactName: (body.supplierContactName || '').toString().trim(),
@@ -4419,6 +4424,16 @@ async function buildScrPdf(scr, letterhead) {
   rightText('Control Number: ' + (scr.scrNumber || ''), pageWidth - margin, hy - 35, 10.5, { bold: true });
 
   let y = hy - 74;
+
+  // SCR Title - not part of the original template, added as a prominent
+  // "subject line" the same way CR's changeTitle was. Capped at one line
+  // (unlike CR's two) since this page's sections already use the page's
+  // available height closely.
+  if (scr.scrTitle) {
+    const titleLines = wrapLines(scr.scrTitle, contentW, 12.5, fontBold).slice(0, 1);
+    titleLines.forEach(function (line) { leftText(line, margin, y, 12.5, { bold: true, color: ink }); y -= 15; });
+    y -= 6;
+  }
 
   // ---- A. Supplier Information / B. Part Information (two columns) ------------
   const colW = contentW / 2 - 6;

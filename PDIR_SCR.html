@@ -246,6 +246,7 @@
       <thead id="scrTableHead">
         <tr>
           <th data-sort-key="scrNumber">SCR #</th>
+          <th data-sort-key="scrTitle">Title</th>
           <th data-sort-key="supplierOrg">Supplier</th>
           <th data-sort-key="partNumber">Part Number</th>
           <th data-sort-key="supplierDate">Date</th>
@@ -295,6 +296,10 @@
           </div>
         </div>
       </div>
+
+      <label>SCR Title
+        <input type="text" id="f_scrTitle" placeholder="Short summary of what's changing">
+      </label>
 
       <div class="modalSection" style="margin-top:0;">
         <h3 style="border-top:none; padding-top:0;">A. Supplier Information</h3>
@@ -965,6 +970,7 @@
           '</div>';
       return '<tr>' +
         '<td class="scrNumber">' + escapeHtml(scr.scrNumber) + '</td>' +
+        '<td>' + (scr.scrTitle ? escapeHtml(scr.scrTitle) : '<span style="color:var(--label);">—</span>') + '</td>' +
         '<td>' + escapeHtml(scr.supplierOrg) + '</td>' +
         '<td>' + escapeHtml(scr.partNumber) + '</td>' +
         '<td>' + escapeHtml(fmtDateMDY(scr.supplierDate)) + '</td>' +
@@ -1189,6 +1195,7 @@
     document.getElementById('modalTitle').textContent = (canManageAll() ? 'Edit ' : 'View ') + 'SCR ' + scr.scrNumber;
     document.getElementById('modalSub').textContent = canManageAll() ? 'SCR Number can be changed any time.' : 'Shared with your organization by Dessimate.';
     document.getElementById('f_scrNumber').value = scr.scrNumber;
+    document.getElementById('f_scrTitle').value = scr.scrTitle || '';
     document.getElementById('f_supplierDate').value = scr.supplierDate || '';
     document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions(scr.supplierOrg || '');
     document.getElementById('f_supplierContactName').value = scr.supplierContactName || '';
@@ -1262,6 +1269,7 @@
     var carChecked = document.querySelector('input[name="f_carRequired"]:checked');
 
     var baseFields = {
+      scrTitle: document.getElementById('f_scrTitle').value.trim(),
       supplierDate: document.getElementById('f_supplierDate').value,
       supplierOrg: document.getElementById('f_supplierOrg').value,
       supplierContactName: document.getElementById('f_supplierContactName').value.trim(),
