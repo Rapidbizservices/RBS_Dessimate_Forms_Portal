@@ -1,0 +1,1328 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Change Requests &mdash; DSCM</title>
+<link rel="stylesheet" href="office-viewer.css">
+<link rel="stylesheet" href="confirm-dialog.css">
+<link rel="stylesheet" href="sortable-table.css">
+<script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:1220px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+
+  .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .homeBtn, .addBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
+    border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
+  }
+  .homeBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .homeBtn:hover{ background:#eef1fa; }
+  html[data-embedded] .homeBtn{ display:none !important; }
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
+  .addBtn{ color:#fff; background:#1f9254; }
+  .addBtn:hover{ background:#187b46; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
+    font-size:12.5px; margin:10px 0 18px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  /* Staff login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+  .authNote{ font-size:11.5px; color:var(--label); background:#f7f8fb; border:1px solid var(--line);
+    border-radius:6px; padding:8px 10px; margin:0 0 16px; line-height:1.45; }
+  .authAttempts{ font-size:12px; color:var(--label); min-height:14px; margin-top:4px; }
+
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
+
+  .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; overflow-x:auto; }
+  table.crTable{ width:100%; border-collapse:collapse; font-size:13px; min-width:960px; }
+  table.crTable th{ background:#eef1f7; color:var(--label); font-size:11px; text-transform:uppercase;
+    letter-spacing:.02em; text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.crTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  table.crTable tr:last-child td{ border-bottom:none; }
+  .crNumber{ font-weight:700; }
+  .statusPill{ display:inline-block; font-size:11px; font-weight:700; border-radius:5px; padding:3px 8px; white-space:nowrap; }
+  .statusPill.approved{ color:#187b46; background:#e5f4ec; }
+  .statusPill.conditional{ color:#a06a1c; background:#faf1e0; }
+  .statusPill.rejected{ color:#b23b3b; background:#fbeaea; }
+  .statusPill.pending{ color:var(--label); background:#eef0f4; }
+  .rowActions{ display:flex; gap:8px; white-space:nowrap; }
+  .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:6px 12px; white-space:nowrap; }
+  .editBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .editBtn:hover{ background:#eef1fa; }
+  .pdfBtn{ color:#1f9254; background:#fff; border:1px solid #1f9254; }
+  .pdfBtn:hover{ background:#eaf6ef; }
+  .deleteBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
+  .deleteBtn:hover{ background:#fbeaea; border-color:#b23b3b; }
+
+  .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
+  .state.error{ color:#b23b3b; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+
+  /* Add/Edit modal */
+  .modalOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1500; align-items:center; justify-content:center; padding:20px; }
+  .modalOverlay.open{ display:flex; }
+  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:900px;
+    max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .modalCard h2{ font-size:17px; margin:0 0 4px; color:var(--ink); }
+  .modalCard .modalSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .modalCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .modalCard input, .modalCard select, .modalCard textarea{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .modalGrid2{ display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+  .modalGrid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 14px; }
+  .modalGrid4{ display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:0 14px; }
+
+  .numberBanner{ display:flex; gap:20px; flex-wrap:wrap; background:#f7f8fb; border:1px solid var(--line);
+    border-radius:8px; padding:12px 14px; margin-bottom:16px; font-size:12.5px; color:var(--label); }
+  .numberField{ flex:1 1 220px; min-width:200px; }
+  .numberField label{ display:block; margin-bottom:4px; }
+  .numberFieldRow{ display:flex; gap:8px; align-items:center; }
+  .numberFieldRow input{ flex:1 1 auto; min-width:0; font-variant-numeric:tabular-nums; }
+  .numberFieldRow input[readonly]{ background:#eef1f5; color:var(--ink); font-weight:700; }
+  .numberFieldRow button{ flex:0 0 auto; font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:7px 10px; white-space:nowrap; color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .numberFieldRow button:hover{ background:#eef1fa; }
+  .numberFieldRow button:disabled{ opacity:.5; cursor:default; background:#fff; }
+
+  .modalSection{ margin:18px 0 4px; }
+  .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
+  .modalSectionHint{ font-size:12px; color:var(--label); margin:2px 0 8px; }
+
+  .radioGroup{ display:flex; gap:18px; flex-wrap:wrap; margin-top:5px; }
+  .radioGroup label{ display:flex; align-items:center; gap:6px; font-size:13px; font-weight:400;
+    color:var(--ink); margin:0; cursor:pointer; }
+  .radioGroup input[type=radio]{ width:auto; margin:0; }
+
+  .partsWrap{ display:flex; flex-direction:column; gap:8px; margin-top:5px; }
+  .partRow{ display:flex; gap:8px; align-items:center; }
+  .partRow select{ flex:1 1 auto; margin:0; }
+  .partRow button{ flex:0 0 auto; font-family:inherit; font-size:11px; font-weight:700; color:#b23b3b; background:#fff;
+    border:1px solid #e3b3b3; border-radius:6px; padding:8px 10px; cursor:pointer; white-space:nowrap; }
+  .partRow button:hover{ background:#fbeaea; }
+  .addLineBtn{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand); background:#fff;
+    border:1px solid var(--line); border-radius:7px; padding:7px 14px; cursor:pointer; margin-top:10px; }
+  .addLineBtn:hover{ background:#eef1fa; }
+  .addLineBtn:disabled{ opacity:.5; cursor:default; }
+
+  .docCell{ font-size:12px; color:var(--label); }
+  .docCell .have{ color:#187b46; font-weight:600; }
+  .attachCount{ font-weight:400; font-size:12.5px; color:var(--label); }
+  .attachmentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .attachRow{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:2px 12px;
+    padding:7px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
+  .attachRow .attachName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .attachRow .attachName.pending{ color:#a06a1c; }
+  .attachRow .attachLinks{ display:flex; gap:10px; flex:0 0 auto; }
+  .attachRow .attachLinks button{ font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
+  .attachRow .attachLinks button:hover{ text-decoration:underline; }
+  .attachRow .attachLinks .removeLink{ color:#b23b3b; }
+  .attachRow .attachMeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
+  .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
+  .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    padding:9px 0; font-size:12.5px; }
+  .docRow .docMain{ flex:1 1 auto; min-width:0; }
+  .docRow input[type=file]{ font-size:11.5px; margin-top:2px; }
+
+  .imageSlots{ display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
+  .imageSlot h4{ font-size:12px; margin:0 0 6px; color:var(--ink); }
+
+  .approvalSection{ background:#f7f8fb; border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-top:10px; }
+  .approvalReadOnlyNote{ font-size:12px; color:var(--label); font-style:italic; margin:0 0 10px; }
+
+  .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
+  .modalBtns{ display:flex; gap:10px; margin-top:10px; }
+  .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
+    padding:11px; cursor:pointer; }
+  .saveBtn{ color:#fff; background:var(--brand); border:none; }
+  .saveBtn:hover{ background:var(--brand-dark); }
+  .saveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .cancelBtn:hover{ background:#f4f5f8; }
+
+  /* In-page document viewer */
+  .viewerOverlay{
+    display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:2200; padding:22px; align-items:center; justify-content:center;
+  }
+  .viewerOverlay.open{ display:flex; }
+  .viewerPanel{
+    background:#fff; border-radius:10px; width:100%; max-width:980px; height:100%;
+    display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .viewerBar{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:12px 16px; border-bottom:1px solid var(--line); }
+  .viewerTitle{ font-size:14px; font-weight:700; overflow-wrap:anywhere; }
+  .viewerBtns{ display:flex; gap:8px; flex:0 0 auto; }
+  .viewerBtns a, .viewerBtns button{
+    font-family:inherit; font-size:13px; font-weight:600; text-decoration:none; cursor:pointer;
+    border-radius:6px; padding:7px 14px; white-space:nowrap;
+  }
+  #docViewerDownload{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  #docViewerDownload:hover{ background:#eef1fa; }
+  #docViewerClose{ color:#fff; background:#5b5f66; border:1px solid #5b5f66; }
+  #docViewerClose:hover{ background:#3f4248; }
+  .viewerBody{ flex:1 1 auto; position:relative; background:#525659; }
+  .viewerBody iframe, .viewerBody img{ position:absolute; inset:0; width:100%; height:100%; border:0; object-fit:contain; background:#525659; }
+  .viewerBody .viewerState{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:13.5px; text-align:center; padding:20px; flex-direction:column; gap:10px;
+  }
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>Change Requests</h1>
+        <p class="sub">A change either a Supplier is requesting of Dessimate, or Dessimate is requesting of a Supplier &mdash; one shared CR Number, one generated PDF.</p>
+      </div>
+    </div>
+    <div class="headerBtns">
+      <a class="homeBtn" href="index.html">Home</a>
+      <a class="homeBtn" href="PDIR_DessimatePOs.html">Dessimate POs</a>
+      <a class="homeBtn" href="PDIR_Parts.html">Parts</a>
+      <a class="homeBtn" href="Instructions.html">Instructions</a>
+      <button type="button" class="addBtn" id="addCrBtn" style="display:none;">Add Change Request</button>
+    </div>
+  </div>
+
+  <div class="ghbar">
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
+  </div>
+
+  <div class="toolbar">
+    <h2 id="toolbarTitle">Change Requests</h2>
+  </div>
+
+  <div class="panel">
+    <div id="loadingState" class="state">Loading&hellip;</div>
+    <div id="errorState" class="state error" style="display:none;"></div>
+    <div id="emptyState" class="state" style="display:none;">No Change Requests yet. Click <strong>Add Change Request</strong> above to add the first one.</div>
+    <table class="crTable" id="crTable" style="display:none;">
+      <thead id="crTableHead">
+        <tr>
+          <th data-sort-key="crNumber">CR #</th>
+          <th data-sort-key="dateRaised">Date Raised</th>
+          <th data-sort-key="supplierOrg">Supplier</th>
+          <th data-sort-key="direction">Direction</th>
+          <th data-sort-key="phase">Phase</th>
+          <th data-sort-key="approvalStatus">Approval</th>
+          <th>PDF</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="crTableBody"></tbody>
+    </table>
+  </div>
+
+  <footer>Dessimate &middot; DSCM &middot; Change Requests &middot; <span id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</span></footer>
+</div>
+
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Staff Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to use the DSCM system.</p>
+    <p class="authNote">Please check the username and password provided by your Dessimate contact. Your account will be locked after 3 unsuccessful login attempts.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+      <div class="authAttempts" id="authAttempts"></div>
+    </form>
+  </div>
+</div>
+
+<div class="modalOverlay" id="crModalOverlay">
+  <div class="modalCard">
+    <h2 id="modalTitle">Add Change Request</h2>
+    <p class="modalSub" id="modalSub">CR Number is assigned automatically when you save.</p>
+    <form id="crForm">
+      <div class="numberBanner" id="numberBanner">
+        <div class="numberField">
+          <label for="f_crNumber">CR Number <span style="font-weight:400;">(optional — leave blank to auto-assign)</span></label>
+          <div class="numberFieldRow">
+            <input type="text" id="f_crNumber" placeholder="assigned on Save">
+            <button type="button" id="useSystemCrBtn">Use System Number</button>
+          </div>
+        </div>
+        <div class="numberField">
+          <label for="f_dateRaised">Date Raised</label>
+          <input type="date" id="f_dateRaised">
+        </div>
+      </div>
+
+      <div class="modalGrid2">
+        <label>Supplier
+          <select id="f_supplierOrg" required></select>
+        </label>
+        <label>Supplier Contact Name
+          <input type="text" id="f_supplierContactName">
+        </label>
+      </div>
+      <div class="modalGrid2">
+        <label>Direction
+          <select id="f_direction">
+            <option value="supplier_to_dessimate">Supplier &rarr; Dessimate (Supplier is requesting this change)</option>
+            <option value="dessimate_to_supplier">Dessimate &rarr; Supplier (Dessimate is requesting this change)</option>
+          </select>
+        </label>
+        <span></span>
+      </div>
+
+      <div class="modalSection">
+        <h3>Part Numbers Affected <span style="font-weight:400;">(up to 5, optional)</span></h3>
+        <div class="partsWrap" id="partNumbersWrap"></div>
+        <button type="button" class="addLineBtn" id="addPartBtn">+ Add Part Number</button>
+      </div>
+
+      <div class="modalGrid2">
+        <label>Phase
+          <div class="radioGroup">
+            <label><input type="radio" name="f_phase" value="pre_production"> Pre-Production</label>
+            <label><input type="radio" name="f_phase" value="production"> Production</label>
+          </div>
+        </label>
+        <label>Type
+          <div class="radioGroup">
+            <label><input type="radio" name="f_changeType" value="product"> Product Related</label>
+            <label><input type="radio" name="f_changeType" value="process"> Process Related</label>
+          </div>
+        </label>
+      </div>
+
+      <div class="modalSection">
+        <h3>Reference Image &mdash; Marking Location &amp; Text <span style="font-weight:400;">(optional)</span></h3>
+        <div class="imageSlots">
+          <div class="imageSlot">
+            <h4>Current Condition</h4>
+            <div id="currentConditionStatus"></div>
+            <input type="file" id="currentConditionInput" accept="image/png,image/jpeg">
+          </div>
+          <div class="imageSlot">
+            <h4>New Condition</h4>
+            <div id="newConditionStatus"></div>
+            <input type="file" id="newConditionInput" accept="image/png,image/jpeg">
+          </div>
+        </div>
+      </div>
+
+      <div class="modalSection">
+        <h3>Details of Change</h3>
+        <textarea id="f_detailsOfChange" rows="3"></textarea>
+      </div>
+
+      <div class="modalSection">
+        <h3>Attachments <span class="attachCount" id="attachCount">(0 / 20)</span></h3>
+        <p class="modalSectionHint">Add supporting files if necessary — up to 20.</p>
+        <div id="attachmentsList" class="attachmentsList"></div>
+        <div class="docRow">
+          <div class="docMain">
+            <input type="file" id="attachmentsDocInput" multiple>
+            <div class="modalError" id="attachError" style="margin-top:6px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modalSection">
+        <h3>Purpose of Change</h3>
+        <textarea id="f_purposeOfChange" rows="2"></textarea>
+      </div>
+
+      <div class="modalSection">
+        <h3>Requested By</h3>
+        <div class="modalGrid3">
+          <label>Signature <span style="font-weight:400;">(typed name)</span>
+            <input type="text" id="f_requestedBySignature">
+          </label>
+          <label>Supplier / Company
+            <input type="text" id="f_requestedByCompany">
+          </label>
+          <label>Date
+            <input type="date" id="f_requestedByDate">
+          </label>
+        </div>
+      </div>
+
+      <div class="modalSection" id="approvalSectionWrap">
+        <h3>Approval <span style="font-weight:400;">(Dessimate internal review)</span></h3>
+        <div class="approvalSection">
+          <p class="approvalReadOnlyNote" id="approvalReadOnlyNote" style="display:none;">Read-only — this is filled in by the Dessimate team during internal review.</p>
+          <label>Status
+            <div class="radioGroup">
+              <label><input type="radio" name="f_approvalStatus" value="approved"> Approved</label>
+              <label><input type="radio" name="f_approvalStatus" value="conditional"> Conditional Approval</label>
+              <label><input type="radio" name="f_approvalStatus" value="rejected"> Rejected</label>
+            </div>
+          </label>
+          <label>Conditions / Comments
+            <textarea id="f_approvalComments" rows="2"></textarea>
+          </label>
+          <div class="modalGrid4">
+            <label>Signature <span style="font-weight:400;">(typed name)</span>
+              <input type="text" id="f_approvedBySignature">
+            </label>
+            <label>Print Name
+              <input type="text" id="f_approvedByPrintName">
+            </label>
+            <label>Date
+              <input type="date" id="f_approvedByDate">
+            </label>
+            <label>Organization
+              <input type="text" id="f_approvedByOrg" value="Dessimate">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="modalError" id="modalError"></div>
+      <div class="modalBtns">
+        <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="docViewerOverlay" class="viewerOverlay">
+  <div class="viewerPanel">
+    <div class="viewerBar">
+      <div class="viewerTitle" id="docViewerTitle">Document</div>
+      <div class="viewerBtns">
+        <a id="docViewerDownload" href="#" style="display:none;">Download</a>
+        <button type="button" id="docViewerClose">Close</button>
+      </div>
+    </div>
+    <div class="viewerBody">
+      <div id="docViewerState" class="viewerState">Loading&hellip;</div>
+      <iframe id="docViewerFrame" title="Document preview" style="display:none;"></iframe>
+      <img id="docViewerImg" alt="Document preview" style="display:none;">
+      <div id="docViewerOffice" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<script src="office-viewer.js"></script>
+<script src="confirm-dialog.js"></script>
+<script src="sortable-table.js"></script>
+<script>
+(function(){
+  // ---- Backend (staff login + GitHub proxy) --------------------------------
+  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
+  (function stampAppVersion(){
+    fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg || !cfg.version) return;
+      var el = document.getElementById('appVersionStamp');
+      if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+    }).catch(function(){});
+  })();
+
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  // Unlike every other Production Module, a Supplier can create/edit their
+  // own CR here (not just Team Member+) - see worker/README.md. isAdmin is
+  // kept separate since Delete stays Team Member+ only, same as the record
+  // write split on the backend.
+  var currentAccessLevel = null;
+  var currentOrganization = '';
+  function canManageAll(){ return currentAccessLevel === 'team_member' || currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
+  function isSupplierUser(){ return currentAccessLevel === 'supplier'; }
+  function canCreateOrEdit(){ return canManageAll() || isSupplierUser(); }
+  async function resolveMe(){
+    var session = getSession();
+    if (!session) { currentAccessLevel = null; currentOrganization = ''; return; }
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+      if (res.ok) {
+        var data = await res.json();
+        currentAccessLevel = data.accessLevel || 'team_member';
+        currentOrganization = data.organization || '';
+      }
+    } catch (e) { console.error('Could not resolve access level', e); }
+  }
+  function applyAccessLevelUI(){
+    var addBtn = document.getElementById('addCrBtn');
+    if (addBtn) addBtn.style.display = canCreateOrEdit() ? '' : 'none';
+    document.getElementById('toolbarTitle').textContent = isSupplierUser() ? 'Change Requests Involving Your Organization' : 'Change Requests';
+  }
+
+  async function apiFetch(path, opts){
+    opts = opts || {};
+    var headers = opts.headers || {};
+    var session = getSession();
+    if (session) headers['Authorization'] = 'Bearer ' + session.token;
+    var res = await fetch(WORKER_BASE_URL + '/' + path, { method: opts.method || 'GET', headers: headers, body: opts.body });
+    if (res.status === 401 && path !== 'login') {
+      clearSession();
+      showAuthOverlay();
+      throw new Error('Your session has expired — please log in again.');
+    }
+    return res;
+  }
+  function workerContentsPath(fullPath){
+    return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
+  }
+  function bytesToBase64(bytes){
+    var binary = '', chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+  function base64ToBytes(b64){
+    var bin = atob((b64 || '').replace(/\s+/g, ''));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  function docFileExt(filename){
+    var m = /\.[a-zA-Z0-9]+$/.exec(filename || '');
+    return m ? m[0] : '';
+  }
+  async function ghGetSha(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status);
+    var data = await res.json();
+    return data.sha;
+  }
+  async function ghGetFileBytes(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status + ' while loading ' + fullPath + '.');
+    var data = await res.json();
+    return base64ToBytes(data.content || '');
+  }
+  async function ghPutFile(fullPath, bytes, commitMessage){
+    var sha = await ghGetSha(fullPath);
+    var body = { message: commitMessage || ('Update ' + fullPath), content: bytesToBase64(bytes) };
+    if (sha) body.sha = sha;
+    var res = await apiFetch(workerContentsPath(fullPath), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+      throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+    }
+    return await res.json();
+  }
+  var CR_DOC_FOLDER = 'change_request_docs';
+  var ATTACHMENTS_MAX = 20;
+  function buildDocPath(crId, folder, filename, idx){
+    var safeName = (filename || 'file').replace(/[\\/]/g, '_');
+    return CR_DOC_FOLDER + '/' + crId + '/' + folder + '/' + Date.now() + '-' + idx + '-' + safeName;
+  }
+  function readFileAsBytes(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onerror = function(){ reject(new Error('Could not read "' + file.name + '".')); };
+      reader.onload = function(){ resolve(new Uint8Array(reader.result)); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Staff login wall -----------------------------------------------------
+  var pendingAfterAuth = null;
+
+  function refreshGhStatus(){
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Welcome, ' + session.username;
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Log out';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Log out';
+    }
+  }
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
+    refreshGhStatus();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var attemptsEl = document.getElementById('authAttempts');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = ''; attemptsEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) {
+          var loginErr = new Error(data.message || ('HTTP ' + res.status));
+          loginErr.attemptsRemaining = data.attemptsRemaining;
+          throw loginErr;
+        }
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+        document.getElementById('authPassword').value = '';
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+        attemptsEl.textContent = (err && typeof err.attemptsRemaining === 'number' && err.attemptsRemaining > 0)
+          ? 'Sign-in attempt ' + (3 - err.attemptsRemaining) + ' of 3 — this account locks after 3 failed attempts.'
+          : '';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  refreshGhStatus();
+  // -----------------------------------------------------------------------------
+
+  // ---- In-page document viewer -----------------------------------------------
+  var docViewerObjectUrl = null;
+  function closeDocViewer(){
+    document.getElementById('docViewerOverlay').classList.remove('open');
+    document.getElementById('docViewerFrame').src = 'about:blank';
+    document.getElementById('docViewerFrame').style.display = 'none';
+    document.getElementById('docViewerImg').src = '';
+    document.getElementById('docViewerImg').style.display = 'none';
+    document.getElementById('docViewerOffice').style.display = 'none';
+    document.getElementById('docViewerOffice').innerHTML = '';
+    document.getElementById('docViewerDownload').style.display = 'none';
+    if (docViewerObjectUrl) { URL.revokeObjectURL(docViewerObjectUrl); docViewerObjectUrl = null; }
+  }
+  document.getElementById('docViewerClose').addEventListener('click', closeDocViewer);
+  document.getElementById('docViewerOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'docViewerOverlay') closeDocViewer();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
+  });
+  function openPdfInViewer(filename, bytes){
+    var overlay = document.getElementById('docViewerOverlay');
+    var stateEl = document.getElementById('docViewerState');
+    var frame = document.getElementById('docViewerFrame');
+    var downloadBtn = document.getElementById('docViewerDownload');
+    document.getElementById('docViewerTitle').textContent = filename;
+    frame.style.display = 'none'; downloadBtn.style.display = 'none';
+    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var blob = new Blob([bytes], { type: 'application/pdf' });
+      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+      docViewerObjectUrl = URL.createObjectURL(blob);
+      frame.src = docViewerObjectUrl; frame.style.display = 'block';
+      stateEl.style.display = 'none';
+      downloadBtn.href = docViewerObjectUrl;
+      downloadBtn.download = filename;
+      downloadBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      stateEl.textContent = 'Could not display this PDF (' + (e && e.message ? e.message : e) + ').';
+    }
+  }
+  function isInlineViewable(mimeType, filename){
+    var ext = docFileExt(filename).toLowerCase();
+    if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
+    if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    var officeKind = window.OfficeViewer && window.OfficeViewer.isOfficeExt(filename, mimeType);
+    if (officeKind) return officeKind;
+    return null;
+  }
+  async function openDocViewer(source){
+    var overlay = document.getElementById('docViewerOverlay');
+    var stateEl = document.getElementById('docViewerState');
+    var frame = document.getElementById('docViewerFrame');
+    var img = document.getElementById('docViewerImg');
+    var office = document.getElementById('docViewerOffice');
+    var downloadBtn = document.getElementById('docViewerDownload');
+    document.getElementById('docViewerTitle').textContent = source.filename || 'Document';
+    frame.style.display = 'none'; img.style.display = 'none'; office.style.display = 'none'; office.innerHTML = ''; downloadBtn.style.display = 'none';
+    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var bytes = source.bytes;
+      if (!bytes) {
+        bytes = await ghGetFileBytes(source.path);
+        if (!bytes) throw new Error('File not found.');
+      }
+      var kind = isInlineViewable(source.mimeType, source.filename);
+      if (!kind) {
+        stateEl.textContent = "This file type can't be previewed here — use Download instead.";
+        return;
+      }
+      if (kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
+        office.style.display = 'block';
+        await window.OfficeViewer.render(kind, office, bytes);
+        stateEl.style.display = 'none';
+        var officeBlob = new Blob([bytes], { type: source.mimeType || 'application/octet-stream' });
+        if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+        docViewerObjectUrl = URL.createObjectURL(officeBlob);
+        downloadBtn.href = docViewerObjectUrl;
+        downloadBtn.download = source.filename || 'file';
+        downloadBtn.style.display = 'inline-block';
+        return;
+      }
+      var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : 'image/jpeg') });
+      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+      docViewerObjectUrl = URL.createObjectURL(blob);
+      if (kind === 'pdf') { frame.src = docViewerObjectUrl; frame.style.display = 'block'; }
+      else { img.src = docViewerObjectUrl; img.style.display = 'block'; }
+      stateEl.style.display = 'none';
+      downloadBtn.href = docViewerObjectUrl;
+      downloadBtn.download = source.filename || 'file';
+      downloadBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
+    }
+  }
+  async function viewGeneratedPdf(id, crNumber, btn){
+    var originalText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+    try {
+      var res = await apiFetch('change-requests/' + encodeURIComponent(id) + '/pdf');
+      if (!res.ok) {
+        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
+        throw new Error(msg || ('HTTP ' + res.status));
+      }
+      var buf = await res.arrayBuffer();
+      openPdfInViewer('Change Request ' + crNumber + '.pdf', new Uint8Array(buf));
+    } catch (err) {
+      alert('Could not generate the CR PDF (' + (err && err.message ? err.message : err) + ').');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+    }
+  }
+  // -----------------------------------------------------------------------------
+
+  function escapeHtml(s){
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function fmtDateMDY(s){
+    var str = (s == null ? '' : String(s)).trim();
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    if (m) return m[2] + '/' + m[3] + '/' + m[1];
+    if (str) {
+      var d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+      }
+    }
+    return str;
+  }
+  function attachMetaHtml(x, cls){
+    if (!x) return '';
+    if (x.kind === 'pending') {
+      var session = getSession();
+      return '<div class="' + cls + '">Will upload as ' + escapeHtml((session && session.username) || 'you') + '</div>';
+    }
+    var doc = x.kind === 'existing' ? x.doc : x;
+    if (!doc || (!doc.uploadedBy && !doc.uploadedAt)) return '';
+    var when = doc.uploadedAt ? fmtDateMDY(doc.uploadedAt) : '';
+    return '<div class="' + cls + '">Uploaded by ' + escapeHtml(doc.uploadedBy || 'Unknown') + (when ? ' on ' + when : '') + '</div>';
+  }
+  function stampUpload(){
+    var session = getSession();
+    return { uploadedBy: (session && session.username) || '', uploadedAt: new Date().toISOString() };
+  }
+  function directionLabel(cr){
+    return cr.direction === 'dessimate_to_supplier'
+      ? 'Dessimate → ' + (cr.supplierOrg || 'Supplier')
+      : (cr.supplierOrg || 'Supplier') + ' → Dessimate';
+  }
+  function phaseLabel(phase){
+    return phase === 'pre_production' ? 'Pre-Production' : (phase === 'production' ? 'Production' : '—');
+  }
+  function approvalPillHtml(status){
+    if (status === 'approved') return '<span class="statusPill approved">Approved</span>';
+    if (status === 'conditional') return '<span class="statusPill conditional">Conditional</span>';
+    if (status === 'rejected') return '<span class="statusPill rejected">Rejected</span>';
+    return '<span class="statusPill pending">Pending</span>';
+  }
+
+  // ---- Supplier / Parts dropdowns --------------------------------------------
+  var lastOrgs = [];
+  var lastParts = [];
+  async function loadDropdownData(){
+    try {
+      var orgRes = await apiFetch('organizations');
+      var orgData = orgRes.ok ? await orgRes.json() : { organizations: [] };
+      lastOrgs = Array.isArray(orgData.organizations) ? orgData.organizations : [];
+    } catch (e) { console.error('Could not load organizations', e); lastOrgs = []; }
+    try {
+      var partRes = await apiFetch('parts');
+      var partData = partRes.ok ? await partRes.json() : { parts: [] };
+      lastParts = Array.isArray(partData.parts) ? partData.parts : [];
+    } catch (e) { console.error('Could not load parts', e); lastParts = []; }
+  }
+  // A Supplier login only ever sees (and can only ever save as) their own
+  // name here - "each supplier should be able to see only their name in
+  // their dropdown" from the brief - enforced both by disabling the select
+  // and, for real safety, server-side (a Supplier's supplierOrg is always
+  // forced to their own resolved organization no matter what's submitted).
+  function supplierOrgOptions(currentValue){
+    if (isSupplierUser()) {
+      var mine = currentOrganization || currentValue || '';
+      return '<option value="' + escapeHtml(mine) + '" selected>' + escapeHtml(mine || '(your organization)') + '</option>';
+    }
+    var matching = lastOrgs.filter(function(o){ return o.relationship === 'Supplier'; });
+    var html = '<option value="">— Select Supplier —</option>' + matching.map(function(o){
+      var sel = (o.name === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(o.name) + '"' + sel + '>' + escapeHtml(o.name) + '</option>';
+    }).join('');
+    if (currentValue && !matching.some(function(o){ return o.name === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Organizations list)</option>';
+    }
+    return html;
+  }
+  function partOptions(currentValue){
+    var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
+      var sel = (p.partNumber === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(p.partNumber) + '"' + sel + '>' + escapeHtml(p.partNumber) + '</option>';
+    }).join('');
+    if (currentValue && !lastParts.some(function(p){ return p.partNumber === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Parts list)</option>';
+    }
+    return html;
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- List table --------------------------------------------------------------
+  var lastCrs = [];
+  var crSortState = { key: null, dir: 1 };
+  window.SortableTable.makeSortableHeaders(document.getElementById('crTableHead'), crSortState, renderTable);
+
+  async function loadCrs(){
+    var loadingEl = document.getElementById('loadingState');
+    var errorEl = document.getElementById('errorState');
+    var emptyEl = document.getElementById('emptyState');
+    var tableEl = document.getElementById('crTable');
+    loadingEl.style.display = 'block'; errorEl.style.display = 'none'; emptyEl.style.display = 'none'; tableEl.style.display = 'none';
+    try {
+      var res = await apiFetch('change-requests');
+      if (!res.ok) {
+        var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+        throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+      }
+      var data = await res.json();
+      lastCrs = Array.isArray(data.changeRequests) ? data.changeRequests : [];
+      loadingEl.style.display = 'none';
+      renderTable();
+    } catch (err) {
+      console.error(err);
+      loadingEl.style.display = 'none';
+      errorEl.style.display = 'block';
+      errorEl.textContent = 'Could not load Change Requests (' + err.message + ').';
+    }
+  }
+
+  function renderTable(){
+    var tableEl = document.getElementById('crTable');
+    var bodyEl = document.getElementById('crTableBody');
+    var emptyEl = document.getElementById('emptyState');
+    if (!lastCrs.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
+    emptyEl.style.display = 'none'; tableEl.style.display = 'table';
+
+    var defaultOrder = lastCrs.slice().sort(function(a, b){ return String(b.crNumber || '').localeCompare(String(a.crNumber || ''), undefined, { numeric: true }); });
+    var sorted = window.SortableTable.sortItems(defaultOrder, crSortState, function(cr, key){ return cr[key]; });
+    window.SortableTable.updateSortIndicators(document.getElementById('crTableHead'), crSortState);
+
+    bodyEl.innerHTML = sorted.map(function(cr){
+      return '<tr>' +
+        '<td class="crNumber">' + escapeHtml(cr.crNumber) + '</td>' +
+        '<td>' + escapeHtml(fmtDateMDY(cr.dateRaised)) + '</td>' +
+        '<td>' + escapeHtml(cr.supplierOrg) + '</td>' +
+        '<td>' + escapeHtml(directionLabel(cr)) + '</td>' +
+        '<td>' + escapeHtml(phaseLabel(cr.phase)) + '</td>' +
+        '<td>' + approvalPillHtml(cr.approvalStatus) + '</td>' +
+        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(cr.id) + '" data-crnum="' + escapeHtml(cr.crNumber) + '">View PDF</button></td>' +
+        '<td><div class="rowActions">' +
+          (canCreateOrEdit() ? '<button type="button" class="editBtn" data-edit="' + escapeHtml(cr.id) + '">Edit</button>' : '') +
+          (canManageAll() ? '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(cr.id) + '">Delete</button>' : '') +
+        '</div></td>' +
+        '</tr>';
+    }).join('');
+
+    bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
+      btn.addEventListener('click', function(){ requireAuthThen(function(){ openEditModal(this.getAttribute('data-edit')); }.bind(this)); });
+    });
+    bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
+      btn.addEventListener('click', function(){ deleteCr(this.getAttribute('data-delete')); });
+    });
+    bodyEl.querySelectorAll('[data-pdf]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        requireAuthThen(function(){ viewGeneratedPdf(btn.getAttribute('data-pdf'), btn.getAttribute('data-crnum'), btn); });
+      });
+    });
+  }
+
+  async function deleteCr(id){
+    var cr = lastCrs.find(function(c){ return c.id === id; });
+    if (!(await confirmDialog('Remove Change Request ' + (cr ? cr.crNumber : '') + '? This can\'t be undone.'))) return;
+    requireAuthThen(async function(){
+      try {
+        var res = await apiFetch('change-requests/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!res.ok) { var d = {}; try { d = await res.json(); } catch(e){} throw new Error(d.message || ('HTTP ' + res.status)); }
+        await loadCrs();
+      } catch (err) {
+        alert('Could not delete this Change Request (' + (err && err.message ? err.message : err) + ').');
+      }
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Add / Edit modal --------------------------------------------------------
+  var editingId = null;
+  var partNumberRows = []; // ['010066-001', ...]
+  var PART_NUMBERS_MAX = 5;
+  var currentConditionState = null; // null | {kind:'pending', bytes, filename, mimeType} | {kind:'existing', doc}
+  var newConditionState = null;
+  var attachmentsState = [];
+
+  function renderPartNumbers(){
+    var wrap = document.getElementById('partNumbersWrap');
+    wrap.innerHTML = partNumberRows.map(function(pn, idx){
+      return '<div class="partRow" data-part-idx="' + idx + '">' +
+        '<select data-part-select>' + partOptions(pn) + '</select>' +
+        '<button type="button" data-part-remove="' + idx + '">Remove</button>' +
+        '</div>';
+    }).join('');
+    wrap.querySelectorAll('[data-part-idx]').forEach(function(row){
+      var idx = parseInt(row.getAttribute('data-part-idx'), 10);
+      row.querySelector('[data-part-select]').addEventListener('change', function(){ partNumberRows[idx] = this.value; });
+    });
+    wrap.querySelectorAll('[data-part-remove]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        partNumberRows.splice(parseInt(this.getAttribute('data-part-remove'), 10), 1);
+        renderPartNumbers();
+      });
+    });
+    document.getElementById('addPartBtn').disabled = partNumberRows.length >= PART_NUMBERS_MAX;
+  }
+  document.getElementById('addPartBtn').addEventListener('click', function(){
+    if (partNumberRows.length >= PART_NUMBERS_MAX) return;
+    partNumberRows.push('');
+    renderPartNumbers();
+  });
+
+  function renderImageSlot(kind){
+    var state = kind === 'current' ? currentConditionState : newConditionState;
+    var statusEl = document.getElementById(kind === 'current' ? 'currentConditionStatus' : 'newConditionStatus');
+    if (!state) { statusEl.innerHTML = '<div class="attachEmpty">No image attached.</div>'; return; }
+    var name = state.kind === 'pending' ? state.filename : state.doc.filename;
+    var nameClass = state.kind === 'pending' ? 'attachName pending' : 'attachName';
+    var label = state.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+    statusEl.innerHTML = '<div class="attachRow">' +
+      '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+      '<div class="attachLinks">' +
+        '<button type="button" data-imgview="' + kind + '">View</button>' +
+        '<span class="removeLink" style="cursor:pointer;" data-imgremove="' + kind + '">Remove</span>' +
+      '</div>' + attachMetaHtml(state, 'attachMeta') + '</div>';
+    statusEl.querySelector('[data-imgview]').addEventListener('click', function(){
+      if (state.kind === 'pending') openDocViewer({ filename: state.filename, mimeType: state.mimeType, bytes: state.bytes });
+      else openDocViewer({ filename: state.doc.filename, mimeType: state.doc.mimeType, path: state.doc.path });
+    });
+    statusEl.querySelector('[data-imgremove]').addEventListener('click', async function(){
+      if (!(await confirmDialog('Remove this image?'))) return;
+      if (kind === 'current') currentConditionState = null; else newConditionState = null;
+      renderImageSlot(kind);
+    });
+  }
+  function wireImageInput(inputId, kind){
+    document.getElementById(inputId).addEventListener('change', async function(){
+      var file = this.files && this.files[0];
+      this.value = '';
+      if (!file) return;
+      if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
+        alert('Please choose a PNG or JPG image.');
+        return;
+      }
+      try {
+        var bytes = await readFileAsBytes(file);
+        var entry = { kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' };
+        if (kind === 'current') currentConditionState = entry; else newConditionState = entry;
+        renderImageSlot(kind);
+      } catch (e) {
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      }
+    });
+  }
+  wireImageInput('currentConditionInput', 'current');
+  wireImageInput('newConditionInput', 'new');
+
+  function activeAttachmentCount(){ return attachmentsState.length; }
+  function renderAttachmentsList(){
+    var listEl = document.getElementById('attachmentsList');
+    var countEl = document.getElementById('attachCount');
+    var inputEl = document.getElementById('attachmentsDocInput');
+    var count = activeAttachmentCount();
+    countEl.textContent = '(' + count + ' / ' + ATTACHMENTS_MAX + ')';
+    if (!count) {
+      listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>';
+    } else {
+      listEl.innerHTML = attachmentsState.map(function(entry, idx){
+        var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
+        var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+        var viewBtn = entry.kind === 'pending'
+          ? '<button type="button" data-preview-idx="' + idx + '">Preview</button>'
+          : '<button type="button" data-view-idx="' + idx + '">View</button>';
+        return '<div class="attachRow">' +
+          '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+          '<div class="attachLinks">' + viewBtn +
+            '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' +
+          '</div>' + attachMetaHtml(entry, 'attachMeta') + '</div>';
+      }).join('');
+    }
+    inputEl.disabled = count >= ATTACHMENTS_MAX;
+    inputEl.title = inputEl.disabled ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached.' : '';
+
+    listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
+        if (entry) openDocViewer({ filename: entry.filename, mimeType: entry.mimeType, bytes: entry.bytes });
+      });
+    });
+    listEl.querySelectorAll('[data-view-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-view-idx'))];
+        if (entry) openDocViewer({ filename: entry.doc.filename, mimeType: entry.doc.mimeType, path: entry.doc.path });
+      });
+    });
+    listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var idx = Number(btn.getAttribute('data-remove-idx'));
+        var entry = attachmentsState[idx];
+        var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
+        if (!(await confirmDialog('Remove "' + name + '"?'))) return;
+        attachmentsState.splice(idx, 1);
+        renderAttachmentsList();
+      });
+    });
+  }
+  document.getElementById('attachmentsDocInput').addEventListener('change', async function(){
+    var files = this.files ? Array.from(this.files) : [];
+    this.value = '';
+    if (!files.length) return;
+    var errEl = document.getElementById('attachError');
+    errEl.textContent = '';
+    var room = ATTACHMENTS_MAX - activeAttachmentCount();
+    if (files.length > room) {
+      errEl.textContent = room <= 0
+        ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached — remove one before adding another.'
+        : 'Only ' + room + ' more file' + (room === 1 ? '' : 's') + ' can be added (limit ' + ATTACHMENTS_MAX + ').';
+      files = files.slice(0, Math.max(room, 0));
+    }
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      try {
+        var bytes = await readFileAsBytes(file);
+        attachmentsState.push({ kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' });
+      } catch (e) {
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      }
+    }
+    renderAttachmentsList();
+  });
+
+  // CR Number stays Team Member+ only - a Supplier never sets/sees it until
+  // after the system assigns one on first Save (matches the backend, which
+  // rejects a Supplier-supplied crNumber outright).
+  function setNumberFieldEditable(editable){
+    var input = document.getElementById('f_crNumber');
+    input.readOnly = !editable;
+    document.getElementById('useSystemCrBtn').style.display = editable ? '' : 'none';
+  }
+  document.getElementById('useSystemCrBtn').addEventListener('click', async function(){
+    var btn = this;
+    btn.disabled = true;
+    try {
+      var res = await apiFetch('change-requests/peek-number');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      document.getElementById('f_crNumber').value = data.crNumber;
+    } catch (e) {
+      alert('Could not look up the next system CR Number (' + (e && e.message ? e.message : e) + ').');
+    } finally { btn.disabled = false; }
+  });
+
+  function applyRoleUIForModal(){
+    var numberField = document.getElementById('numberBanner').querySelector('.numberField');
+    numberField.style.display = canManageAll() ? '' : 'none';
+    setNumberFieldEditable(canManageAll() && !editingId);
+    document.getElementById('f_supplierOrg').disabled = isSupplierUser();
+    var approvalNote = document.getElementById('approvalReadOnlyNote');
+    var approvalInputs = document.querySelectorAll('#approvalSectionWrap input, #approvalSectionWrap textarea');
+    approvalInputs.forEach(function(el){ el.disabled = !canManageAll(); });
+    approvalNote.style.display = canManageAll() ? 'none' : '';
+  }
+
+  function resetForm(){
+    document.getElementById('crForm').reset();
+    document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = [];
+    renderAttachmentsList();
+    currentConditionState = null;
+    newConditionState = null;
+    renderImageSlot('current');
+    renderImageSlot('new');
+    partNumberRows = [];
+    renderPartNumbers();
+    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions(isSupplierUser() ? currentOrganization : '');
+    document.getElementById('f_crNumber').value = '';
+    document.getElementById('f_dateRaised').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('f_approvedByOrg').value = 'Dessimate';
+    setNumberFieldEditable(canManageAll());
+    applyRoleUIForModal();
+  }
+
+  function openAddModal(){
+    editingId = null;
+    resetForm();
+    document.getElementById('modalTitle').textContent = 'Add Change Request';
+    document.getElementById('modalSub').textContent = 'CR Number is optional — leave blank to assign automatically, or type your own.';
+    document.getElementById('crModalOverlay').classList.add('open');
+  }
+  function openEditModal(id){
+    var cr = lastCrs.find(function(x){ return x.id === id; });
+    if (!cr) return;
+    editingId = id;
+    document.getElementById('crForm').reset();
+    document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = (cr.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
+    currentConditionState = cr.currentConditionImage ? { kind: 'existing', doc: cr.currentConditionImage } : null;
+    newConditionState = cr.newConditionImage ? { kind: 'existing', doc: cr.newConditionImage } : null;
+    renderImageSlot('current');
+    renderImageSlot('new');
+    partNumberRows = (cr.partNumbers || []).slice();
+    renderPartNumbers();
+
+    document.getElementById('modalTitle').textContent = 'Edit Change Request ' + cr.crNumber;
+    document.getElementById('modalSub').textContent = canManageAll() ? 'CR Number can be changed any time.' : 'Supplier, part, and deviation details can be updated below.';
+    document.getElementById('f_crNumber').value = cr.crNumber;
+    document.getElementById('f_dateRaised').value = cr.dateRaised || '';
+    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions(cr.supplierOrg || '');
+    document.getElementById('f_supplierContactName').value = cr.supplierContactName || '';
+    document.getElementById('f_direction').value = cr.direction || 'supplier_to_dessimate';
+    var phaseInput = document.querySelector('input[name="f_phase"][value="' + (cr.phase || '') + '"]');
+    if (phaseInput) phaseInput.checked = true;
+    var typeInput = document.querySelector('input[name="f_changeType"][value="' + (cr.changeType || '') + '"]');
+    if (typeInput) typeInput.checked = true;
+    document.getElementById('f_detailsOfChange').value = cr.detailsOfChange || '';
+    document.getElementById('f_purposeOfChange').value = cr.purposeOfChange || '';
+    document.getElementById('f_requestedBySignature').value = cr.requestedBySignature || '';
+    document.getElementById('f_requestedByCompany').value = cr.requestedByCompany || '';
+    document.getElementById('f_requestedByDate').value = cr.requestedByDate || '';
+    var approvalInput = document.querySelector('input[name="f_approvalStatus"][value="' + (cr.approvalStatus || '') + '"]');
+    if (approvalInput) approvalInput.checked = true;
+    document.getElementById('f_approvalComments').value = cr.approvalComments || '';
+    document.getElementById('f_approvedBySignature').value = cr.approvedBySignature || '';
+    document.getElementById('f_approvedByPrintName').value = cr.approvedByPrintName || '';
+    document.getElementById('f_approvedByDate').value = cr.approvedByDate || '';
+    document.getElementById('f_approvedByOrg').value = cr.approvedByOrg || 'Dessimate';
+
+    setNumberFieldEditable(false);
+    applyRoleUIForModal();
+    document.getElementById('crModalOverlay').classList.add('open');
+  }
+  function closeModal(){ document.getElementById('crModalOverlay').classList.remove('open'); }
+  document.getElementById('addCrBtn').addEventListener('click', function(){
+    requireAuthThen(async function(){ await loadDropdownData(); openAddModal(); });
+  });
+  document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('crModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'crModalOverlay') closeModal();
+  });
+
+  document.getElementById('crForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
+
+    var phaseChecked = document.querySelector('input[name="f_phase"]:checked');
+    var typeChecked = document.querySelector('input[name="f_changeType"]:checked');
+    var approvalChecked = document.querySelector('input[name="f_approvalStatus"]:checked');
+
+    var baseFields = {
+      dateRaised: document.getElementById('f_dateRaised').value,
+      supplierOrg: document.getElementById('f_supplierOrg').value,
+      supplierContactName: document.getElementById('f_supplierContactName').value.trim(),
+      direction: document.getElementById('f_direction').value,
+      partNumbers: partNumberRows.filter(Boolean),
+      phase: phaseChecked ? phaseChecked.value : '',
+      changeType: typeChecked ? typeChecked.value : '',
+      detailsOfChange: document.getElementById('f_detailsOfChange').value.trim(),
+      purposeOfChange: document.getElementById('f_purposeOfChange').value.trim(),
+      requestedBySignature: document.getElementById('f_requestedBySignature').value.trim(),
+      requestedByCompany: document.getElementById('f_requestedByCompany').value.trim(),
+      requestedByDate: document.getElementById('f_requestedByDate').value
+    };
+    if (canManageAll()) {
+      baseFields.approvalStatus = approvalChecked ? approvalChecked.value : '';
+      baseFields.approvalComments = document.getElementById('f_approvalComments').value.trim();
+      baseFields.approvedBySignature = document.getElementById('f_approvedBySignature').value.trim();
+      baseFields.approvedByPrintName = document.getElementById('f_approvedByPrintName').value.trim();
+      baseFields.approvedByDate = document.getElementById('f_approvedByDate').value;
+      baseFields.approvedByOrg = document.getElementById('f_approvedByOrg').value.trim();
+    }
+    if (!baseFields.supplierOrg) { errEl.textContent = 'Select a Supplier.'; return; }
+
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      var crId = editingId;
+      if (!crId) {
+        var createFields = Object.assign({}, baseFields);
+        if (canManageAll()) createFields.crNumber = document.getElementById('f_crNumber').value.trim();
+        var createRes = await apiFetch('change-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createFields) });
+        var createData = {}; try { createData = await createRes.json(); } catch(e){}
+        if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+        crId = createData.id;
+      }
+
+      var attachmentsPayload = [];
+      for (var i = 0; i < attachmentsState.length; i++) {
+        var entry = attachmentsState[i];
+        if (entry.kind === 'existing') {
+          attachmentsPayload.push(entry.doc);
+        } else {
+          var path = buildDocPath(crId, 'attachments', entry.filename, i);
+          await ghPutFile(path, entry.bytes, 'Upload attachment for Change Request ' + crId);
+          attachmentsPayload.push(Object.assign({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length }, stampUpload()));
+        }
+      }
+      var currentConditionPayload = null;
+      if (currentConditionState) {
+        if (currentConditionState.kind === 'existing') currentConditionPayload = currentConditionState.doc;
+        else {
+          var ccPath = buildDocPath(crId, 'current-condition', currentConditionState.filename, 0);
+          await ghPutFile(ccPath, currentConditionState.bytes, 'Upload current-condition image for Change Request ' + crId);
+          currentConditionPayload = Object.assign({ path: ccPath, filename: currentConditionState.filename, mimeType: currentConditionState.mimeType, size: currentConditionState.bytes.length }, stampUpload());
+        }
+      }
+      var newConditionPayload = null;
+      if (newConditionState) {
+        if (newConditionState.kind === 'existing') newConditionPayload = newConditionState.doc;
+        else {
+          var ncPath = buildDocPath(crId, 'new-condition', newConditionState.filename, 0);
+          await ghPutFile(ncPath, newConditionState.bytes, 'Upload new-condition image for Change Request ' + crId);
+          newConditionPayload = Object.assign({ path: ncPath, filename: newConditionState.filename, mimeType: newConditionState.mimeType, size: newConditionState.bytes.length }, stampUpload());
+        }
+      }
+
+      var putFields = Object.assign({}, baseFields, {
+        attachments: attachmentsPayload,
+        currentConditionImage: currentConditionPayload,
+        newConditionImage: newConditionPayload
+      });
+      if (canManageAll()) putFields.crNumber = document.getElementById('f_crNumber').value.trim();
+
+      var putRes = await apiFetch('change-requests/' + encodeURIComponent(crId), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(putFields)
+      });
+      var putData = {}; try { putData = await putRes.json(); } catch(e){}
+      if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
+
+      closeModal();
+      await loadCrs();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not save this Change Request.';
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+  // -----------------------------------------------------------------------------
+
+  requireAuthThen(async function(){ await resolveMe(); applyAccessLevelUI(); await loadDropdownData(); await loadCrs(); });
+})();
+</script>

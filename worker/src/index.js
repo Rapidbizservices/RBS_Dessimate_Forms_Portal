@@ -176,6 +176,22 @@
  *                                        Quote" back to the Customer (price/tooling cost per line,
  *                                        attachments, notes) - invisible to that Customer login
  *                                        until called with submit:true.
+ *   GET    /change-requests            - any signed-in user; scoped by role (team_member or above
+ *                                        sees every CR; a Supplier login sees only CRs where it's
+ *                                        the named supplierOrg, in either direction).
+ *   POST   /change-requests            - team_member or above, OR supplier; creates a CR. A
+ *                                        Supplier's supplierOrg is always forced to their own
+ *                                        resolved organization server-side, and any Approval-section
+ *                                        fields in the body are silently ignored (Team Member+ only).
+ *   GET    /change-requests/peek-number - team_member or above required; preview of the next
+ *                                        auto-assigned CR Number (does not consume it).
+ *   GET    /change-requests/<id>/pdf   - same read access as the record itself; renders the
+ *                                        Dessimate_Change_Request(CR).xlsx layout as a PDF.
+ *   PUT    /change-requests/<id>       - team_member or above, OR the owning Supplier; same
+ *                                        Approval-section stripping as POST. A Supplier can only
+ *                                        edit a CR where they're already the supplierOrg.
+ *   DELETE /change-requests/<id>       - team_member or above required (a Supplier can create/edit
+ *                                        their own CR, but never delete one - see module comment).
  *   GET    /contents/<path...>        - reads one file from R2 (blocked for anything
  *                                        under data/ - see above), or lists a "directory"
  *                                        prefix, in a shape mirroring GitHub's old API.
@@ -352,7 +368,15 @@ export default {
         const auth = await requireAuth(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         const accessLevel = await resolveAccessLevel(env, auth.username);
-        return json({ username: auth.username, accessLevel: accessLevel, impersonatedBy: auth.impersonatedBy || null }, 200, origin);
+        // Rev2.16: a Supplier/Customer's own organization name, so a page
+        // like Change Requests can lock a "which org is this for" dropdown
+        // to their own name without needing them to already own a record to
+        // infer it from - same resolveUserOrganization used everywhere else
+        // an org-scoped write needs to know who's asking.
+        const organization = (accessLevel === 'supplier' || accessLevel === 'customer')
+          ? await resolveUserOrganization(env, auth.username)
+          : '';
+        return json({ username: auth.username, accessLevel: accessLevel, organization: organization, impersonatedBy: auth.impersonatedBy || null }, 200, origin);
       }
 
       if (url.pathname === '/me/password' && request.method === 'PUT') {
@@ -613,6 +637,58 @@ export default {
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         if (request.method === 'PUT') return await handleUpdateRfq(request, env, origin, id);
         if (request.method === 'DELETE') return await handleDeleteRfq(env, origin, id);
+      }
+
+      if (url.pathname === '/change-requests') {
+        if (request.method === 'GET') {
+          const auth = await requireAuthWithScope(request, env);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleListChangeRequests(env, origin, auth.accessLevel, auth.organization);
+        }
+        if (request.method === 'POST') {
+          // Unlike every other Production Module's create route, a
+          // Supplier is allowed here too - see the module comment above
+          // handleCreateChangeRequest for why.
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleCreateChangeRequest(request, env, origin, auth.accessLevel, auth.username);
+        }
+      }
+
+      // Non-mutating preview of what "Use System Number" would assign -
+      // Team Member+ only (a Supplier never sets/changes the CR Number).
+      // Checked before the generic '/change-requests/' block below, same
+      // "specific route before generic prefix" ordering used throughout.
+      if (url.pathname === '/change-requests/peek-number' && request.method === 'GET') {
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handlePeekCrNumber(env, origin);
+      }
+
+      // PDF export - same read-access rule as the record itself (Team
+      // Member+ always, a Supplier only for their own CR). Checked before
+      // the generic '/change-requests/<id>' block, same ordering as the
+      // peek-number route just above.
+      if (/^\/change-requests\/[^/]+\/pdf$/.test(url.pathname) && request.method === 'GET') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireAuthWithScope(request, env);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleGetChangeRequestPdf(env, origin, id, auth.accessLevel, auth.organization);
+      }
+
+      if (url.pathname.startsWith('/change-requests/')) {
+        const id = decodeURIComponent(url.pathname.slice('/change-requests/'.length));
+        if (request.method === 'PUT') {
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleUpdateChangeRequest(request, env, origin, id, auth.accessLevel, auth.username);
+        }
+        if (request.method === 'DELETE') {
+          // Delete stays Team Member+ only - see the module comment above.
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleDeleteChangeRequest(env, origin, id);
+        }
       }
 
       if (url.pathname === '/supplier-invoices') {
@@ -2046,6 +2122,14 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
       const owner = await resolveSupplierInvoiceOwner(env, supplierInvoiceDocsMatch[1]);
       return owner !== null && owner === organization;
     }
+    // A Supplier can read the images/attachments on their own Change
+    // Request (change_request_docs) - same ownership check
+    // scopeChangeRequests already uses for the list itself.
+    const crDocsMatch = /^change_request_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (crDocsMatch) {
+      const cr = await resolveChangeRequestRecord(env, crDocsMatch[1]);
+      return !!cr && cr.supplierOrg === organization;
+    }
   }
   if (accessLevel === 'customer') {
     const dessimateQuoteDocsMatch = /^rfq_dessimate_quote_docs\/([^/]+)\/.+$/.exec(decoded);
@@ -2280,7 +2364,8 @@ const DEFAULT_COUNTERS = {
   nextDessimateInvoiceNumber: 3014, // reserved for the Dessimate Invoice module
   shipmentYear: 26,
   nextShipmentSeq: 10,
-  nextRfqNumber: 9009 // RFQ module - client's 9000-series, latest used was 9008
+  nextRfqNumber: 9009, // RFQ module - client's 9000-series, latest used was 9008
+  nextCrNumber: 1 // Change Request module - formatted "CR-###" (see reserveCrNumber)
 };
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -3404,6 +3489,488 @@ async function handleUpdateRfqDessimateQuote(request, env, origin, id, username)
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   return json(sanitizeRfqDessimateQuote(saved.dessimateQuote), 200, origin);
+}
+
+// ---- Change Requests (Rev2.16) - "CR" module: a change either a Supplier
+// is requesting of Dessimate, or Dessimate is requesting of a Supplier.
+// Unlike every other Production Module (Dessimate PO/Invoice/Parts), a
+// Supplier can create/edit their own CR directly - the product brief is
+// explicit: "Each supplier should be able to see only their name in their
+// dropdown when they initiate the change request." A Supplier's own write
+// is still narrowly trusted: supplierOrg is always forced to their own
+// resolved organization server-side (never taken from the client), and the
+// Approval section (Team Member+ only - the internal review/sign-off) is
+// silently stripped from a Supplier's payload even if present - same
+// "never trust the client for a privileged field" pattern as RFQ's
+// rfqNumber/supplierQuotes. Delete stays Team Member+ only (route-gated,
+// not in this handler) - a Supplier managing their own CR shouldn't be
+// able to erase one Dessimate raised against them.
+const CHANGE_REQUESTS_FILE_PATH = 'data/change_requests.json';
+const CR_DOC_FOLDER = 'change_request_docs';
+
+// CR Number is formatted "CR-###" when system-assigned, but (like RFQ
+// Number/PO Number/Shipment Number) a voluntary custom value is accepted
+// and bumps the counter past it if it parses as "CR-<digits>", so the
+// system never later hands out a colliding number.
+async function reserveCrNumber(env, clientCrNumber) {
+  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+    let crNumber;
+    if (clientCrNumber) {
+      crNumber = clientCrNumber;
+      const m = /^CR-(\d+)$/i.exec(clientCrNumber);
+      if (m) {
+        const seq = Number(m[1]);
+        if (seq >= obj.nextCrNumber) obj.nextCrNumber = seq + 1;
+      }
+    } else {
+      crNumber = 'CR-' + pad3(obj.nextCrNumber);
+      obj.nextCrNumber = obj.nextCrNumber + 1;
+    }
+    return { obj: obj, meta: { crNumber: crNumber } };
+  });
+  if (!result.ok) throw new Error(result.message);
+  return result.meta.crNumber;
+}
+
+// Non-mutating preview for the Add-CR modal's "Use System Number" button.
+async function handlePeekCrNumber(env, origin) {
+  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
+  return json({ crNumber: 'CR-' + pad3(state.obj.nextCrNumber) }, 200, origin);
+}
+
+async function crNumberTaken(env, crNumber, excludeId) {
+  const state = await readJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH);
+  const target = String(crNumber).toLowerCase();
+  return state.items.some(function (o) { return o.id !== excludeId && String(o.crNumber).toLowerCase() === target; });
+}
+
+function sanitizeChangeRequest(o) {
+  return {
+    id: o.id,
+    crNumber: o.crNumber || '',
+    dateRaised: o.dateRaised || '',
+    createdAt: o.createdAt || null,
+    createdBy: o.createdBy || '',
+    supplierOrg: o.supplierOrg || '',
+    supplierContactName: o.supplierContactName || '',
+    direction: o.direction === 'dessimate_to_supplier' ? 'dessimate_to_supplier' : 'supplier_to_dessimate',
+    partNumbers: Array.isArray(o.partNumbers) ? o.partNumbers.slice(0, 5) : [],
+    phase: (o.phase === 'pre_production' || o.phase === 'production') ? o.phase : '',
+    changeType: (o.changeType === 'product' || o.changeType === 'process') ? o.changeType : '',
+    currentConditionImage: sanitizeOrgDoc(o.currentConditionImage),
+    newConditionImage: sanitizeOrgDoc(o.newConditionImage),
+    detailsOfChange: o.detailsOfChange || '',
+    purposeOfChange: o.purposeOfChange || '',
+    attachments: sanitizeOrgDocList(o.attachments),
+    requestedBySignature: o.requestedBySignature || '',
+    requestedByCompany: o.requestedByCompany || '',
+    requestedByDate: o.requestedByDate || '',
+    approvalStatus: ['approved', 'conditional', 'rejected'].indexOf(o.approvalStatus) !== -1 ? o.approvalStatus : '',
+    approvalComments: o.approvalComments || '',
+    approvedBySignature: o.approvedBySignature || '',
+    approvedByPrintName: o.approvedByPrintName || '',
+    approvedByDate: o.approvedByDate || '',
+    approvedByOrg: o.approvedByOrg || ''
+  };
+}
+
+// Shared by create/update. `isSupplier` strips the Approval section
+// entirely (Team Member+ only) regardless of what the client sent.
+function validateChangeRequestFields(body, isSupplier) {
+  const partNumbers = Array.isArray(body.partNumbers)
+    ? body.partNumbers.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean).slice(0, 5)
+    : [];
+  const fields = {
+    dateRaised: (body.dateRaised || '').toString().trim(),
+    supplierContactName: (body.supplierContactName || '').toString().trim(),
+    direction: body.direction === 'dessimate_to_supplier' ? 'dessimate_to_supplier' : 'supplier_to_dessimate',
+    partNumbers: partNumbers,
+    phase: (body.phase === 'pre_production' || body.phase === 'production') ? body.phase : '',
+    changeType: (body.changeType === 'product' || body.changeType === 'process') ? body.changeType : '',
+    currentConditionImage: sanitizeOrgDoc(body.currentConditionImage),
+    newConditionImage: sanitizeOrgDoc(body.newConditionImage),
+    detailsOfChange: (body.detailsOfChange || '').toString().trim(),
+    purposeOfChange: (body.purposeOfChange || '').toString().trim(),
+    attachments: sanitizeOrgDocList(body.attachments),
+    requestedBySignature: (body.requestedBySignature || '').toString().trim(),
+    requestedByCompany: (body.requestedByCompany || '').toString().trim(),
+    requestedByDate: (body.requestedByDate || '').toString().trim()
+  };
+  if (!isSupplier) {
+    fields.approvalStatus = ['approved', 'conditional', 'rejected'].indexOf(body.approvalStatus) !== -1 ? body.approvalStatus : '';
+    fields.approvalComments = (body.approvalComments || '').toString().trim();
+    fields.approvedBySignature = (body.approvedBySignature || '').toString().trim();
+    fields.approvedByPrintName = (body.approvedByPrintName || '').toString().trim();
+    fields.approvedByDate = (body.approvedByDate || '').toString().trim();
+    fields.approvedByOrg = (body.approvedByOrg || '').toString().trim();
+  }
+  return fields;
+}
+
+// Team Member+ sees every CR; a Supplier sees only ones where they're the
+// named supplierOrg (regardless of direction - a Supplier can be either the
+// requester or the target of a Dessimate-initiated CR, and needs to see
+// either). A Customer login has no role in this module at all (never
+// mentioned in the brief - "Dessimate team... all... Suppliers... only
+// their related CRs") and sees nothing, same as RFQ's Supplier-side data.
+function scopeChangeRequests(items, accessLevel, organization) {
+  if (accessLevel === 'supplier') {
+    return items.filter(function (o) { return organization && o.supplierOrg === organization; });
+  }
+  if (accessLevel === 'customer') return [];
+  return items;
+}
+
+async function handleListChangeRequests(env, origin, accessLevel, organization) {
+  const state = await readJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH);
+  const items = scopeChangeRequests(state.items.map(sanitizeChangeRequest), accessLevel, organization);
+  return json({ changeRequests: items }, 200, origin);
+}
+
+async function handleCreateChangeRequest(request, env, origin, accessLevel, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const isSupplier = accessLevel === 'supplier';
+  const fields = validateChangeRequestFields(body, isSupplier);
+
+  let supplierOrg;
+  if (isSupplier) {
+    supplierOrg = await resolveUserOrganization(env, username);
+    if (!supplierOrg) return json({ message: 'Your account isn’t linked to a Supplier organization.' }, 403, origin);
+  } else {
+    supplierOrg = (body.supplierOrg || '').toString().trim();
+    if (!supplierOrg) return json({ message: 'Supplier is required.' }, 400, origin);
+  }
+
+  const clientCrNumber = (body.crNumber !== undefined && body.crNumber !== null) ? String(body.crNumber).trim() : '';
+  if (clientCrNumber && await crNumberTaken(env, clientCrNumber, null)) {
+    return json({ message: 'That Change Request Number is already in use.' }, 409, origin);
+  }
+  const crNumber = await reserveCrNumber(env, clientCrNumber);
+
+  const newCr = Object.assign(
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), createdBy: username || '', crNumber: crNumber, supplierOrg: supplierOrg },
+    fields
+  );
+
+  const result = await mutateJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH, function (items) {
+    items.push(newCr);
+    return { items: items };
+  });
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeChangeRequest(newCr), 201, origin);
+}
+
+async function handleUpdateChangeRequest(request, env, origin, id, accessLevel, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const isSupplier = accessLevel === 'supplier';
+  const fields = validateChangeRequestFields(body, isSupplier);
+
+  let callerOrg = '';
+  if (isSupplier) {
+    callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Supplier organization.' }, 403, origin);
+  }
+
+  let newCrNumber; // undefined = leave as-is
+  if (body.crNumber !== undefined) {
+    if (isSupplier) return json({ message: 'Only Dessimate staff can change the Change Request Number.' }, 403, origin);
+    const requested = (body.crNumber === null ? '' : String(body.crNumber)).trim();
+    if (!requested) return json({ message: 'Change Request Number is required.' }, 400, origin);
+    if (await crNumberTaken(env, requested, id)) {
+      return json({ message: 'That Change Request Number is already in use.' }, 409, origin);
+    }
+    newCrNumber = requested;
+  }
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    if (isSupplier && target.supplierOrg !== callerOrg) return null; // 404s below rather than 403 - don't reveal existence
+    if (!isSupplier && body.supplierOrg !== undefined) {
+      const requestedOrg = (body.supplierOrg || '').toString().trim();
+      if (requestedOrg) target.supplierOrg = requestedOrg;
+    }
+    Object.assign(target, fields); // approvalStatus/approvedBy* are never in `fields` for a Supplier's edit
+    if (newCrNumber !== undefined) target.crNumber = newCrNumber;
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeChangeRequest(saved), 200, origin);
+}
+
+async function handleDeleteChangeRequest(env, origin, id) {
+  const result = await mutateJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH, function (items) {
+    const idx = items.findIndex(function (o) { return o.id === id; });
+    if (idx === -1) return null;
+    items.splice(idx, 1);
+    return { items: items };
+  }, { requireFound: true });
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json({ ok: true }, 200, origin);
+}
+
+// Used by isContentsPathAllowedForExternal's change_request_docs branch and
+// the PDF route's Supplier ownership check - same "resolve just the
+// ownership field from raw storage" shape as resolveDessimatePoOwner.
+async function resolveChangeRequestRecord(env, id) {
+  const state = await readJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH);
+  return state.items.find(function (o) { return o.id === id; }) || null;
+}
+
+// Single-page rendering of the Dessimate_Change_Request(CR).xlsx template -
+// same drawn-from-scratch approach as buildDessimatePoPdf (this repo has no
+// tooling to fill an actual .xlsx/.docx template, so every PDF-producing
+// module recreates the reference layout with pdf-lib primitives instead).
+// currentConditionDoc/newConditionDoc are the raw {bytes, mimeType} already
+// read from R2 by the caller (or null) - embedded here via this function's
+// own pdfDoc, same as buildDessimatePoPdf embeds the approver stamp.
+async function buildCrPdf(cr, currentConditionDoc, newConditionDoc) {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const pageWidth = 612, pageHeight = 792; // US Letter
+  const margin = 44;
+  const contentW = pageWidth - margin * 2;
+
+  async function embedImageDoc(doc) {
+    if (!doc || !doc.bytes) return null;
+    try {
+      return (doc.mimeType === 'image/png') ? await pdfDoc.embedPng(doc.bytes) : await pdfDoc.embedJpg(doc.bytes);
+    } catch (e) { return null; }
+  }
+  const currentConditionImg = await embedImageDoc(currentConditionDoc);
+  const newConditionImg = await embedImageDoc(newConditionDoc);
+
+  const brandBlue = rgb(0.106, 0.243, 0.706);
+  const ink = rgb(0.1, 0.1, 0.12);
+  const labelGray = rgb(0.42, 0.44, 0.49);
+  const lineGray = rgb(0.85, 0.86, 0.89);
+  const sectionBg = rgb(0.925, 0.941, 0.976);
+
+  const page = pdfDoc.addPage([pageWidth, pageHeight]);
+
+  let logoImg = null;
+  try { logoImg = await pdfDoc.embedJpg(base64ToBytes(DESSIMATE_LOGO_JPG_BASE64)); } catch (e) { logoImg = null; }
+
+  function leftText(str, x, yy, size, opts) {
+    opts = opts || {};
+    page.drawText(str == null ? '' : String(str), { x: x, y: yy, size: size, font: opts.bold ? fontBold : font, color: opts.color || ink });
+  }
+  function rightText(str, rightEdgeX, yy, size, opts) {
+    opts = opts || {};
+    const f = opts.bold ? fontBold : font;
+    const s = str == null ? '' : String(str);
+    page.drawText(s, { x: rightEdgeX - f.widthOfTextAtSize(s, size), y: yy, size: size, font: f, color: opts.color || ink });
+  }
+  function wrapLines(str, maxWidth, size, useFont) {
+    const f = useFont || font;
+    const out = [];
+    (str || '').split(/\r?\n/).forEach(function (raw) {
+      const words = raw.split(/\s+/).filter(Boolean);
+      if (!words.length) { out.push(''); return; }
+      let cur = '';
+      words.forEach(function (w) {
+        const attempt = cur ? cur + ' ' + w : w;
+        if (cur && f.widthOfTextAtSize(attempt, size) > maxWidth) { out.push(cur); cur = w; }
+        else cur = attempt;
+      });
+      if (cur) out.push(cur);
+    });
+    return out;
+  }
+  function fmtDateMDY(s) {
+    const str = (s || '').toString().trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    return m ? (m[2] + '/' + m[3] + '/' + m[1]) : str;
+  }
+  // A checkbox as drawn on the actual template - an outlined square, filled
+  // solid when checked. `label` is drawn immediately to its right.
+  function checkbox(x, yy, checked, label, opts) {
+    opts = opts || {};
+    const size = 9;
+    page.drawRectangle({ x: x, y: yy, width: size, height: size, borderColor: ink, borderWidth: 1, color: checked ? ink : rgb(1, 1, 1) });
+    leftText(label, x + size + 5, yy + 1, opts.size || 9.5, { bold: opts.bold });
+  }
+  function sectionHeader(label, x, yy, w) {
+    page.drawRectangle({ x: x, y: yy - 14, width: w, height: 16, color: sectionBg });
+    leftText(label, x + 6, yy - 10, 9.5, { bold: true, color: brandBlue });
+  }
+
+  // ---- Header: logo + title, CR Number / Date Raised ------------------------
+  let hy = pageHeight - 40;
+  if (logoImg) {
+    const dims = logoImg.scaleToFit(108, 60);
+    page.drawImage(logoImg, { x: margin, y: hy - dims.height, width: dims.width, height: dims.height });
+  } else {
+    leftText('Dessimate', margin, hy - 14, 16, { bold: true, color: brandBlue });
+  }
+  rightText('CHANGE REQUEST (CR)', pageWidth - margin, hy - 16, 18, { bold: true, color: brandBlue });
+  rightText('CR #: ' + (cr.crNumber || ''), pageWidth - margin, hy - 34, 10, { bold: true });
+  rightText('Date Raised: ' + fmtDateMDY(cr.dateRaised), pageWidth - margin, hy - 48, 10);
+
+  let y = hy - 82;
+
+  // ---- Supplier Information --------------------------------------------------
+  sectionHeader('SUPPLIER INFORMATION', margin, y, contentW);
+  y -= 24;
+  leftText('Supplier:', margin, y, 9, { bold: true, color: labelGray });
+  leftText(cr.supplierOrg || '—', margin + 55, y, 10);
+  rightText('Supplier Contact:', margin + contentW / 2 + 60, y, 9, { bold: true, color: labelGray });
+  leftText(cr.supplierContactName || '—', margin + contentW / 2 + 65, y, 10);
+  y -= 22;
+
+  // ---- Change Requested By / To ----------------------------------------------
+  // Stacked (not side-by-side) - an org name can run long enough to collide
+  // with a fixed-column neighbor, and unlike the Supplier/Contact row above,
+  // both values here can independently be a full org name.
+  const byIsSupplier = cr.direction !== 'dessimate_to_supplier';
+  const requestedBy = byIsSupplier ? (cr.supplierOrg || 'Supplier') : 'Dessimate';
+  const requestedTo = byIsSupplier ? 'Dessimate' : (cr.supplierOrg || 'Supplier');
+  leftText('Change Requested By:', margin, y, 9, { bold: true, color: labelGray });
+  leftText(requestedBy, margin + 130, y, 10);
+  y -= 16;
+  leftText('Change Requested To:', margin, y, 9, { bold: true, color: labelGray });
+  leftText(requestedTo, margin + 130, y, 10);
+  y -= 26;
+
+  // ---- Part Numbers Affected --------------------------------------------------
+  sectionHeader('PART NUMBERS AFFECTED', margin, y, contentW);
+  y -= 20;
+  const partNumbers = Array.isArray(cr.partNumbers) ? cr.partNumbers : [];
+  if (!partNumbers.length) {
+    leftText('—', margin + 6, y, 9.5); y -= 14;
+  } else {
+    partNumbers.forEach(function (pn, i) { leftText((i + 1) + '. ' + pn, margin + 6, y, 9.5); y -= 13; });
+  }
+  y -= 6;
+
+  // ---- Phase / Type -----------------------------------------------------------
+  checkbox(margin, y, cr.phase === 'pre_production', 'Pre-Production', {});
+  checkbox(margin + 130, y, cr.phase === 'production', 'Production', {});
+  checkbox(margin + 260, y, cr.changeType === 'product', 'Product Related', {});
+  checkbox(margin + 400, y, cr.changeType === 'process', 'Process Related', {});
+  y -= 24;
+
+  // ---- Reference Images: Current Condition / New Condition -------------------
+  sectionHeader('REFERENCE IMAGE — MARKING LOCATION & TEXT', margin, y, contentW);
+  y -= 16;
+  const imgBoxH = 130;
+  const imgBoxW = (contentW - 14) / 2;
+  const imgBoxY = y - imgBoxH;
+  [
+    { label: 'Current Condition', x: margin, img: currentConditionImg },
+    { label: 'New Condition', x: margin + imgBoxW + 14, img: newConditionImg }
+  ].forEach(function (slot) {
+    page.drawRectangle({ x: slot.x, y: imgBoxY, width: imgBoxW, height: imgBoxH, borderColor: lineGray, borderWidth: 1 });
+    leftText(slot.label, slot.x + 6, imgBoxY + imgBoxH - 12, 8.5, { bold: true, color: labelGray });
+    if (slot.img) {
+      const pad = 6, maxW = imgBoxW - pad * 2, maxH = imgBoxH - 22;
+      const dims = slot.img.scaleToFit(maxW, maxH);
+      page.drawImage(slot.img, {
+        x: slot.x + (imgBoxW - dims.width) / 2,
+        y: imgBoxY + pad + (maxH - dims.height) / 2,
+        width: dims.width, height: dims.height
+      });
+    } else {
+      leftText('No image attached.', slot.x + 6, imgBoxY + imgBoxH / 2, 9, { color: labelGray });
+    }
+  });
+  y = imgBoxY - 18;
+
+  // ---- Details of Change / Purpose of Change ----------------------------------
+  function textBlock(label, value, minLines) {
+    sectionHeader(label, margin, y, contentW);
+    y -= 20;
+    const lines = wrapLines(value, contentW - 12, 9.5);
+    const shown = lines.length ? lines : [''];
+    const lineCount = Math.max(shown.length, minLines || 2);
+    for (let i = 0; i < lineCount; i++) { leftText(shown[i] || '', margin + 6, y, 9.5); y -= 12; }
+    y -= 8;
+  }
+  textBlock('DETAILS OF CHANGE (ADD ATTACHMENTS IF NECESSARY)', cr.detailsOfChange, 3);
+  if (Array.isArray(cr.attachments) && cr.attachments.length) {
+    leftText('Attachments: ' + cr.attachments.map(function (a) { return a.filename; }).join(', '), margin + 6, y, 8.5, { color: labelGray });
+    y -= 16;
+  }
+  textBlock('PURPOSE OF CHANGE', cr.purposeOfChange, 2);
+  leftText('Kindly review and provide your approval for implementation.', margin, y, 9, { color: labelGray });
+  y -= 22;
+
+  // ---- Requested By sign-off ---------------------------------------------------
+  function signRow(cols) {
+    const colW = contentW / cols.length;
+    cols.forEach(function (c, i) {
+      const x = margin + i * colW;
+      leftText(c.label, x, y, 8, { bold: true, color: labelGray });
+      page.drawLine({ start: { x: x, y: y - 14 }, end: { x: x + colW - 12, y: y - 14 }, thickness: 0.75, color: lineGray });
+      leftText(c.value || '', x, y - 12, 9.5);
+    });
+    y -= 30;
+  }
+  signRow([
+    { label: 'REQUESTED BY (SIGNATURE)', value: cr.requestedBySignature },
+    { label: 'SUPPLIER / COMPANY', value: cr.requestedByCompany },
+    { label: 'DATE', value: fmtDateMDY(cr.requestedByDate) }
+  ]);
+
+  // ---- Approval -----------------------------------------------------------------
+  sectionHeader('APPROVAL', margin, y, contentW);
+  y -= 20;
+  checkbox(margin, y, cr.approvalStatus === 'approved', 'Approved', {});
+  checkbox(margin + 140, y, cr.approvalStatus === 'conditional', 'Conditional Approval', {});
+  checkbox(margin + 320, y, cr.approvalStatus === 'rejected', 'Rejected', {});
+  y -= 20;
+  leftText('Conditions / Comments:', margin, y, 8, { bold: true, color: labelGray });
+  y -= 12;
+  wrapLines(cr.approvalComments, contentW - 12, 9.5).slice(0, 3).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
+  y -= 8;
+
+  signRow([
+    { label: 'APPROVED BY (SIGNATURE)', value: cr.approvedBySignature },
+    { label: 'PRINT NAME', value: cr.approvedByPrintName },
+    { label: 'DATE', value: fmtDateMDY(cr.approvedByDate) },
+    { label: 'ORGANIZATION', value: cr.approvedByOrg }
+  ]);
+
+  // ---- Footer ---------------------------------------------------------------
+  leftText('Dessimate – Change Request – Form QF-CR-01, Rev. A', margin, 30, 7.5, { color: labelGray });
+
+  return pdfDoc.save();
+}
+
+async function handleGetChangeRequestPdf(env, origin, id, accessLevel, organization) {
+  const raw = await resolveChangeRequestRecord(env, id);
+  if (!raw) return json({ message: 'Not found.' }, 404, origin);
+  let clean = sanitizeChangeRequest(raw);
+  const scoped = scopeChangeRequests([clean], accessLevel, organization);
+  if (!scoped.length) return json({ message: 'Not found.' }, 404, origin);
+  clean = scoped[0];
+
+  async function loadImageDoc(doc) {
+    if (!doc || !doc.path) return null;
+    try {
+      const bytes = await readGithubFileBytes(env, doc.path);
+      return bytes ? { bytes: bytes, mimeType: doc.mimeType } : null;
+    } catch (e) { return null; }
+  }
+
+  let pdfBytes;
+  try {
+    const currentConditionDoc = await loadImageDoc(clean.currentConditionImage);
+    const newConditionDoc = await loadImageDoc(clean.newConditionImage);
+    pdfBytes = await buildCrPdf(clean, currentConditionDoc, newConditionDoc);
+  } catch (e) {
+    return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
+  }
+  return pdfResponse(pdfBytes, 'Change Request ' + clean.crNumber + '.pdf', origin);
 }
 
 // ---- Supplier Invoices (what a Supplier bills Dessimate against a

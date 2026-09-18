@@ -843,6 +843,36 @@ being consulted for it) the moment it's edited and saved once from the
 Users page. You can leave the secret in place indefinitely; it's simply
 ignored once every login in it has been migrated.
 
+## Change Requests (CR)
+
+Logs a change either a Supplier is requesting of Dessimate, or Dessimate is
+requesting of a Supplier — `PDIR_ChangeRequests.html`, stored in
+`data/change_requests.json`. **The one Production Module a Supplier login
+can create and edit records in directly**, not just view: "each supplier
+should be able to see only their name in their dropdown when they initiate
+the change request" is enforced both ways — the Supplier dropdown is locked
+to their own organization in the browser, and the backend independently
+forces it server-side no matter what's submitted, the same as every other
+place in this app where a Supplier or Customer write is narrowly trusted.
+
+A Supplier can fill in everything about the request itself (part numbers,
+phase, product/process type, before/after reference images, details and
+purpose of the change, their own sign-off) but never the internal
+**Approval** section — that's Team Member+ only, silently stripped from a
+Supplier's save even if present in the request. Team Member and up can see
+and manage every Change Request; a Supplier sees only ones naming their own
+organization (in either direction — they may be the one requesting the
+change, or the one Dessimate is requesting it of); a Customer login has no
+role here at all.
+
+**CR Number** is formatted `CR-###` and auto-assigned like RFQ Number (a
+custom value is accepted too, and bumps the counter past it) — but only
+Team Member+ can set or change it; a Supplier's own Change Request is always
+auto-numbered. Click **View PDF** on any row to generate the
+`Dessimate_Change_Request(CR).xlsx` layout as a PDF from that row's data on
+the spot, the same drawn-from-scratch-on-the-backend approach as the
+Dessimate PO/Invoice PDFs.
+
 ## About the GitHub repo's visibility
 
 Now that every page and file is fetched through this backend (using your
