@@ -246,9 +246,9 @@
       <thead id="crTableHead">
         <tr>
           <th data-sort-key="crNumber">CR #</th>
+          <th data-sort-key="changeTitle">Change Title</th>
           <th data-sort-key="dateRaised">Date Raised</th>
           <th data-sort-key="supplierOrg">Supplier</th>
-          <th data-sort-key="direction">Direction</th>
           <th data-sort-key="phase">Phase</th>
           <th data-sort-key="approvalStatus">Approval</th>
           <th>PDF</th>
@@ -299,6 +299,10 @@
           <input type="date" id="f_dateRaised">
         </div>
       </div>
+
+      <label>Change Title
+        <input type="text" id="f_changeTitle" placeholder="Short summary of what's changing">
+      </label>
 
       <div class="modalGrid2">
         <label>Supplier
@@ -817,11 +821,6 @@
     var session = getSession();
     return { uploadedBy: (session && session.username) || '', uploadedAt: new Date().toISOString() };
   }
-  function directionLabel(cr){
-    return cr.direction === 'dessimate_to_supplier'
-      ? 'Dessimate → ' + (cr.supplierOrg || 'Supplier')
-      : (cr.supplierOrg || 'Supplier') + ' → Dessimate';
-  }
   function phaseLabel(phase){
     return phase === 'pre_production' ? 'Pre-Production' : (phase === 'production' ? 'Production' : '—');
   }
@@ -922,9 +921,9 @@
     bodyEl.innerHTML = sorted.map(function(cr){
       return '<tr>' +
         '<td class="crNumber">' + escapeHtml(cr.crNumber) + '</td>' +
+        '<td>' + (cr.changeTitle ? escapeHtml(cr.changeTitle) : '<span style="color:var(--label);">—</span>') + '</td>' +
         '<td>' + escapeHtml(fmtDateMDY(cr.dateRaised)) + '</td>' +
         '<td>' + escapeHtml(cr.supplierOrg) + '</td>' +
-        '<td>' + escapeHtml(directionLabel(cr)) + '</td>' +
         '<td>' + escapeHtml(phaseLabel(cr.phase)) + '</td>' +
         '<td>' + approvalPillHtml(cr.approvalStatus) + '</td>' +
         '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(cr.id) + '" data-crnum="' + escapeHtml(cr.crNumber) + '">View PDF</button></td>' +
@@ -1196,6 +1195,7 @@
     document.getElementById('modalSub').textContent = canManageAll() ? 'CR Number can be changed any time.' : 'Supplier, part, and deviation details can be updated below.';
     document.getElementById('f_crNumber').value = cr.crNumber;
     document.getElementById('f_dateRaised').value = cr.dateRaised || '';
+    document.getElementById('f_changeTitle').value = cr.changeTitle || '';
     document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions(cr.supplierOrg || '');
     document.getElementById('f_supplierContactName').value = cr.supplierContactName || '';
     document.getElementById('f_direction').value = cr.direction || 'supplier_to_dessimate';
@@ -1241,6 +1241,7 @@
 
     var baseFields = {
       dateRaised: document.getElementById('f_dateRaised').value,
+      changeTitle: document.getElementById('f_changeTitle').value.trim(),
       supplierOrg: document.getElementById('f_supplierOrg').value,
       supplierContactName: document.getElementById('f_supplierContactName').value.trim(),
       direction: document.getElementById('f_direction').value,

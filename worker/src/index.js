@@ -3551,6 +3551,7 @@ function sanitizeChangeRequest(o) {
     dateRaised: o.dateRaised || '',
     createdAt: o.createdAt || null,
     createdBy: o.createdBy || '',
+    changeTitle: o.changeTitle || '',
     supplierOrg: o.supplierOrg || '',
     supplierContactName: o.supplierContactName || '',
     direction: o.direction === 'dessimate_to_supplier' ? 'dessimate_to_supplier' : 'supplier_to_dessimate',
@@ -3582,6 +3583,7 @@ function validateChangeRequestFields(body, isSupplier) {
     : [];
   const fields = {
     dateRaised: (body.dateRaised || '').toString().trim(),
+    changeTitle: (body.changeTitle || '').toString().trim(),
     supplierContactName: (body.supplierContactName || '').toString().trim(),
     direction: body.direction === 'dessimate_to_supplier' ? 'dessimate_to_supplier' : 'supplier_to_dessimate',
     partNumbers: partNumbers,
@@ -3817,6 +3819,14 @@ async function buildCrPdf(cr, currentConditionDoc, newConditionDoc) {
   rightText('Date Raised: ' + fmtDateMDY(cr.dateRaised), pageWidth - margin, hy - 48, 10);
 
   let y = hy - 82;
+  // Change Title - not part of the original .xlsx template, added per
+  // request as a prominent "subject line" under the header so a reader
+  // knows what the change is about before reading Section A.
+  if (cr.changeTitle) {
+    var titleLines = wrapLines(cr.changeTitle, contentW, 13, fontBold).slice(0, 2);
+    titleLines.forEach(function (line) { leftText(line, margin, y, 13, { bold: true, color: ink }); y -= 16; });
+    y -= 8;
+  }
 
   // ---- Supplier Information --------------------------------------------------
   sectionHeader('SUPPLIER INFORMATION', margin, y, contentW);
