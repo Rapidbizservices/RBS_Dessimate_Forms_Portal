@@ -881,17 +881,18 @@ released it. `PDIR_SCR.html`, stored in `data/scrs.json`. Reached through
 the same "Change Requests" sidebar entry as Dessimate CRs, now a chooser
 page (`PDIR_ChangeRequestsHub.html`) with a tile for each module. Like CR's
 **Change Title**, an **SCR Title** field sits above Section A as a short
-subject line and appears on both the list view and the generated PDF —
-not part of the original template.
+subject line on the list view — it has no slot in the original template,
+so (like everything else that isn't a template field) it never appears in
+the generated document.
 
 **Dessimate-staff-only, end to end** — unlike the CR module, there is no
 Supplier create/edit path here at all: Team Member+ fills in every section
 (Supplier & Part Information, Deviation Information, the six-department
-Approval/Disapproval table, and Disposition) and generates the PDF. **A
-Supplier login has no visibility or access whatsoever** — not even the
-tile on the chooser page appears for one, and the backend returns nothing
-for a Supplier's list/record/PDF/file requests, the one module in this app
-where Supplier access isn't just narrower, it's zero.
+Approval/Disapproval table, and Disposition). **A Supplier login has no
+visibility or access whatsoever** — not even the tile on the chooser page
+appears for one, and the backend returns nothing for a Supplier's
+list/record/file requests, the one module in this app where Supplier
+access isn't just narrower, it's zero.
 
 A Customer only ever sees an SCR once Dessimate explicitly adds their
 organization to its **Share with Customer(s)** list — an opt-in, per-record
@@ -901,13 +902,29 @@ own name in the share list even if others are on it.
 
 **SCR Number** is formatted `SCR-###` and auto-assigned like CR Number (a
 custom value is accepted too, and bumps the counter past it), Team Member+
-only. Because the two original templates (`SCR00x Dessimate Form
-Template.docx` / `SCR00x Customer Form Template.doc`) are the same form
-under two different letterheads, **View PDF** offers both a **Dessimate
-PDF** and a **Customer PDF** button for staff — same record, same layout,
-just Dessimate's own logo vs. the shared Customer organization's logo (or
-their name, if they have none on file) in the header. A Customer login
-always gets their own branded copy regardless of which button they click.
+only.
+
+**Document generation is Word, not PDF, and template-filled rather than
+drawn from scratch.** The customer's own original form
+(`SCR00x Customer Form Template.docx`, committed at
+`templates/SCR_Customer_Template.docx` — a static asset alongside
+`logo.jpg`, not something uploaded through the app) is the literal output:
+**View / Download** loads that .docx client-side with JSZip (the same
+library RFQ's "Download All Attachments" already lazy-loads from a CDN),
+patches `word/document.xml` in place by walking the template's own table
+structure cell by cell, and re-zips it — so every border, font, and column
+width is untouched, exactly the customer's form. Text values are inserted
+into the template's blank cells; the eight "Yes/No"-style choices
+(Product/Process Related, 1st time/Repeat, Permanent/Temporary, Supplier
+Sub-Tier, the six "effect on" boxes, Drawing Change and CAR Required, and
+each department's Acknowledgement) toggle the template's own real Word
+legacy checkbox form fields rather than drawing a box. This only works
+because the template's blank-cell layout is walked positionally, not by
+each checkbox's Word bookmark name — one of the template's 25 checkboxes
+(Product Management's) turned out to have no bookmark at all, so name-based
+lookup wouldn't have covered every field. There is no Dessimate-branded
+copy at all; the one document this generates is already the Customer's own
+format, so there's nothing else to brand it as.
 
 ## About the GitHub repo's visibility
 

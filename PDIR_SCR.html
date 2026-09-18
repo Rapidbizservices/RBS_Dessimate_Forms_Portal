@@ -217,7 +217,7 @@
       <img src="logo.jpg" alt="Dessimate">
       <div>
         <h1>Customer SCRs</h1>
-        <p class="sub">Supplier Change Requests shared between Dessimate and a Customer &mdash; one SCR Number, two brandings of the same PDF.</p>
+        <p class="sub">Supplier Change Requests shared between Dessimate and a Customer &mdash; generates the Customer's own SCR Word document, filled in verbatim.</p>
       </div>
     </div>
     <div class="headerBtns">
@@ -252,7 +252,7 @@
           <th data-sort-key="supplierDate">Date</th>
           <th>Status</th>
           <th>Shared With</th>
-          <th>PDF</th>
+          <th>SCR Document</th>
           <th></th>
         </tr>
       </thead>
@@ -447,7 +447,7 @@
 
       <div class="modalSection" id="shareSectionWrap">
         <h3>Share with Customer(s)</h3>
-        <p class="modalSectionHint">Only Customers checked here can see this SCR (Customer-branded PDF only) — nothing is shared automatically.</p>
+        <p class="modalSectionHint">Only Customers checked here can see this SCR and its Word document — nothing is shared automatically.</p>
         <div class="shareWrap" id="shareWrap"></div>
       </div>
 
@@ -711,29 +711,6 @@
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
   });
-  function openPdfInViewer(filename, bytes){
-    var overlay = document.getElementById('docViewerOverlay');
-    var stateEl = document.getElementById('docViewerState');
-    var frame = document.getElementById('docViewerFrame');
-    var downloadBtn = document.getElementById('docViewerDownload');
-    document.getElementById('docViewerTitle').textContent = filename;
-    frame.style.display = 'none'; downloadBtn.style.display = 'none';
-    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
-    overlay.classList.add('open');
-    try {
-      var blob = new Blob([bytes], { type: 'application/pdf' });
-      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
-      docViewerObjectUrl = URL.createObjectURL(blob);
-      frame.src = docViewerObjectUrl; frame.style.display = 'block';
-      stateEl.style.display = 'none';
-      downloadBtn.href = docViewerObjectUrl;
-      downloadBtn.download = filename;
-      downloadBtn.style.display = 'inline-block';
-    } catch (e) {
-      console.error(e);
-      stateEl.textContent = 'Could not display this PDF (' + (e && e.message ? e.message : e) + ').';
-    }
-  }
   function isInlineViewable(mimeType, filename){
     var ext = docFileExt(filename).toLowerCase();
     if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
@@ -793,19 +770,207 @@
       stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
     }
   }
-  async function viewGeneratedPdf(id, scrNumber, variant, btn){
+  // ---- SCR Word document generation ------------------------------------------
+  // Fills the Customer's own SCR00x .docx template verbatim - no PDF, no
+  // Dessimate-branded copy. The template (templates/SCR_Customer_Template.docx,
+  // a static repo asset alongside logo.jpg) is loaded client-side, its
+  // word/document.xml is patched in place using the DOM (leaving every
+  // style/border/font untouched, only inserting text and flipping the
+  // template's real Word legacy checkbox form fields), and re-zipped with
+  // JSZip - same CDN-lazy-loaded library RFQ.html already uses for its
+  // "Download All Attachments" zip.
+  var JSZIP_CDN = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+  function loadScriptOnce(src){
+    return new Promise(function(resolve, reject){
+      var existing = document.querySelector('script[data-src="' + src + '"]');
+      if (existing) { existing.addEventListener('load', resolve); if (existing.getAttribute('data-loaded')) resolve(); return; }
+      var s = document.createElement('script');
+      s.src = src; s.setAttribute('data-src', src);
+      s.onload = function(){ s.setAttribute('data-loaded', '1'); resolve(); };
+      s.onerror = function(){ reject(new Error('Could not load ' + src + '.')); };
+      document.head.appendChild(s);
+    });
+  }
+  var SCR_DOCX_TEMPLATE_PATH = 'templates/SCR_Customer_Template.docx';
+  var scrTemplateBytesPromise = null;
+  function loadScrTemplateBytes(){
+    if (!scrTemplateBytesPromise) {
+      scrTemplateBytesPromise = fetch(SCR_DOCX_TEMPLATE_PATH).then(function(r){
+        if (!r.ok) throw new Error('Could not load the SCR template (HTTP ' + r.status + ').');
+        return r.arrayBuffer();
+      }).catch(function(err){ scrTemplateBytesPromise = null; throw err; });
+    }
+    return scrTemplateBytesPromise;
+  }
+  var WORD_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  var XML_NS = 'http://www.w3.org/XML/1998/namespace';
+  function wLocalChildren(el, localName){
+    var out = [];
+    for (var i = 0; el && i < el.childNodes.length; i++) {
+      var n = el.childNodes[i];
+      if (n.nodeType === 1 && n.localName === localName) out.push(n);
+    }
+    return out;
+  }
+  function appendRunText(doc, paragraph, text){
+    if (!paragraph || text == null || text === '') return;
+    var lines = String(text).split(/\r\n|\r|\n/);
+    var r = doc.createElementNS(WORD_NS, 'w:r');
+    lines.forEach(function(line, i){
+      if (i > 0) r.appendChild(doc.createElementNS(WORD_NS, 'w:br'));
+      var t = doc.createElementNS(WORD_NS, 'w:t');
+      t.setAttributeNS(XML_NS, 'xml:space', 'preserve');
+      t.textContent = line;
+      r.appendChild(t);
+    });
+    paragraph.appendChild(r);
+  }
+  function cellCheckboxEls(cell){
+    return cell ? Array.prototype.slice.call(cell.getElementsByTagNameNS(WORD_NS, 'checkBox')) : [];
+  }
+  function setCheckboxChecked(checkBoxEl, checked){
+    if (!checkBoxEl) return;
+    var defaults = checkBoxEl.getElementsByTagNameNS(WORD_NS, 'default');
+    if (defaults.length) defaults[0].setAttributeNS(WORD_NS, 'w:val', checked ? '1' : '0');
+  }
+  // Blanks drawn as trailing underscores in the template's own label text
+  // (Supplier Sub-Tier ___, Temporary/Duration ___, CR# ___, CAR# ___) -
+  // only touched when a value is given, so an empty field prints exactly as
+  // the original blank template does.
+  function fillTrailingBlank(cell, value){
+    if (!cell || !value) return;
+    var texts = cell.getElementsByTagNameNS(WORD_NS, 't');
+    if (!texts.length) return;
+    var last = texts[texts.length - 1];
+    var raw = last.textContent || '';
+    if (/^_+$/.test(raw.trim())) last.textContent = value;
+    else if (/_+\s*$/.test(raw)) last.textContent = raw.replace(/_+\s*$/, value);
+  }
+  async function buildScrDocxBytes(scr){
+    await loadScriptOnce(JSZIP_CDN);
+    var templateBuf = await loadScrTemplateBytes();
+    var zip = await window.JSZip.loadAsync(templateBuf);
+    var xmlText = await zip.file('word/document.xml').async('string');
+    var declMatch = /^<\?xml[^>]*\?>/.exec(xmlText);
+    var decl = declMatch ? declMatch[0] : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    var doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length) throw new Error('Could not parse the SCR template.');
+
+    function fillCell(cell, value){ appendRunText(doc, wLocalChildren(cell, 'p')[0], value); }
+
+    var body = doc.getElementsByTagNameNS(WORD_NS, 'body')[0];
+    appendRunText(doc, wLocalChildren(body, 'p')[1], scr.scrNumber || '');
+
+    var table = doc.getElementsByTagNameNS(WORD_NS, 'tbl')[0];
+    var rows = wLocalChildren(table, 'tr');
+    function cellsOf(rowIdx){ return wLocalChildren(rows[rowIdx], 'tc'); }
+
+    // Row 2-6: A. Supplier Information / B. Part Information
+    fillCell(cellsOf(2)[0], fmtDateMDY(scr.supplierDate)); fillCell(cellsOf(2)[1], scr.partNumber);
+    fillCell(cellsOf(3)[0], scr.supplierOrg); fillCell(cellsOf(3)[1], scr.partDescription);
+    fillCell(cellsOf(4)[0], scr.supplierContactName); fillCell(cellsOf(4)[1], scr.revisionLevel);
+    fillCell(cellsOf(5)[0], scr.supplierPhone); fillCell(cellsOf(5)[1], scr.poNumber);
+    fillCell(cellsOf(6)[0], scr.supplierFax); fillCell(cellsOf(6)[1], scr.quantity);
+
+    // Row 9-10: "Request is" checkboxes
+    var row9 = cellsOf(9);
+    setCheckboxChecked(cellCheckboxEls(row9[0])[0], scr.productRelated);
+    setCheckboxChecked(cellCheckboxEls(row9[1])[0], scr.firstTime);
+    setCheckboxChecked(cellCheckboxEls(row9[2])[0], scr.permanent);
+    setCheckboxChecked(cellCheckboxEls(row9[3])[0], scr.supplierSubTier);
+    fillTrailingBlank(row9[3], scr.supplierSubTierDetail);
+    var row10 = cellsOf(10);
+    setCheckboxChecked(cellCheckboxEls(row10[0])[0], scr.processRelated);
+    setCheckboxChecked(cellCheckboxEls(row10[1])[0], scr.repeat);
+    setCheckboxChecked(cellCheckboxEls(row10[2])[0], scr.temporary);
+    fillTrailingBlank(row10[2], scr.temporaryDuration);
+
+    // Row 12: Current Requirement / Proposed Deviation / Reason for Deviation
+    var row12 = cellsOf(12);
+    fillCell(row12[0], scr.currentRequirement);
+    fillCell(row12[1], scr.proposedDeviation);
+    fillCell(row12[2], scr.reasonForDeviation);
+
+    // Row 13: effect-on checkboxes
+    var row13 = cellsOf(13);
+    setCheckboxChecked(cellCheckboxEls(row13[0])[0], scr.effectNone);
+    if (scr.effectNone && scr.effectNoneExplain) {
+      var effParas = wLocalChildren(row13[0], 'p');
+      appendRunText(doc, effParas[effParas.length - 1], '  — ' + scr.effectNoneExplain);
+    }
+    var effectBoxes = cellCheckboxEls(row13[1]); // [Cost, Delivery, Schedule, Reliability, Performance, Other]
+    setCheckboxChecked(effectBoxes[0], scr.effectCost);
+    setCheckboxChecked(effectBoxes[1], scr.effectDelivery);
+    setCheckboxChecked(effectBoxes[2], scr.effectSchedule);
+    setCheckboxChecked(effectBoxes[3], scr.effectReliability);
+    setCheckboxChecked(effectBoxes[4], scr.effectPerformance);
+    setCheckboxChecked(effectBoxes[5], scr.effectOther);
+
+    // Row 14-15: Supplier Quality Engineer Comment / Planned affectivity
+    var row14p = wLocalChildren(cellsOf(14)[0], 'p');
+    appendRunText(doc, row14p[row14p.length - 1], scr.supplierQualityEngineerComment ? ('  ' + scr.supplierQualityEngineerComment) : '');
+    var row15p = wLocalChildren(cellsOf(15)[0], 'p');
+    appendRunText(doc, row15p[row15p.length - 1], scr.plannedAffectivity ? ('  ' + scr.plannedAffectivity) : '');
+
+    // Row 16: Attachments checkbox + filenames
+    var row16cell = cellsOf(16)[0];
+    var hasAttachments = Array.isArray(scr.attachments) && scr.attachments.length > 0;
+    setCheckboxChecked(cellCheckboxEls(row16cell)[0], hasAttachments);
+    if (hasAttachments) {
+      var names = scr.attachments.map(function(a){ return a.filename; }).join(', ');
+      var row16p = wLocalChildren(row16cell, 'p');
+      appendRunText(doc, row16p[row16p.length - 1], '  ' + names);
+    }
+
+    // Rows 20-25: D. Approval/Disapproval - one row per department, in the
+    // same fixed order as SCR_APPROVAL_DEPARTMENTS / the backend's
+    // SCR_APPROVAL_DEPARTMENTS array. Positional (not bookmark-name based) -
+    // the template's own "Product Management" checkbox has no bookmark at
+    // all, so row order is the only reliable anchor.
+    SCR_APPROVAL_DEPARTMENTS.forEach(function(dept, di){
+      var rowCells = cellsOf(20 + di);
+      var a = (scr.approvals && scr.approvals[dept.key]) || {};
+      setCheckboxChecked(cellCheckboxEls(rowCells[0])[0], !!a.acknowledged);
+      fillCell(rowCells[1], a.signature);
+      fillCell(rowCells[2], fmtDateMDY(a.date));
+      fillCell(rowCells[3], a.decision === 'approve' ? 'Approve' : (a.decision === 'disapprove' ? 'Disapprove' : ''));
+      fillCell(rowCells[4], a.comments);
+    });
+
+    // Row 27-28: E. Disposition - Drawing Change / CAR Required
+    var row27cell = cellsOf(27)[0];
+    var boxes27 = cellCheckboxEls(row27cell); // [Yes, No]
+    setCheckboxChecked(boxes27[0], scr.drawingChangeRequired === 'yes');
+    setCheckboxChecked(boxes27[1], scr.drawingChangeRequired === 'no');
+    fillTrailingBlank(row27cell, scr.drawingChangeCR);
+    var row28cell = cellsOf(28)[0];
+    var boxes28 = cellCheckboxEls(row28cell); // [Yes, No]
+    setCheckboxChecked(boxes28[0], scr.carRequired === 'yes');
+    setCheckboxChecked(boxes28[1], scr.carRequired === 'no');
+    fillTrailingBlank(row28cell, scr.carNumber);
+
+    // Row 29: Final Disposition/Comments - written on the blank line below
+    // the label, same as a person filling the paper form by hand.
+    var row29p = wLocalChildren(cellsOf(29)[0], 'p');
+    appendRunText(doc, row29p[1] || row29p[0], scr.finalDisposition);
+
+    var newXml = decl + new XMLSerializer().serializeToString(doc.documentElement);
+    zip.file('word/document.xml', newXml, { createFolders: false });
+    return await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+  }
+  async function viewGeneratedScrDoc(scr, btn){
     var originalText = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
     try {
-      var res = await apiFetch('scrs/' + encodeURIComponent(id) + '/pdf/' + variant);
-      if (!res.ok) {
-        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
-        throw new Error(msg || ('HTTP ' + res.status));
-      }
-      var buf = await res.arrayBuffer();
-      openPdfInViewer('SCR ' + scrNumber + ' (' + (variant === 'customer' ? 'Customer' : 'Dessimate') + ').pdf', new Uint8Array(buf));
+      var bytes = await buildScrDocxBytes(scr);
+      var filename = 'SCR ' + (scr.scrNumber || '') + '.docx';
+      await openDocViewer({
+        filename: filename,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        bytes: bytes
+      });
     } catch (err) {
-      alert('Could not generate the SCR PDF (' + (err && err.message ? err.message : err) + ').');
+      alert('Could not generate the SCR document (' + (err && err.message ? err.message : err) + ').');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = originalText; }
     }
@@ -958,12 +1123,6 @@
     window.SortableTable.updateSortIndicators(document.getElementById('scrTableHead'), scrSortState);
 
     bodyEl.innerHTML = sorted.map(function(scr){
-      var pdfBtns = isCustomerUser()
-        ? '<button type="button" class="pdfBtn" data-pdf="' + escapeHtml(scr.id) + '" data-scrnum="' + escapeHtml(scr.scrNumber) + '" data-variant="customer">View PDF</button>'
-        : '<div class="rowActions">' +
-            '<button type="button" class="pdfBtn" data-pdf="' + escapeHtml(scr.id) + '" data-scrnum="' + escapeHtml(scr.scrNumber) + '" data-variant="dessimate">Dessimate PDF</button>' +
-            '<button type="button" class="pdfBtn" data-pdf="' + escapeHtml(scr.id) + '" data-scrnum="' + escapeHtml(scr.scrNumber) + '" data-variant="customer">Customer PDF</button>' +
-          '</div>';
       return '<tr>' +
         '<td class="scrNumber">' + escapeHtml(scr.scrNumber) + '</td>' +
         '<td>' + (scr.scrTitle ? escapeHtml(scr.scrTitle) : '<span style="color:var(--label);">—</span>') + '</td>' +
@@ -972,7 +1131,7 @@
         '<td>' + escapeHtml(fmtDateMDY(scr.supplierDate)) + '</td>' +
         '<td>' + statusPillHtml(scr) + '</td>' +
         '<td>' + shareCellHtml(scr) + '</td>' +
-        '<td>' + pdfBtns + '</td>' +
+        '<td><button type="button" class="pdfBtn" data-doc="' + escapeHtml(scr.id) + '">View / Download</button></td>' +
         '<td><div class="rowActions">' +
           (canManageAll() ? '<button type="button" class="editBtn" data-edit="' + escapeHtml(scr.id) + '">Edit</button>' : '') +
           (canManageAll() ? '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(scr.id) + '">Delete</button>' : '') +
@@ -986,9 +1145,10 @@
     bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
       btn.addEventListener('click', function(){ deleteScr(this.getAttribute('data-delete')); });
     });
-    bodyEl.querySelectorAll('[data-pdf]').forEach(function(btn){
+    bodyEl.querySelectorAll('[data-doc]').forEach(function(btn){
       btn.addEventListener('click', function(){
-        requireAuthThen(function(){ viewGeneratedPdf(btn.getAttribute('data-pdf'), btn.getAttribute('data-scrnum'), btn.getAttribute('data-variant'), btn); });
+        var scr = lastScrs.find(function(x){ return x.id === btn.getAttribute('data-doc'); });
+        if (scr) requireAuthThen(function(){ viewGeneratedScrDoc(scr, btn); });
       });
     });
   }
