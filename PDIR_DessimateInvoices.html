@@ -220,7 +220,7 @@
   #docViewerClose{ color:#fff; background:#5b5f66; border:1px solid #5b5f66; }
   #docViewerClose:hover{ background:#3f4248; }
   .viewerBody{ flex:1 1 auto; position:relative; background:#525659; }
-  .viewerBody iframe, .viewerBody img{ position:absolute; inset:0; width:100%; height:100%; border:0; object-fit:contain; background:#525659; }
+  .viewerBody iframe, .viewerBody img, .viewerBody video{ position:absolute; inset:0; width:100%; height:100%; border:0; object-fit:contain; background:#525659; }
   .viewerBody .viewerState{
     position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
     color:#fff; font-size:13.5px; text-align:center; padding:20px; flex-direction:column; gap:10px;
@@ -466,6 +466,7 @@
       <div id="docViewerState" class="viewerState">Loading&hellip;</div>
       <iframe id="docViewerFrame" title="Document preview" style="display:none;"></iframe>
       <img id="docViewerImg" alt="Document preview" style="display:none;">
+      <video id="docViewerVideo" controls style="display:none;"></video>
       <div id="docViewerOffice" style="display:none;"></div>
     </div>
   </div>
@@ -565,6 +566,7 @@
     var ext = docFileExt(filename).toLowerCase();
     if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
     if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    if ((mimeType && mimeType.indexOf('video/') === 0) || /\.(mp4|m4v|webm|ogv)$/.test(ext)) return 'video';
     var officeKind = window.OfficeViewer && window.OfficeViewer.isOfficeExt(filename, mimeType);
     if (officeKind) return officeKind;
     return null;
@@ -774,6 +776,8 @@
     document.getElementById('docViewerFrame').style.display = 'none';
     document.getElementById('docViewerImg').src = '';
     document.getElementById('docViewerImg').style.display = 'none';
+    var docViewerVideoEl = document.getElementById('docViewerVideo');
+    docViewerVideoEl.pause(); docViewerVideoEl.removeAttribute('src'); docViewerVideoEl.load(); docViewerVideoEl.style.display = 'none';
     document.getElementById('docViewerOffice').style.display = 'none';
     document.getElementById('docViewerOffice').innerHTML = '';
     document.getElementById('docViewerDownload').style.display = 'none';
@@ -817,10 +821,11 @@
     var stateEl = document.getElementById('docViewerState');
     var frame = document.getElementById('docViewerFrame');
     var img = document.getElementById('docViewerImg');
+    var video = document.getElementById('docViewerVideo');
     var office = document.getElementById('docViewerOffice');
     var downloadBtn = document.getElementById('docViewerDownload');
     document.getElementById('docViewerTitle').textContent = source.filename || 'Document';
-    frame.style.display = 'none'; img.style.display = 'none'; office.style.display = 'none'; office.innerHTML = ''; downloadBtn.style.display = 'none';
+    frame.style.display = 'none'; img.style.display = 'none'; video.style.display = 'none'; office.style.display = 'none'; office.innerHTML = ''; downloadBtn.style.display = 'none';
     stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
     overlay.classList.add('open');
     try {
@@ -846,10 +851,11 @@
         downloadBtn.style.display = 'inline-block';
         return;
       }
-      var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : 'image/jpeg') });
+      var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : (kind === 'video' ? 'video/mp4' : 'image/jpeg')) });
       if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
       docViewerObjectUrl = URL.createObjectURL(blob);
       if (kind === 'pdf') { frame.src = docViewerObjectUrl; frame.style.display = 'block'; }
+      else if (kind === 'video') { video.src = docViewerObjectUrl; video.style.display = 'block'; }
       else { img.src = docViewerObjectUrl; img.style.display = 'block'; }
       stateEl.style.display = 'none';
       downloadBtn.href = docViewerObjectUrl;
