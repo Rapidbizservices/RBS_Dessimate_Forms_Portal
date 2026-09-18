@@ -879,16 +879,12 @@
       lastParts = Array.isArray(partData.parts) ? partData.parts : [];
     } catch (e) { console.error('Could not load parts', e); lastParts = []; }
   }
-  function supplierOrgOptions(currentValue){
-    var matching = lastOrgs.filter(function(o){ return o.relationship === 'Supplier'; });
-    var html = '<option value="">— Select Supplier —</option>' + matching.map(function(o){
-      var sel = (o.name === currentValue) ? ' selected' : '';
-      return '<option value="' + escapeHtml(o.name) + '"' + sel + '>' + escapeHtml(o.name) + '</option>';
-    }).join('');
-    if (currentValue && !matching.some(function(o){ return o.name === currentValue; })) {
-      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Organizations list)</option>';
-    }
-    return html;
+  // Unlike the CR module, SCR's "Supplier" is always Dessimate itself -
+  // Dessimate is the party supplying the Customer here, so this dropdown
+  // never lists actual Supplier-relationship organizations. Locked to a
+  // single option (see the matching lock in setFormReadOnly/openEditModal).
+  function supplierOrgOptions(){
+    return '<option value="Dessimate" selected>Dessimate</option>';
   }
   function partOptions(currentValue){
     var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
@@ -1153,6 +1149,7 @@
     var form = document.getElementById('scrForm');
     form.querySelectorAll('input, select, textarea').forEach(function(el){
       if (el.id === 'f_scrNumber') return; // handled by setNumberFieldEditable
+      if (el.id === 'f_supplierOrg') return; // always locked to Dessimate - see supplierOrgOptions
       el.disabled = readOnly;
     });
     document.getElementById('modalBtnsWrap').style.display = readOnly ? 'none' : '';
@@ -1164,7 +1161,8 @@
     document.getElementById('attachError').textContent = '';
     attachmentsState = [];
     renderAttachmentsList();
-    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions('');
+    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions();
+    document.getElementById('f_supplierOrg').disabled = true;
     document.getElementById('f_partNumber').innerHTML = partOptions('');
     document.getElementById('f_scrNumber').value = '';
     document.getElementById('f_supplierDate').value = new Date().toISOString().slice(0, 10);
@@ -1197,7 +1195,8 @@
     document.getElementById('f_scrNumber').value = scr.scrNumber;
     document.getElementById('f_scrTitle').value = scr.scrTitle || '';
     document.getElementById('f_supplierDate').value = scr.supplierDate || '';
-    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions(scr.supplierOrg || '');
+    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions();
+    document.getElementById('f_supplierOrg').disabled = true;
     document.getElementById('f_supplierContactName').value = scr.supplierContactName || '';
     document.getElementById('f_supplierPhone').value = scr.supplierPhone || '';
     document.getElementById('f_supplierFax').value = scr.supplierFax || '';
