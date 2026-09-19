@@ -4463,6 +4463,10 @@ function sanitizeDmr(o) {
     dmrNumber: o.dmrNumber || '',
     createdAt: o.createdAt || null,
     createdBy: o.createdBy || '',
+    // Not part of the original template - added as a short subject line
+    // the same way CR's changeTitle/SCR's scrTitle were, staff-only like
+    // every other field outside Section 7.
+    dmrTitle: o.dmrTitle || '',
     dateIssued: o.dateIssued || '',
     // 1. Supplier Information
     supplierOrg: o.supplierOrg || '',
@@ -4526,6 +4530,7 @@ function validateDmrFields(body, isSupplier) {
   };
   if (isSupplier) return section7;
   return Object.assign(section7, {
+    dmrTitle: (body.dmrTitle || '').toString().trim(),
     dateIssued: (body.dateIssued || '').toString().trim(),
     supplierContactName: (body.supplierContactName || '').toString().trim(),
     supplierContactEmail: (body.supplierContactEmail || '').toString().trim(),
@@ -4764,6 +4769,14 @@ async function buildDmrPdf(dmr, photoDocs) {
   rightText('Date Issued: ' + fmtDateMDY(dmr.dateIssued), pageWidth - margin, hy - 48, 10);
 
   let y = hy - 78;
+
+  // DMR Title - not part of the original .xlsx template, added per request
+  // as a prominent "subject line" the same way CR's changeTitle was.
+  if (dmr.dmrTitle) {
+    const titleLines = wrapLines(dmr.dmrTitle, contentW, 13, fontBold).slice(0, 2);
+    titleLines.forEach(function (line) { leftText(line, margin, y, 13, { bold: true, color: ink }); y -= 16; });
+    y -= 8;
+  }
 
   // ---- 1. Supplier Information -------------------------------------------------
   const colW = contentW / 2 - 6;

@@ -876,7 +876,11 @@ Dessimate PO/Invoice PDFs.
 ## Discrepant Material Reports (DMR)
 
 Dessimate documents non-conforming material received from a Supplier -
-`PDIR_DMR.html`, stored in `data/dmrs.json`. Modeled on
+`PDIR_DMR.html`, stored in `data/dmrs.json`. Like CR's **Change Title**/
+SCR's **SCR Title**, a **DMR Title** field sits above Section 1 as a short
+subject line, shown on the list view and as a subject line on the
+generated PDF - not part of the original template, and staff-only like
+every other field outside Section 7. Modeled on
 `Dessimate_Discrepant_Material_Report.xlsx`'s eight numbered sections
 (Supplier Information, Part/Material Information, Discrepancy Type
 checkboxes, Description, Photographic Evidence, Disposition Requested,

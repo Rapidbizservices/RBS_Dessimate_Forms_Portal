@@ -230,6 +230,7 @@
       <thead id="dmrTableHead">
         <tr>
           <th data-sort-key="dmrNumber">DMR #</th>
+          <th data-sort-key="dmrTitle">Title</th>
           <th data-sort-key="supplierOrg">Supplier</th>
           <th data-sort-key="partNumber">Part Number</th>
           <th data-sort-key="dateIssued">Date Issued</th>
@@ -282,6 +283,10 @@
           <input type="date" id="f_dateIssued">
         </div>
       </div>
+
+      <label>DMR Title
+        <input type="text" id="f_dmrTitle" placeholder="Short summary of the discrepancy">
+      </label>
 
       <div class="modalSection" style="margin-top:0;">
         <h3 style="border-top:none; padding-top:0;">1. Supplier Information</h3>
@@ -908,6 +913,7 @@
     bodyEl.innerHTML = sorted.map(function(dmr){
       return '<tr>' +
         '<td class="dmrNumber">' + escapeHtml(dmr.dmrNumber) + '</td>' +
+        '<td>' + (dmr.dmrTitle ? escapeHtml(dmr.dmrTitle) : '<span style="color:var(--label);">—</span>') + '</td>' +
         '<td>' + escapeHtml(dmr.supplierOrg) + '</td>' +
         '<td>' + escapeHtml(dmr.partNumber) + '</td>' +
         '<td>' + escapeHtml(fmtDateMDY(dmr.dateIssued)) + '</td>' +
@@ -1089,6 +1095,7 @@
     document.getElementById('modalTitle').textContent = (canManageAll() ? 'Edit ' : 'Respond to ') + 'DMR ' + dmr.dmrNumber;
     document.getElementById('modalSub').textContent = canManageAll() ? 'DMR Number can be changed any time.' : 'Only Section 7 (Supplier Response) can be updated below.';
     document.getElementById('f_dmrNumber').value = dmr.dmrNumber;
+    document.getElementById('f_dmrTitle').value = dmr.dmrTitle || '';
     document.getElementById('f_dateIssued').value = dmr.dateIssued || '';
     document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions(dmr.supplierOrg || '');
     document.getElementById('f_supplierContactName').value = dmr.supplierContactName || '';
@@ -1160,6 +1167,7 @@
     var statusChecked = document.querySelector('input[name="f_status"]:checked');
 
     var baseFields = {
+      dmrTitle: document.getElementById('f_dmrTitle').value.trim(),
       dateIssued: document.getElementById('f_dateIssued').value,
       supplierContactName: document.getElementById('f_supplierContactName').value.trim(),
       supplierContactEmail: document.getElementById('f_supplierContactEmail').value.trim(),
