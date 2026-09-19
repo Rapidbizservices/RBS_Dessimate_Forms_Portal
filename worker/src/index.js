@@ -4457,6 +4457,29 @@ function sanitizeDmrPhotos(list) {
   return arr.map(sanitizeDmrPhoto).filter(Boolean).slice(0, DMR_PHOTOS_MAX);
 }
 
+// DMR's general Attachments section - same shape as sanitizeOrgDoc, plus a
+// short `comment` field (what the file is about) and `id` preserved
+// through (needed intact: the "Generate PDF" button tags its own saved
+// copy with a fixed id so re-generating replaces it in place instead of
+// appending a duplicate - see PDIR_DMR.html's GENERATED_PDF_ID).
+function sanitizeDmrAttachment(d) {
+  if (!d || !d.path) return null;
+  return {
+    id: d.id || null,
+    path: d.path,
+    filename: d.filename || '',
+    mimeType: d.mimeType || 'application/octet-stream',
+    size: typeof d.size === 'number' ? d.size : 0,
+    comment: d.comment || '',
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
+  };
+}
+function sanitizeDmrAttachments(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeDmrAttachment).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
+}
+
 function sanitizeDmr(o) {
   return {
     id: o.id,
@@ -4497,8 +4520,9 @@ function sanitizeDmr(o) {
     descriptionOfDiscrepancy: o.descriptionOfDiscrepancy || '',
     // Supporting documents (not a numbered template section - same
     // standard multi-file attachment pattern as CR/SCR, up to
-    // PART_ATTACHMENTS_MAX with uploadedBy/uploadedAt stamping).
-    attachments: sanitizeOrgDocList(o.attachments),
+    // PART_ATTACHMENTS_MAX with uploadedBy/uploadedAt stamping, plus a
+    // per-file `comment` - see sanitizeDmrAttachment).
+    attachments: sanitizeDmrAttachments(o.attachments),
     // 5. Photographic Evidence
     photos: sanitizeDmrPhotos(o.photos),
     // 6. Disposition Requested
@@ -4558,7 +4582,7 @@ function validateDmrFields(body, isSupplier) {
     discOther: !!body.discOther,
     discOtherDetail: (body.discOtherDetail || '').toString().trim(),
     descriptionOfDiscrepancy: (body.descriptionOfDiscrepancy || '').toString().trim(),
-    attachments: sanitizeOrgDocList(body.attachments),
+    attachments: sanitizeDmrAttachments(body.attachments),
     photos: sanitizeDmrPhotos(body.photos),
     dispReturnToSupplier: !!body.dispReturnToSupplier,
     dispRework: !!body.dispRework,

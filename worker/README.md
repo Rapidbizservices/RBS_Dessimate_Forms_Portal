@@ -908,11 +908,13 @@ Customer login has no role in this module.
 **DMR Number** is formatted `DMR-####` (4 digits, matching the template's
 `DMR-0000` placeholder) and auto-assigned like CR/SCR Number, Team Member+
 only. An **Attachments** section (up to 20 files, each stamped with who
-uploaded it and when - the same standard multi-file pattern used
+uploaded it and when, plus a short freeform `comment` box so whoever
+uploaded it can say what it is - the same standard multi-file pattern used
 throughout this app) sits below Section 4 for supporting documents, and
 **Photographic Evidence** is up to 4 photo slots, each with its own
 caption. Both are Dessimate-owned like every other non-Section-7 field, so
-a Supplier can view but never add, remove, or re-caption a file.
+a Supplier can view but never add, remove, or re-caption/re-comment a
+file.
 
 **PDF generation is a save, not a live render.** A **Generate PDF** button
 at the bottom of the form (staff-only, only once the DMR already exists)

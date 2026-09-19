@@ -159,6 +159,8 @@
   .attachRow .attachLinks button:hover{ text-decoration:underline; }
   .attachRow .attachLinks .removeLink{ color:#b23b3b; }
   .attachRow .attachMeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
+  .attachRow .attachCommentInput{ flex-basis:100%; margin:4px 0 0 !important; padding:6px 8px !important;
+    font-size:12px !important; }
   .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
 
   .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
@@ -968,6 +970,7 @@
     } else {
       listEl.innerHTML = attachmentsState.map(function(entry, idx){
         var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var comment = entry.kind === 'pending' ? (entry.comment || '') : (entry.doc.comment || '');
         var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
         var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
         var viewBtn = entry.kind === 'pending'
@@ -977,12 +980,23 @@
         return '<div class="attachRow">' +
           '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
           '<div class="attachLinks">' + viewBtn + removeLinkHtml +
-          '</div>' + attachMetaHtml(entry, 'attachMeta') + '</div>';
+          '</div>' + attachMetaHtml(entry, 'attachMeta') +
+          '<input type="text" class="attachCommentInput" data-comment-idx="' + idx + '" placeholder="What is this attachment about?" value="' + escapeHtml(comment) + '">' +
+          '</div>';
       }).join('');
     }
     inputEl.disabled = count >= ATTACHMENTS_MAX || !canManageAll();
     inputEl.title = count >= ATTACHMENTS_MAX ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached.' : '';
 
+    listEl.querySelectorAll('[data-comment-idx]').forEach(function(input){
+      input.disabled = !canManageAll();
+      input.addEventListener('input', function(){
+        var entry = attachmentsState[Number(input.getAttribute('data-comment-idx'))];
+        if (!entry) return;
+        if (entry.kind === 'pending') entry.comment = input.value;
+        else entry.doc.comment = input.value;
+      });
+    });
     listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
       btn.addEventListener('click', function(){
         var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
@@ -1313,7 +1327,7 @@
       } else {
         var attPath = buildDocPath(dmrId, 'attachments', attEntry.filename, ai);
         await ghPutFile(attPath, attEntry.bytes, 'Upload attachment for DMR ' + dmrId);
-        attachmentsPayload.push(Object.assign({ path: attPath, filename: attEntry.filename, mimeType: attEntry.mimeType, size: attEntry.bytes.length }, stampUpload()));
+        attachmentsPayload.push(Object.assign({ path: attPath, filename: attEntry.filename, mimeType: attEntry.mimeType, size: attEntry.bytes.length, comment: attEntry.comment || '' }, stampUpload()));
       }
     }
     baseFields.attachments = attachmentsPayload;
@@ -1397,12 +1411,16 @@
       var filename = 'DMR-' + (saved.dmrNumber || '') + '.pdf';
       var stablePath = DMR_DOC_FOLDER + '/' + dmrId + '/generated/report.pdf';
       await ghPutFile(stablePath, bytes, 'Generate PDF for DMR ' + dmrId);
+      var existingIdx = attachmentsState.findIndex(function(e2){ return e2.kind === 'existing' && e2.doc.id === GENERATED_PDF_ID; });
+      // Keep whatever comment was already on the generated-report entry
+      // (a user may have overwritten the default) rather than stomping it
+      // on every re-generation.
+      var priorComment = existingIdx !== -1 ? (attachmentsState[existingIdx].doc.comment || '') : '';
       var generatedDoc = Object.assign(
-        { id: GENERATED_PDF_ID, path: stablePath, filename: filename, mimeType: 'application/pdf', size: bytes.length },
+        { id: GENERATED_PDF_ID, path: stablePath, filename: filename, mimeType: 'application/pdf', size: bytes.length, comment: priorComment || 'Auto-generated DMR report' },
         stampUpload()
       );
-      var idx = attachmentsState.findIndex(function(e2){ return e2.kind === 'existing' && e2.doc.id === GENERATED_PDF_ID; });
-      if (idx !== -1) attachmentsState[idx] = { kind: 'existing', doc: generatedDoc };
+      if (existingIdx !== -1) attachmentsState[existingIdx] = { kind: 'existing', doc: generatedDoc };
       else attachmentsState.push({ kind: 'existing', doc: generatedDoc });
       renderAttachmentsList();
 
