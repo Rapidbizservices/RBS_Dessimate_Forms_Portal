@@ -201,6 +201,18 @@
  *                                        auto-assigned SCR Number (does not consume it).
  *   PUT    /scrs/<id>                  - team_member or above required.
  *   DELETE /scrs/<id>                  - team_member or above required.
+ *   GET    /dmrs                       - any signed-in user; scoped (team_member or above sees every
+ *                                        DMR; a Supplier login sees only DMRs naming its org; a
+ *                                        Customer login sees none - no role in this module).
+ *   POST   /dmrs                       - team_member or above required (a Supplier never creates a
+ *                                        DMR, only responds to one - see module comment).
+ *   GET    /dmrs/peek-number           - team_member or above required; preview of the next
+ *                                        auto-assigned DMR Number (does not consume it).
+ *   GET    /dmrs/<id>/pdf              - same read access as the record itself.
+ *   PUT    /dmrs/<id>                  - team_member or above (full edit), OR the owning Supplier
+ *                                        (Section 7 "Supplier Response" fields only - everything
+ *                                        else in the body is silently ignored).
+ *   DELETE /dmrs/<id>                  - team_member or above required.
  *   GET    /contents/<path...>        - reads one file from R2 (blocked for anything
  *                                        under data/ - see above), or lists a "directory"
  *                                        prefix, in a shape mirroring GitHub's old API.
@@ -730,6 +742,54 @@ export default {
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         if (request.method === 'PUT') return await handleUpdateScr(request, env, origin, id);
         if (request.method === 'DELETE') return await handleDeleteScr(env, origin, id);
+      }
+
+      if (url.pathname === '/dmrs') {
+        if (request.method === 'GET') {
+          // Any signed-in user is "ok" here - scopeDmrs itself narrows a
+          // Supplier to their own org and a Customer to nothing.
+          const auth = await requireAuthWithScope(request, env);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleListDmrs(env, origin, auth.accessLevel, auth.organization);
+        }
+        if (request.method === 'POST') {
+          // Staff-only - a Supplier never creates a DMR, see the module
+          // comment above.
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleCreateDmr(request, env, origin, auth.username);
+        }
+      }
+
+      if (url.pathname === '/dmrs/peek-number' && request.method === 'GET') {
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handlePeekDmrNumber(env, origin);
+      }
+
+      // PDF export - same read-access rule as the record itself (Team
+      // Member+ always, a Supplier only for their own DMR).
+      if (/^\/dmrs\/[^/]+\/pdf$/.test(url.pathname) && request.method === 'GET') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireAuthWithScope(request, env);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleGetDmrPdf(env, origin, id, auth.accessLevel, auth.organization);
+      }
+
+      if (url.pathname.startsWith('/dmrs/')) {
+        const id = decodeURIComponent(url.pathname.slice('/dmrs/'.length));
+        if (request.method === 'PUT') {
+          // Team Member+ full edit, OR the owning Supplier (Section 7
+          // only - handleUpdateDmr/validateDmrFields enforce this).
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleUpdateDmr(request, env, origin, id, auth.accessLevel, auth.username);
+        }
+        if (request.method === 'DELETE') {
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleDeleteDmr(env, origin, id);
+        }
       }
 
       if (url.pathname === '/supplier-invoices') {
@@ -2171,6 +2231,13 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
       const cr = await resolveChangeRequestRecord(env, crDocsMatch[1]);
       return !!cr && cr.supplierOrg === organization;
     }
+    // A Supplier can read the photos on their own Discrepant Material
+    // Report (dmr_docs) - same ownership check scopeDmrs already uses.
+    const dmrDocsMatch = /^dmr_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (dmrDocsMatch) {
+      const dmr = await resolveDmrRecord(env, dmrDocsMatch[1]);
+      return !!dmr && dmr.supplierOrg === organization;
+    }
   }
   if (accessLevel === 'customer') {
     const dessimateQuoteDocsMatch = /^rfq_dessimate_quote_docs\/([^/]+)\/.+$/.exec(decoded);
@@ -2417,11 +2484,13 @@ const DEFAULT_COUNTERS = {
   nextShipmentSeq: 10,
   nextRfqNumber: 9009, // RFQ module - client's 9000-series, latest used was 9008
   nextCrNumber: 1, // Change Request module - formatted "CR-###" (see reserveCrNumber)
-  nextScrNumber: 1 // Customer SCR module - formatted "SCR-###" (see reserveScrNumber)
+  nextScrNumber: 1, // Customer SCR module - formatted "SCR-###" (see reserveScrNumber)
+  nextDmrNumber: 1 // Discrepant Material Report module - formatted "DMR-####" (see reserveDmrNumber)
 };
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function pad3(n) { return String(n).padStart(3, '0'); }
+function pad4(n) { return String(n).padStart(4, '0'); }
 
 // Assigns the next PO Number and Shipment Number together (one Dessimate PO
 // = one shipment). Rolls the shipment sequence to ##-001 the first time it's
@@ -4312,6 +4381,569 @@ async function handleDeleteScr(env, origin, id) {
 async function resolveScrRecord(env, id) {
   const state = await readJsonArrayFile(env, SCRS_FILE_PATH);
   return state.items.find(function (o) { return o.id === id; }) || null;
+}
+
+// ---- Discrepant Material Report (Rev2.18) - "DMR" module: Dessimate
+// documents non-conforming material received from a Supplier (Sections 1-6
+// and 8), the Supplier responds with root cause/corrective action (Section
+// 7). Modeled on Dessimate_Discrepant_Material_Report.xlsx. Reached via its
+// own "Discrepant Material Report" sidebar entry -> PDIR_DMRHub.html, which
+// (like the Change Requests hub) has a tile per direction; only "Dessimate
+// DMRs" (this module) is built so far - "Customer DMRs" is a future module,
+// same two-step rollout CR had before SCR.
+//
+// Permission split is the SAME shape as the CR module (Team Member+ full
+// control, a Supplier can touch their own record) but INVERTED which part
+// belongs to whom: CR lets a Supplier fill everything except the internal
+// Approval section; DMR lets a Supplier touch ONLY Section 7 (Supplier
+// Response) - the template's own instruction ("to be completed by
+// supplier") - while Team Member+ owns Sections 1-6 and 8. A Supplier can
+// never create a DMR (Dessimate documents the discrepancy first), only
+// respond to one naming their organization.
+const DMRS_FILE_PATH = 'data/dmrs.json';
+const DMR_DOC_FOLDER = 'dmr_docs';
+const DMR_PHOTOS_MAX = 4;
+
+// DMR Number is formatted "DMR-####" (4 digits, matching the template's
+// "DMR-0000" placeholder) - same voluntary/custom-value auto-numbering as
+// CR Number/SCR Number.
+async function reserveDmrNumber(env, clientDmrNumber) {
+  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+    let dmrNumber;
+    if (clientDmrNumber) {
+      dmrNumber = clientDmrNumber;
+      const m = /^DMR-(\d+)$/i.exec(clientDmrNumber);
+      if (m) {
+        const seq = Number(m[1]);
+        if (seq >= obj.nextDmrNumber) obj.nextDmrNumber = seq + 1;
+      }
+    } else {
+      dmrNumber = 'DMR-' + pad4(obj.nextDmrNumber);
+      obj.nextDmrNumber = obj.nextDmrNumber + 1;
+    }
+    return { obj: obj, meta: { dmrNumber: dmrNumber } };
+  });
+  if (!result.ok) throw new Error(result.message);
+  return result.meta.dmrNumber;
+}
+
+async function handlePeekDmrNumber(env, origin) {
+  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
+  return json({ dmrNumber: 'DMR-' + pad4(state.obj.nextDmrNumber) }, 200, origin);
+}
+
+async function dmrNumberTaken(env, dmrNumber, excludeId) {
+  const state = await readJsonArrayFile(env, DMRS_FILE_PATH);
+  const target = String(dmrNumber).toLowerCase();
+  return state.items.some(function (o) { return o.id !== excludeId && String(o.dmrNumber).toLowerCase() === target; });
+}
+
+// A Photographic Evidence slot - same shape as sanitizeOrgDoc plus a
+// caption/location field the template's Section 5 asks for.
+function sanitizeDmrPhoto(d) {
+  if (!d || !d.path) return null;
+  return {
+    path: d.path,
+    filename: d.filename || '',
+    mimeType: d.mimeType || 'application/octet-stream',
+    size: typeof d.size === 'number' ? d.size : 0,
+    caption: d.caption || '',
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
+  };
+}
+function sanitizeDmrPhotos(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeDmrPhoto).filter(Boolean).slice(0, DMR_PHOTOS_MAX);
+}
+
+function sanitizeDmr(o) {
+  return {
+    id: o.id,
+    dmrNumber: o.dmrNumber || '',
+    createdAt: o.createdAt || null,
+    createdBy: o.createdBy || '',
+    dateIssued: o.dateIssued || '',
+    // 1. Supplier Information
+    supplierOrg: o.supplierOrg || '',
+    supplierContactName: o.supplierContactName || '',
+    supplierContactEmail: o.supplierContactEmail || '',
+    supplierContactPhone: o.supplierContactPhone || '',
+    // 2. Part / Material Information
+    partNumber: o.partNumber || '',
+    partDescription: o.partDescription || '',
+    poNumber: o.poNumber || '',
+    lotDateCodes: o.lotDateCodes || '',
+    quantityReceived: o.quantityReceived || '',
+    quantityDiscrepant: o.quantityDiscrepant || '',
+    dateReceived: o.dateReceived || '',
+    inspectedBy: o.inspectedBy || '',
+    // 3. Discrepancy Type
+    discNotCleaned: !!o.discNotCleaned,
+    discWrongPart: !!o.discWrongPart,
+    discBurrs: !!o.discBurrs,
+    discPackaging: !!o.discPackaging,
+    discDimensional: !!o.discDimensional,
+    discMissingDocs: !!o.discMissingDocs,
+    discSurfaceFinish: !!o.discSurfaceFinish,
+    discQuantity: !!o.discQuantity,
+    discOther: !!o.discOther,
+    discOtherDetail: o.discOtherDetail || '',
+    // 4. Description of Discrepancy
+    descriptionOfDiscrepancy: o.descriptionOfDiscrepancy || '',
+    // 5. Photographic Evidence
+    photos: sanitizeDmrPhotos(o.photos),
+    // 6. Disposition Requested
+    dispReturnToSupplier: !!o.dispReturnToSupplier,
+    dispRework: !!o.dispRework,
+    dispUseAsIs: !!o.dispUseAsIs,
+    dispScrap: !!o.dispScrap,
+    dispSortInspect: !!o.dispSortInspect,
+    containmentActionRequired: o.containmentActionRequired || '',
+    supplierResponseDueDate: o.supplierResponseDueDate || '',
+    // 7. Supplier Response - the only section a Supplier login can write
+    rootCause: o.rootCause || '',
+    correctiveAction: o.correctiveAction || '',
+    supplierSignature: o.supplierSignature || '',
+    supplierResponseDate: o.supplierResponseDate || '',
+    // 8. Dessimate Review / Closure
+    reviewedBy: o.reviewedBy || '',
+    status: ['open', 'closed_accepted', 'closed_rejected'].indexOf(o.status) !== -1 ? o.status : '',
+    comments: o.comments || ''
+  };
+}
+
+// Shared by create/update. `isSupplier` keeps ONLY the Section 7 fields
+// (Supplier Response) - everything else is silently stripped even if
+// present in the request, the inverse of CR's isSupplier strip (which
+// keeps everything except Approval).
+function validateDmrFields(body, isSupplier) {
+  const section7 = {
+    rootCause: (body.rootCause || '').toString().trim(),
+    correctiveAction: (body.correctiveAction || '').toString().trim(),
+    supplierSignature: (body.supplierSignature || '').toString().trim(),
+    supplierResponseDate: (body.supplierResponseDate || '').toString().trim()
+  };
+  if (isSupplier) return section7;
+  return Object.assign(section7, {
+    dateIssued: (body.dateIssued || '').toString().trim(),
+    supplierContactName: (body.supplierContactName || '').toString().trim(),
+    supplierContactEmail: (body.supplierContactEmail || '').toString().trim(),
+    supplierContactPhone: (body.supplierContactPhone || '').toString().trim(),
+    partNumber: (body.partNumber || '').toString().trim(),
+    partDescription: (body.partDescription || '').toString().trim(),
+    poNumber: (body.poNumber || '').toString().trim(),
+    lotDateCodes: (body.lotDateCodes || '').toString().trim(),
+    quantityReceived: (body.quantityReceived || '').toString().trim(),
+    quantityDiscrepant: (body.quantityDiscrepant || '').toString().trim(),
+    dateReceived: (body.dateReceived || '').toString().trim(),
+    inspectedBy: (body.inspectedBy || '').toString().trim(),
+    discNotCleaned: !!body.discNotCleaned,
+    discWrongPart: !!body.discWrongPart,
+    discBurrs: !!body.discBurrs,
+    discPackaging: !!body.discPackaging,
+    discDimensional: !!body.discDimensional,
+    discMissingDocs: !!body.discMissingDocs,
+    discSurfaceFinish: !!body.discSurfaceFinish,
+    discQuantity: !!body.discQuantity,
+    discOther: !!body.discOther,
+    discOtherDetail: (body.discOtherDetail || '').toString().trim(),
+    descriptionOfDiscrepancy: (body.descriptionOfDiscrepancy || '').toString().trim(),
+    photos: sanitizeDmrPhotos(body.photos),
+    dispReturnToSupplier: !!body.dispReturnToSupplier,
+    dispRework: !!body.dispRework,
+    dispUseAsIs: !!body.dispUseAsIs,
+    dispScrap: !!body.dispScrap,
+    dispSortInspect: !!body.dispSortInspect,
+    containmentActionRequired: (body.containmentActionRequired || '').toString().trim(),
+    supplierResponseDueDate: (body.supplierResponseDueDate || '').toString().trim(),
+    reviewedBy: (body.reviewedBy || '').toString().trim(),
+    status: ['open', 'closed_accepted', 'closed_rejected'].indexOf(body.status) !== -1 ? body.status : '',
+    comments: (body.comments || '').toString().trim()
+  });
+}
+
+// Team Member+ sees every DMR; a Supplier sees only ones naming their own
+// organization (same shape as scopeChangeRequests). A Customer login has no
+// role in this module.
+function scopeDmrs(items, accessLevel, organization) {
+  if (accessLevel === 'supplier') {
+    return items.filter(function (o) { return organization && o.supplierOrg === organization; });
+  }
+  if (accessLevel === 'customer') return [];
+  return items;
+}
+
+async function handleListDmrs(env, origin, accessLevel, organization) {
+  const state = await readJsonArrayFile(env, DMRS_FILE_PATH);
+  const items = scopeDmrs(state.items.map(sanitizeDmr), accessLevel, organization);
+  return json({ dmrs: items }, 200, origin);
+}
+
+// Staff-only - a Supplier never creates a DMR, only responds to one (see
+// the module comment above).
+async function handleCreateDmr(request, env, origin, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const fields = validateDmrFields(body, false);
+
+  const supplierOrg = (body.supplierOrg || '').toString().trim();
+  if (!supplierOrg) return json({ message: 'Supplier is required.' }, 400, origin);
+
+  const clientDmrNumber = (body.dmrNumber !== undefined && body.dmrNumber !== null) ? String(body.dmrNumber).trim() : '';
+  if (clientDmrNumber && await dmrNumberTaken(env, clientDmrNumber, null)) {
+    return json({ message: 'That DMR Number is already in use.' }, 409, origin);
+  }
+  const dmrNumber = await reserveDmrNumber(env, clientDmrNumber);
+
+  const newDmr = Object.assign(
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), createdBy: username || '', dmrNumber: dmrNumber, supplierOrg: supplierOrg },
+    fields
+  );
+
+  const result = await mutateJsonArrayFile(env, DMRS_FILE_PATH, function (items) {
+    items.push(newDmr);
+    return { items: items };
+  });
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeDmr(newDmr), 201, origin);
+}
+
+async function handleUpdateDmr(request, env, origin, id, accessLevel, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const isSupplier = accessLevel === 'supplier';
+  const fields = validateDmrFields(body, isSupplier);
+
+  let callerOrg = '';
+  if (isSupplier) {
+    callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Supplier organization.' }, 403, origin);
+  }
+
+  let newDmrNumber; // undefined = leave as-is
+  if (body.dmrNumber !== undefined) {
+    if (isSupplier) return json({ message: 'Only Dessimate staff can change the DMR Number.' }, 403, origin);
+    const requested = (body.dmrNumber === null ? '' : String(body.dmrNumber)).trim();
+    if (!requested) return json({ message: 'DMR Number is required.' }, 400, origin);
+    if (await dmrNumberTaken(env, requested, id)) {
+      return json({ message: 'That DMR Number is already in use.' }, 409, origin);
+    }
+    newDmrNumber = requested;
+  }
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, DMRS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    if (isSupplier && target.supplierOrg !== callerOrg) return null; // 404s below rather than 403 - don't reveal existence
+    if (!isSupplier && body.supplierOrg !== undefined) {
+      const requestedOrg = (body.supplierOrg || '').toString().trim();
+      if (requestedOrg) target.supplierOrg = requestedOrg;
+    }
+    Object.assign(target, fields); // a Supplier's `fields` only ever has the Section 7 keys
+    if (newDmrNumber !== undefined) target.dmrNumber = newDmrNumber;
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeDmr(saved), 200, origin);
+}
+
+async function handleDeleteDmr(env, origin, id) {
+  const result = await mutateJsonArrayFile(env, DMRS_FILE_PATH, function (items) {
+    const idx = items.findIndex(function (o) { return o.id === id; });
+    if (idx === -1) return null;
+    items.splice(idx, 1);
+    return { items: items };
+  }, { requireFound: true });
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json({ ok: true }, 200, origin);
+}
+
+// Used by isContentsPathAllowedForExternal's dmr_docs branch and the PDF
+// route's Supplier ownership check - same shape as resolveChangeRequestRecord.
+async function resolveDmrRecord(env, id) {
+  const state = await readJsonArrayFile(env, DMRS_FILE_PATH);
+  return state.items.find(function (o) { return o.id === id; }) || null;
+}
+
+// Single-page rendering of the Dessimate_Discrepant_Material_Report.xlsx
+// layout - same drawn-from-scratch pdf-lib approach as buildCrPdf (this repo
+// has no tooling to fill an actual .xlsx template). `photoDocs` is an array
+// of raw {bytes, mimeType} (or null), parallel to dmr.photos, already read
+// from R2 by the caller but NOT YET embedded - embedding has to happen
+// against this function's own pdfDoc, same as buildCrPdf's
+// currentConditionDoc/newConditionDoc. When any photo is present, a second
+// page is appended as a 2x2 photo-evidence grid with captions; otherwise
+// the DMR is one page.
+async function buildDmrPdf(dmr, photoDocs) {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  async function embedImageDoc(doc) {
+    if (!doc || !doc.bytes) return null;
+    try {
+      return (doc.mimeType === 'image/png') ? await pdfDoc.embedPng(doc.bytes) : await pdfDoc.embedJpg(doc.bytes);
+    } catch (e) { return null; }
+  }
+  const photoImages = [];
+  for (let pi = 0; pi < 4; pi++) photoImages.push(await embedImageDoc(photoDocs && photoDocs[pi]));
+
+  const pageWidth = 612, pageHeight = 792; // US Letter
+  const margin = 44;
+  const contentW = pageWidth - margin * 2;
+
+  const brandBlue = rgb(0.106, 0.243, 0.706);
+  const ink = rgb(0.1, 0.1, 0.12);
+  const labelGray = rgb(0.42, 0.44, 0.49);
+  const lineGray = rgb(0.85, 0.86, 0.89);
+  const sectionBg = rgb(0.925, 0.941, 0.976);
+
+  const page = pdfDoc.addPage([pageWidth, pageHeight]);
+
+  let logoImg = null;
+  try { logoImg = await pdfDoc.embedJpg(base64ToBytes(DESSIMATE_LOGO_JPG_BASE64)); } catch (e) { logoImg = null; }
+
+  function leftText(str, x, yy, size, opts) {
+    opts = opts || {};
+    page.drawText(str == null ? '' : String(str), { x: x, y: yy, size: size, font: opts.bold ? fontBold : font, color: opts.color || ink });
+  }
+  function rightText(str, rightEdgeX, yy, size, opts) {
+    opts = opts || {};
+    const f = opts.bold ? fontBold : font;
+    const s = str == null ? '' : String(str);
+    page.drawText(s, { x: rightEdgeX - f.widthOfTextAtSize(s, size), y: yy, size: size, font: f, color: opts.color || ink });
+  }
+  function wrapLines(str, maxWidth, size, useFont) {
+    const f = useFont || font;
+    const out = [];
+    (str || '').split(/\r?\n/).forEach(function (raw) {
+      const words = raw.split(/\s+/).filter(Boolean);
+      if (!words.length) { out.push(''); return; }
+      let cur = '';
+      words.forEach(function (w) {
+        const attempt = cur ? cur + ' ' + w : w;
+        if (cur && f.widthOfTextAtSize(attempt, size) > maxWidth) { out.push(cur); cur = w; }
+        else cur = attempt;
+      });
+      if (cur) out.push(cur);
+    });
+    return out;
+  }
+  function fmtDateMDY(s) {
+    const str = (s || '').toString().trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    return m ? (m[2] + '/' + m[3] + '/' + m[1]) : str;
+  }
+  function checkbox(x, yy, checked, label, opts) {
+    opts = opts || {};
+    const size = 9;
+    page.drawRectangle({ x: x, y: yy, width: size, height: size, borderColor: ink, borderWidth: 1, color: checked ? ink : rgb(1, 1, 1) });
+    leftText(label, x + size + 5, yy + 1, opts.size || 9, { bold: opts.bold });
+  }
+  function sectionHeader(label, x, yy, w) {
+    page.drawRectangle({ x: x, y: yy - 14, width: w, height: 16, color: sectionBg });
+    leftText(label, x + 6, yy - 10, 9.5, { bold: true, color: brandBlue });
+  }
+
+  // ---- Header: logo + title, DMR Number / Date Issued ------------------------
+  let hy = pageHeight - 40;
+  if (logoImg) {
+    const dims = logoImg.scaleToFit(108, 60);
+    page.drawImage(logoImg, { x: margin, y: hy - dims.height, width: dims.width, height: dims.height });
+  } else {
+    leftText('Dessimate', margin, hy - 14, 16, { bold: true, color: brandBlue });
+  }
+  rightText('DISCREPANT MATERIAL REPORT (DMR)', pageWidth - margin, hy - 16, 15, { bold: true, color: brandBlue });
+  rightText('DMR #: ' + (dmr.dmrNumber || ''), pageWidth - margin, hy - 34, 10.5, { bold: true });
+  rightText('Date Issued: ' + fmtDateMDY(dmr.dateIssued), pageWidth - margin, hy - 48, 10);
+
+  let y = hy - 78;
+
+  // ---- 1. Supplier Information -------------------------------------------------
+  const colW = contentW / 2 - 6;
+  const col2x = margin + contentW / 2 + 6;
+  sectionHeader('1. SUPPLIER INFORMATION', margin, y, contentW);
+  y -= 20;
+  leftText('Supplier Name:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText(dmr.supplierOrg || '—', margin + 90, y, 9.5);
+  leftText('Contact:', col2x, y, 8.5, { bold: true, color: labelGray });
+  leftText(dmr.supplierContactName || '—', col2x + 50, y, 9.5);
+  y -= 16;
+  leftText('Contact Email:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText(dmr.supplierContactEmail || '—', margin + 90, y, 9.5);
+  leftText('Contact Phone:', col2x, y, 8.5, { bold: true, color: labelGray });
+  leftText(dmr.supplierContactPhone || '—', col2x + 78, y, 9.5);
+  y -= 22;
+
+  // ---- 2. Part / Material Information --------------------------------------------
+  sectionHeader('2. PART / MATERIAL INFORMATION', margin, y, contentW);
+  y -= 20;
+  function fieldPair(labelA, valueA, labelB, valueB) {
+    leftText(labelA, margin, y, 8.5, { bold: true, color: labelGray });
+    leftText(valueA || '—', margin + 92, y, 9.5);
+    leftText(labelB, col2x, y, 8.5, { bold: true, color: labelGray });
+    leftText(valueB || '—', col2x + 92, y, 9.5);
+    y -= 16;
+  }
+  fieldPair('Part Number:', dmr.partNumber, 'Part Description:', dmr.partDescription);
+  fieldPair('Purchase Order #:', dmr.poNumber, 'Lot / Date Code(s):', dmr.lotDateCodes);
+  fieldPair('Quantity Received:', dmr.quantityReceived, 'Quantity Discrepant:', dmr.quantityDiscrepant);
+  fieldPair('Date Received:', fmtDateMDY(dmr.dateReceived), 'Inspected By:', dmr.inspectedBy);
+  y -= 6;
+
+  // ---- 3. Discrepancy Type ---------------------------------------------------------
+  sectionHeader('3. DISCREPANCY TYPE (check all that apply)', margin, y, contentW);
+  y -= 20;
+  const discColW = contentW / 4;
+  const discTypes = [
+    ['Not Cleaned / Contamination', dmr.discNotCleaned], ['Wrong Part / Mismatch', dmr.discWrongPart],
+    ['Burrs / Sharp Edges', dmr.discBurrs], ['Packaging Damage', dmr.discPackaging],
+    ['Dimensional Out of Spec', dmr.discDimensional], ['Missing / Incorrect Documentation', dmr.discMissingDocs],
+    ['Surface Finish / Scratches', dmr.discSurfaceFinish], ['Quantity Shortage / Overage', dmr.discQuantity]
+  ];
+  for (let i = 0; i < discTypes.length; i += 2) {
+    checkbox(margin, y, discTypes[i][1], discTypes[i][0], { size: 8 });
+    if (discTypes[i + 1]) checkbox(margin + discColW * 2, y, discTypes[i + 1][1], discTypes[i + 1][0], { size: 8 });
+    y -= 15;
+  }
+  checkbox(margin, y, dmr.discOther, 'Other: ' + (dmr.discOther && dmr.discOtherDetail ? dmr.discOtherDetail : ''), { size: 8 });
+  y -= 22;
+
+  // ---- 4. Description of Discrepancy -----------------------------------------------
+  sectionHeader('4. DESCRIPTION OF DISCREPANCY', margin, y, contentW);
+  y -= 18;
+  const descLines = wrapLines(dmr.descriptionOfDiscrepancy, contentW - 12, 9.5);
+  const descShown = (descLines.length ? descLines : ['']).slice(0, 3);
+  descShown.forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
+  y -= 4;
+  if (dmr.photos && dmr.photos.length) {
+    leftText('Photographic evidence: ' + dmr.photos.length + ' photo' + (dmr.photos.length === 1 ? '' : 's') + ' attached (see page 2).', margin, y, 8, { color: labelGray });
+    y -= 16;
+  } else {
+    y -= 4;
+  }
+
+  // ---- 6. Disposition Requested -----------------------------------------------------
+  sectionHeader('6. DISPOSITION REQUESTED', margin, y, contentW);
+  y -= 20;
+  checkbox(margin, y, dmr.dispReturnToSupplier, 'Return to Supplier', { size: 8.5 });
+  checkbox(margin + 150, y, dmr.dispRework, 'Rework at Supplier', { size: 8.5 });
+  checkbox(margin + 300, y, dmr.dispScrap, 'Scrap', { size: 8.5 });
+  y -= 15;
+  checkbox(margin, y, dmr.dispUseAsIs, 'Use As-Is (Dessimate Approval Required)', { size: 8.5 });
+  checkbox(margin + 300, y, dmr.dispSortInspect, 'Sort & 100% Inspect at Dessimate', { size: 8.5 });
+  y -= 18;
+  leftText('Containment Action Required:', margin, y, 8.5, { bold: true, color: labelGray });
+  y -= 12;
+  wrapLines(dmr.containmentActionRequired, contentW - 6, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
+  leftText('Supplier Response Due:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText(fmtDateMDY(dmr.supplierResponseDueDate) || '—', margin + 135, y, 9.5);
+  y -= 22;
+
+  // ---- 7. Supplier Response ----------------------------------------------------------
+  sectionHeader('7. SUPPLIER RESPONSE (to be completed by supplier)', margin, y, contentW);
+  y -= 18;
+  leftText('Root Cause:', margin, y, 8.5, { bold: true, color: labelGray });
+  y -= 11;
+  wrapLines(dmr.rootCause, contentW - 12, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
+  y -= 4;
+  leftText('Corrective / Containment Action:', margin, y, 8.5, { bold: true, color: labelGray });
+  y -= 11;
+  wrapLines(dmr.correctiveAction, contentW - 12, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
+  y -= 6;
+  leftText('Supplier Signature / Print Name:', margin, y, 8, { bold: true, color: labelGray });
+  page.drawLine({ start: { x: margin, y: y - 14 }, end: { x: margin + 260, y: y - 14 }, thickness: 0.75, color: lineGray });
+  leftText(dmr.supplierSignature || '', margin, y - 12, 9.5);
+  leftText('Date:', margin + 300, y, 8, { bold: true, color: labelGray });
+  page.drawLine({ start: { x: margin + 300, y: y - 14 }, end: { x: margin + 420, y: y - 14 }, thickness: 0.75, color: lineGray });
+  leftText(fmtDateMDY(dmr.supplierResponseDate) || '', margin + 300, y - 12, 9.5);
+  y -= 32;
+
+  // ---- 8. Dessimate Review / Closure --------------------------------------------------
+  sectionHeader('8. DESSIMATE REVIEW / CLOSURE', margin, y, contentW);
+  y -= 20;
+  leftText('Reviewed By:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText(dmr.reviewedBy || '—', margin + 80, y, 9.5);
+  checkbox(col2x, y - 1, dmr.status === 'open', 'Open', { size: 8.5 });
+  checkbox(col2x + 60, y - 1, dmr.status === 'closed_accepted', 'Closed - Accepted', { size: 8.5 });
+  checkbox(col2x + 190, y - 1, dmr.status === 'closed_rejected', 'Closed - Rejected', { size: 8.5 });
+  y -= 18;
+  leftText('Comments:', margin, y, 8.5, { bold: true, color: labelGray });
+  y -= 11;
+  wrapLines(dmr.comments, contentW - 12, 9.5).slice(0, 3).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
+
+  // ---- Footer -------------------------------------------------------------------
+  leftText('Dessimate – Discrepant Material Report – Form QF-DMR-01, Rev. A', margin, 26, 7.5, { color: labelGray });
+
+  // ---- Page 2: Photographic Evidence (only when at least one photo exists) -----
+  const photos = Array.isArray(dmr.photos) ? dmr.photos : [];
+  if (photos.length) {
+    const page2 = pdfDoc.addPage([pageWidth, pageHeight]);
+    function leftText2(str, x, yy, size, opts) {
+      opts = opts || {};
+      page2.drawText(str == null ? '' : String(str), { x: x, y: yy, size: size, font: opts.bold ? fontBold : font, color: opts.color || ink });
+    }
+    page2.drawRectangle({ x: margin, y: pageHeight - 40 - 16, width: contentW, height: 16, color: sectionBg });
+    leftText2('5. PHOTOGRAPHIC EVIDENCE — DMR ' + (dmr.dmrNumber || ''), margin + 6, pageHeight - 40 - 12, 9.5, { bold: true, color: brandBlue });
+    const gridTop = pageHeight - 40 - 34;
+    const gap = 16;
+    const boxW = (contentW - gap) / 2;
+    const boxH = 300;
+    for (let i = 0; i < 4; i++) {
+      const col = i % 2, row = Math.floor(i / 2);
+      const bx = margin + col * (boxW + gap);
+      const by = gridTop - boxH - row * (boxH + 34) - row * gap;
+      page2.drawRectangle({ x: bx, y: by, width: boxW, height: boxH, borderColor: lineGray, borderWidth: 1 });
+      const photo = photos[i];
+      const img = photoImages && photoImages[i];
+      leftText2('Photo ' + (i + 1), bx + 6, by + boxH - 14, 8.5, { bold: true, color: labelGray });
+      if (img) {
+        const pad = 8, maxW = boxW - pad * 2, maxH = boxH - 26;
+        const dims = img.scaleToFit(maxW, maxH);
+        page2.drawImage(img, { x: bx + (boxW - dims.width) / 2, y: by + 18 + (maxH - dims.height) / 2, width: dims.width, height: dims.height });
+      } else {
+        leftText2('No photo attached.', bx + 6, by + boxH / 2, 9, { color: labelGray });
+      }
+      if (photo && photo.caption) {
+        leftText2(photo.caption, bx + 6, by - 12, 8, { color: labelGray });
+      }
+    }
+  }
+
+  return pdfDoc.save();
+}
+
+async function handleGetDmrPdf(env, origin, id, accessLevel, organization) {
+  const raw = await resolveDmrRecord(env, id);
+  if (!raw) return json({ message: 'Not found.' }, 404, origin);
+  let clean = sanitizeDmr(raw);
+  const scoped = scopeDmrs([clean], accessLevel, organization);
+  if (!scoped.length) return json({ message: 'Not found.' }, 404, origin);
+  clean = scoped[0];
+
+  async function loadImageDoc(doc) {
+    if (!doc || !doc.path) return null;
+    try {
+      const bytes = await readGithubFileBytes(env, doc.path);
+      return bytes ? { bytes: bytes, mimeType: doc.mimeType } : null;
+    } catch (e) { return null; }
+  }
+
+  let pdfBytes;
+  try {
+    const photoDocs = [];
+    for (let i = 0; i < clean.photos.length; i++) photoDocs.push(await loadImageDoc(clean.photos[i]));
+    pdfBytes = await buildDmrPdf(clean, photoDocs);
+  } catch (e) {
+    return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
+  }
+  return pdfResponse(pdfBytes, 'DMR ' + clean.dmrNumber + '.pdf', origin);
 }
 
 // ---- Supplier Invoices (what a Supplier bills Dessimate against a

@@ -1,0 +1,1250 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Discrepant Material Reports &mdash; DSCM</title>
+<link rel="stylesheet" href="office-viewer.css">
+<link rel="stylesheet" href="confirm-dialog.css">
+<link rel="stylesheet" href="sortable-table.css">
+<script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:1220px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+
+  .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .homeBtn, .addBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
+    border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
+  }
+  .homeBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .homeBtn:hover{ background:#eef1fa; }
+  html[data-embedded] .homeBtn{ display:none !important; }
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
+  .addBtn{ color:#fff; background:#1f9254; }
+  .addBtn:hover{ background:#187b46; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
+    font-size:12.5px; margin:10px 0 18px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  /* Staff login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+  .authNote{ font-size:11.5px; color:var(--label); background:#f7f8fb; border:1px solid var(--line);
+    border-radius:6px; padding:8px 10px; margin:0 0 16px; line-height:1.45; }
+  .authAttempts{ font-size:12px; color:var(--label); min-height:14px; margin-top:4px; }
+
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
+
+  .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; overflow-x:auto; }
+  table.dmrTable{ width:100%; border-collapse:collapse; font-size:13px; min-width:960px; }
+  table.dmrTable th{ background:#eef1f7; color:var(--label); font-size:11px; text-transform:uppercase;
+    letter-spacing:.02em; text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.dmrTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  table.dmrTable tr:last-child td{ border-bottom:none; }
+  .dmrNumber{ font-weight:700; }
+  .statusPill{ display:inline-block; font-size:11px; font-weight:700; border-radius:5px; padding:3px 8px; white-space:nowrap; }
+  .statusPill.open{ color:#a06a1c; background:#faf1e0; }
+  .statusPill.accepted{ color:#187b46; background:#e5f4ec; }
+  .statusPill.rejected{ color:#b23b3b; background:#fbeaea; }
+  .statusPill.pending{ color:var(--label); background:#eef0f4; }
+  .rowActions{ display:flex; gap:8px; white-space:nowrap; }
+  .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:6px 12px; white-space:nowrap; }
+  .editBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .editBtn:hover{ background:#eef1fa; }
+  .pdfBtn{ color:#1f9254; background:#fff; border:1px solid #1f9254; }
+  .pdfBtn:hover{ background:#eaf6ef; }
+  .deleteBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
+  .deleteBtn:hover{ background:#fbeaea; border-color:#b23b3b; }
+
+  .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
+  .state.error{ color:#b23b3b; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+
+  /* Add/Edit modal */
+  .modalOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1500; align-items:center; justify-content:center; padding:20px; }
+  .modalOverlay.open{ display:flex; }
+  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:960px;
+    max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .modalCard h2{ font-size:17px; margin:0 0 4px; color:var(--ink); }
+  .modalCard .modalSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .modalCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .modalCard input, .modalCard select, .modalCard textarea{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .modalCard input:disabled, .modalCard select:disabled, .modalCard textarea:disabled{ background:#f4f5f8; color:#6a6e75; }
+  .modalGrid2{ display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+  .modalGrid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 14px; }
+  .modalGrid4{ display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:0 14px; }
+
+  .numberBanner{ display:flex; gap:20px; flex-wrap:wrap; background:#f7f8fb; border:1px solid var(--line);
+    border-radius:8px; padding:12px 14px; margin-bottom:16px; font-size:12.5px; color:var(--label); }
+  .numberField{ flex:1 1 220px; min-width:200px; }
+  .numberField label{ display:block; margin-bottom:4px; }
+  .numberFieldRow{ display:flex; gap:8px; align-items:center; }
+  .numberFieldRow input{ flex:1 1 auto; min-width:0; font-variant-numeric:tabular-nums; }
+  .numberFieldRow input[readonly]{ background:#eef1f5; color:var(--ink); font-weight:700; }
+  .numberFieldRow button{ flex:0 0 auto; font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:7px 10px; white-space:nowrap; color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .numberFieldRow button:hover{ background:#eef1fa; }
+  .numberFieldRow button:disabled{ opacity:.5; cursor:default; background:#fff; }
+
+  .modalSection{ margin:18px 0 4px; }
+  .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
+  .modalSectionHint{ font-size:12px; color:var(--label); margin:2px 0 8px; }
+  .supplierSection h3{ color:var(--brand); }
+  .supplierSectionNote{ font-size:12px; color:var(--brand); font-weight:600; margin:2px 0 8px; }
+
+  .radioGroup, .checkGroup{ display:flex; gap:16px; flex-wrap:wrap; margin-top:5px; }
+  .radioGroup label, .checkGroup label{ display:flex; align-items:center; gap:6px; font-size:13px; font-weight:400;
+    color:var(--ink); margin:0; cursor:pointer; }
+  .radioGroup input[type=radio], .checkGroup input[type=checkbox]{ width:auto; margin:0; }
+  .inlineDetailInput{ display:inline-block !important; width:auto !important; margin:0 0 0 6px !important;
+    padding:5px 8px !important; font-size:12.5px !important; min-width:160px; }
+
+  .photoSlots{ display:grid; grid-template-columns:1fr 1fr; gap:14px 16px; margin-top:6px; }
+  .photoSlot h4{ font-size:12px; margin:0 0 6px; color:var(--ink); }
+  .photoSlot input[type=text]{ margin-top:6px; }
+  .docCell{ font-size:12px; color:var(--label); }
+  .attachmentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .attachRow{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:2px 12px;
+    padding:7px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
+  .attachRow .attachName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .attachRow .attachName.pending{ color:#a06a1c; }
+  .attachRow .attachLinks{ display:flex; gap:10px; flex:0 0 auto; }
+  .attachRow .attachLinks button{ font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
+  .attachRow .attachLinks button:hover{ text-decoration:underline; }
+  .attachRow .attachLinks .removeLink{ color:#b23b3b; }
+  .attachRow .attachMeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
+  .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
+
+  .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
+  .modalBtns{ display:flex; gap:10px; margin-top:10px; }
+  .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
+    padding:11px; cursor:pointer; }
+  .saveBtn{ color:#fff; background:var(--brand); border:none; }
+  .saveBtn:hover{ background:var(--brand-dark); }
+  .saveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .cancelBtn:hover{ background:#f4f5f8; }
+
+  /* In-page document viewer */
+  .viewerOverlay{
+    display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:2200; padding:22px; align-items:center; justify-content:center;
+  }
+  .viewerOverlay.open{ display:flex; }
+  .viewerPanel{
+    background:#fff; border-radius:10px; width:100%; max-width:980px; height:100%;
+    display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .viewerBar{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:12px 16px; border-bottom:1px solid var(--line); }
+  .viewerTitle{ font-size:14px; font-weight:700; overflow-wrap:anywhere; }
+  .viewerBtns{ display:flex; gap:8px; flex:0 0 auto; }
+  .viewerBtns a, .viewerBtns button{
+    font-family:inherit; font-size:13px; font-weight:600; text-decoration:none; cursor:pointer;
+    border-radius:6px; padding:7px 14px; white-space:nowrap;
+  }
+  #docViewerDownload{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  #docViewerDownload:hover{ background:#eef1fa; }
+  #docViewerClose{ color:#fff; background:#5b5f66; border:1px solid #5b5f66; }
+  #docViewerClose:hover{ background:#3f4248; }
+  .viewerBody{ flex:1 1 auto; position:relative; background:#525659; }
+  .viewerBody iframe, .viewerBody img, .viewerBody video{ position:absolute; inset:0; width:100%; height:100%; border:0; object-fit:contain; background:#525659; }
+  .viewerBody .viewerState{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:13.5px; text-align:center; padding:20px; flex-direction:column; gap:10px;
+  }
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>Discrepant Material Reports</h1>
+        <p class="sub">Non-conforming material received from a Supplier &mdash; Dessimate documents the discrepancy, the Supplier responds with root cause and corrective action.</p>
+      </div>
+    </div>
+    <div class="headerBtns">
+      <a class="homeBtn" href="index.html">Home</a>
+      <a class="homeBtn" href="PDIR_Parts.html">Parts</a>
+      <a class="homeBtn" href="Instructions.html">Instructions</a>
+      <button type="button" class="addBtn" id="addDmrBtn" style="display:none;">Add DMR</button>
+    </div>
+  </div>
+
+  <div class="ghbar">
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
+  </div>
+
+  <div class="toolbar">
+    <h2 id="toolbarTitle">Dessimate DMRs</h2>
+  </div>
+
+  <div class="panel">
+    <div id="loadingState" class="state">Loading&hellip;</div>
+    <div id="errorState" class="state error" style="display:none;"></div>
+    <div id="emptyState" class="state" style="display:none;">No DMRs yet.</div>
+    <table class="dmrTable" id="dmrTable" style="display:none;">
+      <thead id="dmrTableHead">
+        <tr>
+          <th data-sort-key="dmrNumber">DMR #</th>
+          <th data-sort-key="supplierOrg">Supplier</th>
+          <th data-sort-key="partNumber">Part Number</th>
+          <th data-sort-key="dateIssued">Date Issued</th>
+          <th data-sort-key="status">Status</th>
+          <th>PDF</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="dmrTableBody"></tbody>
+    </table>
+  </div>
+
+  <footer>Dessimate &middot; DSCM &middot; Discrepant Material Reports &middot; <span id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</span></footer>
+</div>
+
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Staff Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to use the DSCM system.</p>
+    <p class="authNote">Please check the username and password provided by your Dessimate contact. Your account will be locked after 3 unsuccessful login attempts.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+      <div class="authAttempts" id="authAttempts"></div>
+    </form>
+  </div>
+</div>
+
+<div class="modalOverlay" id="dmrModalOverlay">
+  <div class="modalCard">
+    <h2 id="modalTitle">Add DMR</h2>
+    <p class="modalSub" id="modalSub">DMR Number is assigned automatically when you save.</p>
+    <form id="dmrForm">
+      <div class="numberBanner" id="numberBanner">
+        <div class="numberField">
+          <label for="f_dmrNumber">DMR Number <span style="font-weight:400;">(optional — leave blank to auto-assign)</span></label>
+          <div class="numberFieldRow">
+            <input type="text" id="f_dmrNumber" placeholder="assigned on Save">
+            <button type="button" id="useSystemDmrBtn">Use System Number</button>
+          </div>
+        </div>
+        <div class="numberField">
+          <label for="f_dateIssued">Date Issued</label>
+          <input type="date" id="f_dateIssued">
+        </div>
+      </div>
+
+      <div class="modalSection" style="margin-top:0;">
+        <h3 style="border-top:none; padding-top:0;">1. Supplier Information</h3>
+        <div class="modalGrid2">
+          <label>Supplier
+            <select id="f_supplierOrg" required></select>
+          </label>
+          <label>Contact Name
+            <input type="text" id="f_supplierContactName">
+          </label>
+        </div>
+        <div class="modalGrid2">
+          <label>Contact Email
+            <input type="email" id="f_supplierContactEmail">
+          </label>
+          <label>Contact Phone
+            <input type="text" id="f_supplierContactPhone">
+          </label>
+        </div>
+      </div>
+
+      <div class="modalSection">
+        <h3>2. Part / Material Information</h3>
+        <div class="modalGrid2">
+          <label>Part Number
+            <select id="f_partNumber"></select>
+          </label>
+          <label>Part Description
+            <input type="text" id="f_partDescription">
+          </label>
+        </div>
+        <div class="modalGrid2">
+          <label>Purchase Order #
+            <input type="text" id="f_poNumber">
+          </label>
+          <label>Lot / Date Code(s)
+            <input type="text" id="f_lotDateCodes">
+          </label>
+        </div>
+        <div class="modalGrid4">
+          <label>Quantity Received
+            <input type="text" id="f_quantityReceived">
+          </label>
+          <label>Quantity Discrepant
+            <input type="text" id="f_quantityDiscrepant">
+          </label>
+          <label>Date Received
+            <input type="date" id="f_dateReceived">
+          </label>
+          <label>Inspected By
+            <input type="text" id="f_inspectedBy">
+          </label>
+        </div>
+      </div>
+
+      <div class="modalSection">
+        <h3>3. Discrepancy Type <span style="font-weight:400;">(check all that apply)</span></h3>
+        <div class="checkGroup">
+          <label><input type="checkbox" id="f_discNotCleaned"> Not Cleaned / Contamination</label>
+          <label><input type="checkbox" id="f_discWrongPart"> Wrong Part / Mismatch</label>
+          <label><input type="checkbox" id="f_discBurrs"> Burrs / Sharp Edges</label>
+          <label><input type="checkbox" id="f_discPackaging"> Packaging Damage</label>
+          <label><input type="checkbox" id="f_discDimensional"> Dimensional Out of Spec</label>
+          <label><input type="checkbox" id="f_discMissingDocs"> Missing / Incorrect Documentation</label>
+          <label><input type="checkbox" id="f_discSurfaceFinish"> Surface Finish / Scratches</label>
+          <label><input type="checkbox" id="f_discQuantity"> Quantity Shortage / Overage</label>
+          <label><input type="checkbox" id="f_discOther"> Other:
+            <input type="text" id="f_discOtherDetail" class="inlineDetailInput" placeholder="specify">
+          </label>
+        </div>
+      </div>
+
+      <div class="modalSection">
+        <h3>4. Description of Discrepancy</h3>
+        <textarea id="f_descriptionOfDiscrepancy" rows="3"></textarea>
+      </div>
+
+      <div class="modalSection">
+        <h3>5. Photographic Evidence <span style="font-weight:400;">(up to 4 photos)</span></h3>
+        <div class="photoSlots" id="photoSlotsWrap"></div>
+      </div>
+
+      <div class="modalSection">
+        <h3>6. Disposition Requested</h3>
+        <div class="checkGroup">
+          <label><input type="checkbox" id="f_dispReturnToSupplier"> Return to Supplier</label>
+          <label><input type="checkbox" id="f_dispRework"> Rework at Supplier</label>
+          <label><input type="checkbox" id="f_dispUseAsIs"> Use As-Is (Dessimate Approval Required)</label>
+          <label><input type="checkbox" id="f_dispScrap"> Scrap</label>
+          <label><input type="checkbox" id="f_dispSortInspect"> Sort &amp; 100% Inspect at Dessimate</label>
+        </div>
+        <div class="modalGrid2" style="margin-top:10px;">
+          <label>Containment Action Required
+            <input type="text" id="f_containmentActionRequired">
+          </label>
+          <label>Supplier Response Due Date
+            <input type="date" id="f_supplierResponseDueDate">
+          </label>
+        </div>
+      </div>
+
+      <div class="modalSection supplierSection" id="section7Wrap">
+        <h3>7. Supplier Response <span style="font-weight:400;">(to be completed by supplier)</span></h3>
+        <p class="supplierSectionNote" id="supplierSectionNote" style="display:none;">This is the section you can fill in and save.</p>
+        <div class="modalGrid2">
+          <label>Root Cause
+            <textarea id="f_rootCause" rows="2"></textarea>
+          </label>
+          <label>Corrective / Containment Action
+            <textarea id="f_correctiveAction" rows="2"></textarea>
+          </label>
+        </div>
+        <div class="modalGrid2">
+          <label>Supplier Signature / Print Name
+            <input type="text" id="f_supplierSignature">
+          </label>
+          <label>Date
+            <input type="date" id="f_supplierResponseDate">
+          </label>
+        </div>
+      </div>
+
+      <div class="modalSection">
+        <h3>8. Dessimate Review / Closure</h3>
+        <div class="modalGrid2">
+          <label>Reviewed By
+            <input type="text" id="f_reviewedBy">
+          </label>
+          <label>Status
+            <div class="radioGroup">
+              <label><input type="radio" name="f_status" value="open"> Open</label>
+              <label><input type="radio" name="f_status" value="closed_accepted"> Closed - Accepted</label>
+              <label><input type="radio" name="f_status" value="closed_rejected"> Closed - Rejected</label>
+            </div>
+          </label>
+        </div>
+        <label>Comments
+          <textarea id="f_comments" rows="2"></textarea>
+        </label>
+      </div>
+
+      <div class="modalError" id="modalError"></div>
+      <div class="modalBtns" id="modalBtnsWrap">
+        <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="docViewerOverlay" class="viewerOverlay">
+  <div class="viewerPanel">
+    <div class="viewerBar">
+      <div class="viewerTitle" id="docViewerTitle">Document</div>
+      <div class="viewerBtns">
+        <a id="docViewerDownload" href="#" style="display:none;">Download</a>
+        <button type="button" id="docViewerClose">Close</button>
+      </div>
+    </div>
+    <div class="viewerBody">
+      <div id="docViewerState" class="viewerState">Loading&hellip;</div>
+      <iframe id="docViewerFrame" title="Document preview" style="display:none;"></iframe>
+      <img id="docViewerImg" alt="Document preview" style="display:none;">
+      <video id="docViewerVideo" controls style="display:none;"></video>
+      <div id="docViewerOffice" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<script src="office-viewer.js"></script>
+<script src="confirm-dialog.js"></script>
+<script src="sortable-table.js"></script>
+<script>
+(function(){
+  // ---- Backend (staff login + GitHub proxy) --------------------------------
+  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
+  (function stampAppVersion(){
+    fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg || !cfg.version) return;
+      var el = document.getElementById('appVersionStamp');
+      if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+    }).catch(function(){});
+  })();
+
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  // Unlike CR (Supplier fills everything except Approval), a Supplier here
+  // can only ever touch Section 7 "Supplier Response" - Dessimate documents
+  // the discrepancy first (Sections 1-6, 8) and a Supplier only ever edits
+  // an existing DMR naming their org, never creates one. See worker/README.md.
+  var currentAccessLevel = null;
+  var currentOrganization = '';
+  function canManageAll(){ return currentAccessLevel === 'team_member' || currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
+  function isSupplierUser(){ return currentAccessLevel === 'supplier'; }
+  async function resolveMe(){
+    var session = getSession();
+    if (!session) { currentAccessLevel = null; currentOrganization = ''; return; }
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+      if (res.ok) {
+        var data = await res.json();
+        currentAccessLevel = data.accessLevel || 'team_member';
+        currentOrganization = data.organization || '';
+      }
+    } catch (e) { console.error('Could not resolve access level', e); }
+  }
+  function applyAccessLevelUI(){
+    var addBtn = document.getElementById('addDmrBtn');
+    if (addBtn) addBtn.style.display = canManageAll() ? '' : 'none';
+    document.getElementById('toolbarTitle').textContent = isSupplierUser() ? 'DMRs Naming Your Organization' : 'Dessimate DMRs';
+  }
+
+  async function apiFetch(path, opts){
+    opts = opts || {};
+    var headers = opts.headers || {};
+    var session = getSession();
+    if (session) headers['Authorization'] = 'Bearer ' + session.token;
+    var res = await fetch(WORKER_BASE_URL + '/' + path, { method: opts.method || 'GET', headers: headers, body: opts.body });
+    if (res.status === 401 && path !== 'login') {
+      clearSession();
+      showAuthOverlay();
+      throw new Error('Your session has expired — please log in again.');
+    }
+    return res;
+  }
+  function workerContentsPath(fullPath){
+    return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
+  }
+  function bytesToBase64(bytes){
+    var binary = '', chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+  function base64ToBytes(b64){
+    var bin = atob((b64 || '').replace(/\s+/g, ''));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  function docFileExt(filename){
+    var m = /\.[a-zA-Z0-9]+$/.exec(filename || '');
+    return m ? m[0] : '';
+  }
+  async function ghGetSha(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status);
+    var data = await res.json();
+    return data.sha;
+  }
+  async function ghGetFileBytes(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status + ' while loading ' + fullPath + '.');
+    var data = await res.json();
+    return base64ToBytes(data.content || '');
+  }
+  async function ghPutFile(fullPath, bytes, commitMessage){
+    var sha = await ghGetSha(fullPath);
+    var body = { message: commitMessage || ('Update ' + fullPath), content: bytesToBase64(bytes) };
+    if (sha) body.sha = sha;
+    var res = await apiFetch(workerContentsPath(fullPath), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+      throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+    }
+    return await res.json();
+  }
+  var DMR_DOC_FOLDER = 'dmr_docs';
+  var PHOTO_SLOTS = 4;
+  function buildDocPath(dmrId, folder, filename, idx){
+    var safeName = (filename || 'file').replace(/[\\/]/g, '_');
+    return DMR_DOC_FOLDER + '/' + dmrId + '/' + folder + '/' + Date.now() + '-' + idx + '-' + safeName;
+  }
+  function readFileAsBytes(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onerror = function(){ reject(new Error('Could not read "' + file.name + '".')); };
+      reader.onload = function(){ resolve(new Uint8Array(reader.result)); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Staff login wall -----------------------------------------------------
+  var pendingAfterAuth = null;
+
+  function refreshGhStatus(){
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Welcome, ' + session.username;
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Log out';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Log out';
+    }
+  }
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
+    refreshGhStatus();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var attemptsEl = document.getElementById('authAttempts');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = ''; attemptsEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) {
+          var loginErr = new Error(data.message || ('HTTP ' + res.status));
+          loginErr.attemptsRemaining = data.attemptsRemaining;
+          throw loginErr;
+        }
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+        document.getElementById('authPassword').value = '';
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+        attemptsEl.textContent = (err && typeof err.attemptsRemaining === 'number' && err.attemptsRemaining > 0)
+          ? 'Sign-in attempt ' + (3 - err.attemptsRemaining) + ' of 3 — this account locks after 3 failed attempts.'
+          : '';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  refreshGhStatus();
+  // -----------------------------------------------------------------------------
+
+  // ---- In-page document viewer -----------------------------------------------
+  var docViewerObjectUrl = null;
+  function closeDocViewer(){
+    document.getElementById('docViewerOverlay').classList.remove('open');
+    document.getElementById('docViewerFrame').src = 'about:blank';
+    document.getElementById('docViewerFrame').style.display = 'none';
+    document.getElementById('docViewerImg').src = '';
+    document.getElementById('docViewerImg').style.display = 'none';
+    var docViewerVideoEl = document.getElementById('docViewerVideo');
+    docViewerVideoEl.pause(); docViewerVideoEl.removeAttribute('src'); docViewerVideoEl.load(); docViewerVideoEl.style.display = 'none';
+    document.getElementById('docViewerOffice').style.display = 'none';
+    document.getElementById('docViewerOffice').innerHTML = '';
+    document.getElementById('docViewerDownload').style.display = 'none';
+    if (docViewerObjectUrl) { URL.revokeObjectURL(docViewerObjectUrl); docViewerObjectUrl = null; }
+  }
+  document.getElementById('docViewerClose').addEventListener('click', closeDocViewer);
+  document.getElementById('docViewerOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'docViewerOverlay') closeDocViewer();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
+  });
+  function openPdfInViewer(filename, bytes){
+    var overlay = document.getElementById('docViewerOverlay');
+    var stateEl = document.getElementById('docViewerState');
+    var frame = document.getElementById('docViewerFrame');
+    var downloadBtn = document.getElementById('docViewerDownload');
+    document.getElementById('docViewerTitle').textContent = filename;
+    frame.style.display = 'none'; downloadBtn.style.display = 'none';
+    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var blob = new Blob([bytes], { type: 'application/pdf' });
+      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+      docViewerObjectUrl = URL.createObjectURL(blob);
+      frame.src = docViewerObjectUrl; frame.style.display = 'block';
+      stateEl.style.display = 'none';
+      downloadBtn.href = docViewerObjectUrl;
+      downloadBtn.download = filename;
+      downloadBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      stateEl.textContent = 'Could not display this PDF (' + (e && e.message ? e.message : e) + ').';
+    }
+  }
+  function isInlineViewable(mimeType, filename){
+    var ext = docFileExt(filename).toLowerCase();
+    if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
+    if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    if ((mimeType && mimeType.indexOf('video/') === 0) || /\.(mp4|m4v|webm|ogv)$/.test(ext)) return 'video';
+    var officeKind = window.OfficeViewer && window.OfficeViewer.isOfficeExt(filename, mimeType);
+    if (officeKind) return officeKind;
+    return null;
+  }
+  async function openDocViewer(source){
+    var overlay = document.getElementById('docViewerOverlay');
+    var stateEl = document.getElementById('docViewerState');
+    var frame = document.getElementById('docViewerFrame');
+    var img = document.getElementById('docViewerImg');
+    var video = document.getElementById('docViewerVideo');
+    var office = document.getElementById('docViewerOffice');
+    var downloadBtn = document.getElementById('docViewerDownload');
+    document.getElementById('docViewerTitle').textContent = source.filename || 'Document';
+    frame.style.display = 'none'; img.style.display = 'none'; video.style.display = 'none'; office.style.display = 'none'; office.innerHTML = ''; downloadBtn.style.display = 'none';
+    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var bytes = source.bytes;
+      if (!bytes) {
+        bytes = await ghGetFileBytes(source.path);
+        if (!bytes) throw new Error('File not found.');
+      }
+      var kind = isInlineViewable(source.mimeType, source.filename);
+      if (!kind) {
+        stateEl.textContent = "This file type can't be previewed here — use Download instead.";
+        return;
+      }
+      if (kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
+        office.style.display = 'block';
+        await window.OfficeViewer.render(kind, office, bytes);
+        stateEl.style.display = 'none';
+        var officeBlob = new Blob([bytes], { type: source.mimeType || 'application/octet-stream' });
+        if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+        docViewerObjectUrl = URL.createObjectURL(officeBlob);
+        downloadBtn.href = docViewerObjectUrl;
+        downloadBtn.download = source.filename || 'file';
+        downloadBtn.style.display = 'inline-block';
+        return;
+      }
+      var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : (kind === 'video' ? 'video/mp4' : 'image/jpeg')) });
+      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+      docViewerObjectUrl = URL.createObjectURL(blob);
+      if (kind === 'pdf') { frame.src = docViewerObjectUrl; frame.style.display = 'block'; }
+      else if (kind === 'video') { video.src = docViewerObjectUrl; video.style.display = 'block'; }
+      else { img.src = docViewerObjectUrl; img.style.display = 'block'; }
+      stateEl.style.display = 'none';
+      downloadBtn.href = docViewerObjectUrl;
+      downloadBtn.download = source.filename || 'file';
+      downloadBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
+    }
+  }
+  async function viewGeneratedPdf(id, dmrNumber, btn){
+    var originalText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+    try {
+      var res = await apiFetch('dmrs/' + encodeURIComponent(id) + '/pdf');
+      if (!res.ok) {
+        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
+        throw new Error(msg || ('HTTP ' + res.status));
+      }
+      var buf = await res.arrayBuffer();
+      openPdfInViewer('DMR ' + dmrNumber + '.pdf', new Uint8Array(buf));
+    } catch (err) {
+      alert('Could not generate the DMR PDF (' + (err && err.message ? err.message : err) + ').');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+    }
+  }
+  // -----------------------------------------------------------------------------
+
+  function escapeHtml(s){
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function fmtDateMDY(s){
+    var str = (s == null ? '' : String(s)).trim();
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    if (m) return m[2] + '/' + m[3] + '/' + m[1];
+    if (str) {
+      var d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+      }
+    }
+    return str;
+  }
+  function attachMetaHtml(x, cls){
+    if (!x) return '';
+    if (x.kind === 'pending') {
+      var session = getSession();
+      return '<div class="' + cls + '">Will upload as ' + escapeHtml((session && session.username) || 'you') + '</div>';
+    }
+    var doc = x.kind === 'existing' ? x.doc : x;
+    if (!doc || (!doc.uploadedBy && !doc.uploadedAt)) return '';
+    var when = doc.uploadedAt ? fmtDateMDY(doc.uploadedAt) : '';
+    return '<div class="' + cls + '">Uploaded by ' + escapeHtml(doc.uploadedBy || 'Unknown') + (when ? ' on ' + when : '') + '</div>';
+  }
+  function stampUpload(){
+    var session = getSession();
+    return { uploadedBy: (session && session.username) || '', uploadedAt: new Date().toISOString() };
+  }
+  function statusPillHtml(status){
+    if (status === 'closed_accepted') return '<span class="statusPill accepted">Closed - Accepted</span>';
+    if (status === 'closed_rejected') return '<span class="statusPill rejected">Closed - Rejected</span>';
+    if (status === 'open') return '<span class="statusPill open">Open</span>';
+    return '<span class="statusPill pending">—</span>';
+  }
+
+  // ---- Supplier / Parts dropdowns --------------------------------------------
+  var lastOrgs = [];
+  var lastParts = [];
+  async function loadDropdownData(){
+    try {
+      var orgRes = await apiFetch('organizations');
+      var orgData = orgRes.ok ? await orgRes.json() : { organizations: [] };
+      lastOrgs = Array.isArray(orgData.organizations) ? orgData.organizations : [];
+    } catch (e) { console.error('Could not load organizations', e); lastOrgs = []; }
+    try {
+      var partRes = await apiFetch('parts');
+      var partData = partRes.ok ? await partRes.json() : { parts: [] };
+      lastParts = Array.isArray(partData.parts) ? partData.parts : [];
+    } catch (e) { console.error('Could not load parts', e); lastParts = []; }
+  }
+  function supplierOrgOptions(currentValue){
+    var matching = lastOrgs.filter(function(o){ return o.relationship === 'Supplier'; });
+    var html = '<option value="">— Select Supplier —</option>' + matching.map(function(o){
+      var sel = (o.name === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(o.name) + '"' + sel + '>' + escapeHtml(o.name) + '</option>';
+    }).join('');
+    if (currentValue && !matching.some(function(o){ return o.name === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Organizations list)</option>';
+    }
+    return html;
+  }
+  function partOptions(currentValue){
+    var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
+      var sel = (p.partNumber === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(p.partNumber) + '"' + sel + '>' + escapeHtml(p.partNumber) + '</option>';
+    }).join('');
+    if (currentValue && !lastParts.some(function(p){ return p.partNumber === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Parts list)</option>';
+    }
+    return html;
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- List table --------------------------------------------------------------
+  var lastDmrs = [];
+  var dmrSortState = { key: null, dir: 1 };
+  window.SortableTable.makeSortableHeaders(document.getElementById('dmrTableHead'), dmrSortState, renderTable);
+
+  async function loadDmrs(){
+    var loadingEl = document.getElementById('loadingState');
+    var errorEl = document.getElementById('errorState');
+    var emptyEl = document.getElementById('emptyState');
+    var tableEl = document.getElementById('dmrTable');
+    loadingEl.style.display = 'block'; errorEl.style.display = 'none'; emptyEl.style.display = 'none'; tableEl.style.display = 'none';
+    try {
+      var res = await apiFetch('dmrs');
+      if (!res.ok) {
+        var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+        throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+      }
+      var data = await res.json();
+      lastDmrs = Array.isArray(data.dmrs) ? data.dmrs : [];
+      loadingEl.style.display = 'none';
+      renderTable();
+    } catch (err) {
+      console.error(err);
+      loadingEl.style.display = 'none';
+      errorEl.style.display = 'block';
+      errorEl.textContent = 'Could not load DMRs (' + err.message + ').';
+    }
+  }
+
+  function renderTable(){
+    var tableEl = document.getElementById('dmrTable');
+    var bodyEl = document.getElementById('dmrTableBody');
+    var emptyEl = document.getElementById('emptyState');
+    if (!lastDmrs.length) {
+      emptyEl.style.display = 'block'; tableEl.style.display = 'none';
+      emptyEl.textContent = isSupplierUser() ? 'No DMRs name your organization yet.' : 'No DMRs yet. Click Add DMR above to add the first one.';
+      return;
+    }
+    emptyEl.style.display = 'none'; tableEl.style.display = 'table';
+
+    var defaultOrder = lastDmrs.slice().sort(function(a, b){ return String(b.dmrNumber || '').localeCompare(String(a.dmrNumber || ''), undefined, { numeric: true }); });
+    var sorted = window.SortableTable.sortItems(defaultOrder, dmrSortState, function(dmr, key){ return dmr[key]; });
+    window.SortableTable.updateSortIndicators(document.getElementById('dmrTableHead'), dmrSortState);
+
+    bodyEl.innerHTML = sorted.map(function(dmr){
+      return '<tr>' +
+        '<td class="dmrNumber">' + escapeHtml(dmr.dmrNumber) + '</td>' +
+        '<td>' + escapeHtml(dmr.supplierOrg) + '</td>' +
+        '<td>' + escapeHtml(dmr.partNumber) + '</td>' +
+        '<td>' + escapeHtml(fmtDateMDY(dmr.dateIssued)) + '</td>' +
+        '<td>' + statusPillHtml(dmr.status) + '</td>' +
+        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(dmr.id) + '" data-dmrnum="' + escapeHtml(dmr.dmrNumber) + '">View PDF</button></td>' +
+        '<td><div class="rowActions">' +
+          '<button type="button" class="editBtn" data-edit="' + escapeHtml(dmr.id) + '">' + (canManageAll() ? 'Edit' : 'Respond') + '</button>' +
+          (canManageAll() ? '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(dmr.id) + '">Delete</button>' : '') +
+        '</div></td>' +
+        '</tr>';
+    }).join('');
+
+    bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
+      btn.addEventListener('click', function(){ requireAuthThen(function(){ openEditModal(this.getAttribute('data-edit')); }.bind(this)); });
+    });
+    bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
+      btn.addEventListener('click', function(){ deleteDmr(this.getAttribute('data-delete')); });
+    });
+    bodyEl.querySelectorAll('[data-pdf]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        requireAuthThen(function(){ viewGeneratedPdf(btn.getAttribute('data-pdf'), btn.getAttribute('data-dmrnum'), btn); });
+      });
+    });
+  }
+
+  async function deleteDmr(id){
+    var dmr = lastDmrs.find(function(c){ return c.id === id; });
+    if (!(await confirmDialog('Remove DMR ' + (dmr ? dmr.dmrNumber : '') + '? This can\'t be undone.'))) return;
+    requireAuthThen(async function(){
+      try {
+        var res = await apiFetch('dmrs/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!res.ok) { var d = {}; try { d = await res.json(); } catch(e){} throw new Error(d.message || ('HTTP ' + res.status)); }
+        await loadDmrs();
+      } catch (err) {
+        alert('Could not delete this DMR (' + (err && err.message ? err.message : err) + ').');
+      }
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Add / Edit modal --------------------------------------------------------
+  var editingId = null;
+  var photoSlotsState = [null, null, null, null]; // each: null | {kind:'pending',bytes,filename,mimeType,caption} | {kind:'existing',doc:{...,caption}}
+
+  function renderPhotoSlots(){
+    var wrap = document.getElementById('photoSlotsWrap');
+    wrap.innerHTML = '';
+    for (var i = 0; i < PHOTO_SLOTS; i++) {
+      var slot = document.createElement('div');
+      slot.className = 'photoSlot';
+      slot.setAttribute('data-slot', i);
+      slot.innerHTML = '<h4>Photo ' + (i + 1) + '</h4>' +
+        '<div class="photoStatus" data-photo-status></div>' +
+        '<input type="file" accept="image/png,image/jpeg" data-photo-input>' +
+        '<input type="text" placeholder="Caption / Location" data-photo-caption>';
+      wrap.appendChild(slot);
+    }
+    for (var j = 0; j < PHOTO_SLOTS; j++) renderPhotoSlot(j);
+  }
+  function renderPhotoSlot(idx){
+    var slotEl = document.querySelector('.photoSlot[data-slot="' + idx + '"]');
+    if (!slotEl) return;
+    var state = photoSlotsState[idx];
+    var statusEl = slotEl.querySelector('[data-photo-status]');
+    var captionEl = slotEl.querySelector('[data-photo-caption]');
+    if (!state) {
+      statusEl.innerHTML = '<div class="attachEmpty">No photo attached.</div>';
+    } else {
+      var name = state.kind === 'pending' ? state.filename : state.doc.filename;
+      var nameClass = state.kind === 'pending' ? 'attachName pending' : 'attachName';
+      var label = state.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+      // Section 5 (Photographic Evidence) is Dessimate-owned like every
+      // other non-Section-7 field - the Remove link isn't a form input, so
+      // it's hidden here explicitly rather than relying on
+      // applyRoleUIForModal's blanket input/select/textarea disable loop.
+      var removeLinkHtml = canManageAll() ? '<span class="removeLink" style="cursor:pointer;" data-photo-remove>Remove</span>' : '';
+      statusEl.innerHTML = '<div class="attachRow">' +
+        '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+        '<div class="attachLinks">' +
+          '<button type="button" data-photo-view>View</button>' + removeLinkHtml +
+        '</div>' + attachMetaHtml(state, 'attachMeta') + '</div>';
+      statusEl.querySelector('[data-photo-view]').addEventListener('click', function(){
+        if (state.kind === 'pending') openDocViewer({ filename: state.filename, mimeType: state.mimeType, bytes: state.bytes });
+        else openDocViewer({ filename: state.doc.filename, mimeType: state.doc.mimeType, path: state.doc.path });
+      });
+      var removeBtn = statusEl.querySelector('[data-photo-remove]');
+      if (removeBtn) removeBtn.addEventListener('click', async function(){
+        if (!(await confirmDialog('Remove this photo?'))) return;
+        photoSlotsState[idx] = null;
+        renderPhotoSlot(idx);
+      });
+    }
+    captionEl.value = state ? (state.kind === 'pending' ? state.caption : (state.doc.caption || '')) : (captionEl.value || '');
+    captionEl.oninput = function(){
+      if (photoSlotsState[idx]) {
+        if (photoSlotsState[idx].kind === 'pending') photoSlotsState[idx].caption = captionEl.value;
+        else photoSlotsState[idx].doc.caption = captionEl.value;
+      }
+    };
+  }
+  document.getElementById('photoSlotsWrap').addEventListener('change', async function(e){
+    var input = e.target.closest('[data-photo-input]');
+    if (!input) return;
+    var idx = Number(input.closest('.photoSlot').getAttribute('data-slot'));
+    var file = input.files && input.files[0];
+    input.value = '';
+    if (!file) return;
+    if (file.type !== 'image/png' && file.type !== 'image/jpeg') { alert('Please choose a PNG or JPG image.'); return; }
+    try {
+      var bytes = await readFileAsBytes(file);
+      var captionEl = input.closest('.photoSlot').querySelector('[data-photo-caption]');
+      photoSlotsState[idx] = { kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream', caption: captionEl.value || '' };
+      renderPhotoSlot(idx);
+    } catch (e2) {
+      alert('Could not read "' + file.name + '": ' + (e2 && e2.message ? e2.message : e2));
+    }
+  });
+
+  // DMR Number stays Team Member+ only - a Supplier never sets/sees it.
+  function setNumberFieldEditable(editable){
+    var input = document.getElementById('f_dmrNumber');
+    input.readOnly = !editable;
+    document.getElementById('useSystemDmrBtn').style.display = editable ? '' : 'none';
+  }
+  document.getElementById('useSystemDmrBtn').addEventListener('click', async function(){
+    var btn = this;
+    btn.disabled = true;
+    try {
+      var res = await apiFetch('dmrs/peek-number');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      document.getElementById('f_dmrNumber').value = data.dmrNumber;
+    } catch (e) {
+      alert('Could not look up the next system DMR Number (' + (e && e.message ? e.message : e) + ').');
+    } finally { btn.disabled = false; }
+  });
+
+  // Section 7 field ids - the only inputs a Supplier login can edit.
+  var SECTION7_IDS = ['f_rootCause', 'f_correctiveAction', 'f_supplierSignature', 'f_supplierResponseDate'];
+  function applyRoleUIForModal(){
+    var numberField = document.getElementById('numberBanner').querySelector('.numberField');
+    numberField.style.display = canManageAll() ? '' : 'none';
+    setNumberFieldEditable(canManageAll() && !editingId);
+    var allInputs = document.querySelectorAll('#dmrForm input, #dmrForm select, #dmrForm textarea');
+    allInputs.forEach(function(el){
+      if (el.id === 'f_dmrNumber') return; // handled by setNumberFieldEditable
+      el.disabled = !canManageAll() && SECTION7_IDS.indexOf(el.id) === -1;
+    });
+    document.getElementById('supplierSectionNote').style.display = isSupplierUser() ? '' : 'none';
+  }
+
+  function resetForm(){
+    document.getElementById('dmrForm').reset();
+    document.getElementById('modalError').textContent = '';
+    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions('');
+    document.getElementById('f_partNumber').innerHTML = partOptions('');
+    document.getElementById('f_dmrNumber').value = '';
+    document.getElementById('f_dateIssued').value = new Date().toISOString().slice(0, 10);
+    photoSlotsState = [null, null, null, null];
+    renderPhotoSlots();
+    setNumberFieldEditable(true);
+    applyRoleUIForModal();
+  }
+
+  function openAddModal(){
+    editingId = null;
+    resetForm();
+    document.getElementById('modalTitle').textContent = 'Add DMR';
+    document.getElementById('modalSub').textContent = 'DMR Number is optional — leave blank to assign automatically, or type your own.';
+    document.getElementById('dmrModalOverlay').classList.add('open');
+  }
+  function openEditModal(id){
+    var dmr = lastDmrs.find(function(x){ return x.id === id; });
+    if (!dmr) return;
+    editingId = id;
+    document.getElementById('dmrForm').reset();
+    document.getElementById('modalError').textContent = '';
+
+    document.getElementById('modalTitle').textContent = (canManageAll() ? 'Edit ' : 'Respond to ') + 'DMR ' + dmr.dmrNumber;
+    document.getElementById('modalSub').textContent = canManageAll() ? 'DMR Number can be changed any time.' : 'Only Section 7 (Supplier Response) can be updated below.';
+    document.getElementById('f_dmrNumber').value = dmr.dmrNumber;
+    document.getElementById('f_dateIssued').value = dmr.dateIssued || '';
+    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions(dmr.supplierOrg || '');
+    document.getElementById('f_supplierContactName').value = dmr.supplierContactName || '';
+    document.getElementById('f_supplierContactEmail').value = dmr.supplierContactEmail || '';
+    document.getElementById('f_supplierContactPhone').value = dmr.supplierContactPhone || '';
+    document.getElementById('f_partNumber').innerHTML = partOptions(dmr.partNumber || '');
+    document.getElementById('f_partDescription').value = dmr.partDescription || '';
+    document.getElementById('f_poNumber').value = dmr.poNumber || '';
+    document.getElementById('f_lotDateCodes').value = dmr.lotDateCodes || '';
+    document.getElementById('f_quantityReceived').value = dmr.quantityReceived || '';
+    document.getElementById('f_quantityDiscrepant').value = dmr.quantityDiscrepant || '';
+    document.getElementById('f_dateReceived').value = dmr.dateReceived || '';
+    document.getElementById('f_inspectedBy').value = dmr.inspectedBy || '';
+
+    document.getElementById('f_discNotCleaned').checked = !!dmr.discNotCleaned;
+    document.getElementById('f_discWrongPart').checked = !!dmr.discWrongPart;
+    document.getElementById('f_discBurrs').checked = !!dmr.discBurrs;
+    document.getElementById('f_discPackaging').checked = !!dmr.discPackaging;
+    document.getElementById('f_discDimensional').checked = !!dmr.discDimensional;
+    document.getElementById('f_discMissingDocs').checked = !!dmr.discMissingDocs;
+    document.getElementById('f_discSurfaceFinish').checked = !!dmr.discSurfaceFinish;
+    document.getElementById('f_discQuantity').checked = !!dmr.discQuantity;
+    document.getElementById('f_discOther').checked = !!dmr.discOther;
+    document.getElementById('f_discOtherDetail').value = dmr.discOtherDetail || '';
+
+    document.getElementById('f_descriptionOfDiscrepancy').value = dmr.descriptionOfDiscrepancy || '';
+
+    photoSlotsState = [null, null, null, null];
+    (dmr.photos || []).forEach(function(doc, i){ if (i < PHOTO_SLOTS) photoSlotsState[i] = { kind: 'existing', doc: doc }; });
+    renderPhotoSlots();
+
+    document.getElementById('f_dispReturnToSupplier').checked = !!dmr.dispReturnToSupplier;
+    document.getElementById('f_dispRework').checked = !!dmr.dispRework;
+    document.getElementById('f_dispUseAsIs').checked = !!dmr.dispUseAsIs;
+    document.getElementById('f_dispScrap').checked = !!dmr.dispScrap;
+    document.getElementById('f_dispSortInspect').checked = !!dmr.dispSortInspect;
+    document.getElementById('f_containmentActionRequired').value = dmr.containmentActionRequired || '';
+    document.getElementById('f_supplierResponseDueDate').value = dmr.supplierResponseDueDate || '';
+
+    document.getElementById('f_rootCause').value = dmr.rootCause || '';
+    document.getElementById('f_correctiveAction').value = dmr.correctiveAction || '';
+    document.getElementById('f_supplierSignature').value = dmr.supplierSignature || '';
+    document.getElementById('f_supplierResponseDate').value = dmr.supplierResponseDate || '';
+
+    document.getElementById('f_reviewedBy').value = dmr.reviewedBy || '';
+    var statusInput = document.querySelector('input[name="f_status"][value="' + (dmr.status || '') + '"]');
+    if (statusInput) statusInput.checked = true;
+    document.getElementById('f_comments').value = dmr.comments || '';
+
+    setNumberFieldEditable(false);
+    applyRoleUIForModal();
+    document.getElementById('dmrModalOverlay').classList.add('open');
+  }
+  function closeModal(){ document.getElementById('dmrModalOverlay').classList.remove('open'); }
+  document.getElementById('addDmrBtn').addEventListener('click', function(){
+    requireAuthThen(async function(){ await loadDropdownData(); openAddModal(); });
+  });
+  document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('dmrModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'dmrModalOverlay') closeModal();
+  });
+
+  document.getElementById('dmrForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
+
+    var statusChecked = document.querySelector('input[name="f_status"]:checked');
+
+    var baseFields = {
+      dateIssued: document.getElementById('f_dateIssued').value,
+      supplierContactName: document.getElementById('f_supplierContactName').value.trim(),
+      supplierContactEmail: document.getElementById('f_supplierContactEmail').value.trim(),
+      supplierContactPhone: document.getElementById('f_supplierContactPhone').value.trim(),
+      partNumber: document.getElementById('f_partNumber').value,
+      partDescription: document.getElementById('f_partDescription').value.trim(),
+      poNumber: document.getElementById('f_poNumber').value.trim(),
+      lotDateCodes: document.getElementById('f_lotDateCodes').value.trim(),
+      quantityReceived: document.getElementById('f_quantityReceived').value.trim(),
+      quantityDiscrepant: document.getElementById('f_quantityDiscrepant').value.trim(),
+      dateReceived: document.getElementById('f_dateReceived').value,
+      inspectedBy: document.getElementById('f_inspectedBy').value.trim(),
+      discNotCleaned: document.getElementById('f_discNotCleaned').checked,
+      discWrongPart: document.getElementById('f_discWrongPart').checked,
+      discBurrs: document.getElementById('f_discBurrs').checked,
+      discPackaging: document.getElementById('f_discPackaging').checked,
+      discDimensional: document.getElementById('f_discDimensional').checked,
+      discMissingDocs: document.getElementById('f_discMissingDocs').checked,
+      discSurfaceFinish: document.getElementById('f_discSurfaceFinish').checked,
+      discQuantity: document.getElementById('f_discQuantity').checked,
+      discOther: document.getElementById('f_discOther').checked,
+      discOtherDetail: document.getElementById('f_discOtherDetail').value.trim(),
+      descriptionOfDiscrepancy: document.getElementById('f_descriptionOfDiscrepancy').value.trim(),
+      dispReturnToSupplier: document.getElementById('f_dispReturnToSupplier').checked,
+      dispRework: document.getElementById('f_dispRework').checked,
+      dispUseAsIs: document.getElementById('f_dispUseAsIs').checked,
+      dispScrap: document.getElementById('f_dispScrap').checked,
+      dispSortInspect: document.getElementById('f_dispSortInspect').checked,
+      containmentActionRequired: document.getElementById('f_containmentActionRequired').value.trim(),
+      supplierResponseDueDate: document.getElementById('f_supplierResponseDueDate').value,
+      rootCause: document.getElementById('f_rootCause').value.trim(),
+      correctiveAction: document.getElementById('f_correctiveAction').value.trim(),
+      supplierSignature: document.getElementById('f_supplierSignature').value.trim(),
+      supplierResponseDate: document.getElementById('f_supplierResponseDate').value,
+      reviewedBy: document.getElementById('f_reviewedBy').value.trim(),
+      status: statusChecked ? statusChecked.value : '',
+      comments: document.getElementById('f_comments').value.trim()
+    };
+    if (canManageAll()) baseFields.supplierOrg = document.getElementById('f_supplierOrg').value;
+    if (canManageAll() && !baseFields.supplierOrg && !editingId) { errEl.textContent = 'Select a Supplier.'; return; }
+
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      var dmrId = editingId;
+      if (!dmrId) {
+        var createFields = Object.assign({}, baseFields);
+        createFields.dmrNumber = document.getElementById('f_dmrNumber').value.trim();
+        var createRes = await apiFetch('dmrs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createFields) });
+        var createData = {}; try { createData = await createRes.json(); } catch(e){}
+        if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+        dmrId = createData.id;
+      }
+
+      var photosPayload = [];
+      for (var i = 0; i < PHOTO_SLOTS; i++) {
+        var state = photoSlotsState[i];
+        if (!state) continue;
+        if (state.kind === 'existing') {
+          photosPayload.push(state.doc);
+        } else {
+          var path = buildDocPath(dmrId, 'photos', state.filename, i);
+          await ghPutFile(path, state.bytes, 'Upload photo for DMR ' + dmrId);
+          photosPayload.push(Object.assign({ path: path, filename: state.filename, mimeType: state.mimeType, size: state.bytes.length, caption: state.caption || '' }, stampUpload()));
+        }
+      }
+      baseFields.photos = photosPayload;
+      if (canManageAll()) baseFields.dmrNumber = document.getElementById('f_dmrNumber').value.trim();
+
+      var putRes = await apiFetch('dmrs/' + encodeURIComponent(dmrId), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(baseFields)
+      });
+      var putData = {}; try { putData = await putRes.json(); } catch(e){}
+      if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
+
+      closeModal();
+      await loadDmrs();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not save this DMR.';
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+  // -----------------------------------------------------------------------------
+
+  requireAuthThen(async function(){ await resolveMe(); applyAccessLevelUI(); await loadDropdownData(); await loadDmrs(); });
+})();
+</script>

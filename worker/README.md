@@ -873,6 +873,44 @@ auto-numbered. Click **View PDF** on any row to generate the
 the spot, the same drawn-from-scratch-on-the-backend approach as the
 Dessimate PO/Invoice PDFs.
 
+## Discrepant Material Reports (DMR)
+
+Dessimate documents non-conforming material received from a Supplier -
+`PDIR_DMR.html`, stored in `data/dmrs.json`. Modeled on
+`Dessimate_Discrepant_Material_Report.xlsx`'s eight numbered sections
+(Supplier Information, Part/Material Information, Discrepancy Type
+checkboxes, Description, Photographic Evidence, Disposition Requested,
+Supplier Response, Dessimate Review/Closure). Reached via its own
+"Discrepant Material Report" sidebar entry -> a chooser hub
+(`PDIR_DMRHub.html`, same two-tile pattern as Change Requests) with a
+"Dessimate DMRs" tile (this module, live) and a "Customer DMRs" tile shown
+as "Coming soon" - a future module for material a *Customer* reports back
+to Dessimate, not built yet.
+
+**Permission split is the same shape as CR (Team Member+ full control, a
+Supplier can touch their own record) but inverted which part belongs to
+whom.** CR lets a Supplier fill everything except the internal Approval
+section; DMR lets a Supplier touch *only* Section 7 (Supplier Response -
+Root Cause, Corrective/Containment Action, Signature, Date), exactly the
+template's own instruction ("to be completed by supplier"). Team Member+
+owns Sections 1-6 and 8, and is the only one who can create a DMR at all -
+a Supplier never files one, only responds to one naming their organization;
+the backend enforces this by silently stripping everything outside Section
+7 from a Supplier's save, the same "never trust the client for a
+privileged field" pattern used everywhere else in this app. A Supplier
+sees only DMRs naming their org (in the list and via direct id); a
+Customer login has no role in this module.
+
+**DMR Number** is formatted `DMR-####` (4 digits, matching the template's
+`DMR-0000` placeholder) and auto-assigned like CR/SCR Number, Team Member+
+only. **Photographic Evidence** is up to 4 photo slots, each with its own
+caption - Dessimate-owned like every other non-Section-7 field, so a
+Supplier can view but never add, remove, or re-caption a photo. **View
+PDF** renders the drawn-from-scratch layout (same pdf-lib approach as
+buildCrPdf/buildScrPdf); when at least one photo is attached, a second
+page is appended as a 2x2 photo grid with captions - otherwise the DMR is
+a single page.
+
 ## Customer SCRs (SCR)
 
 A separate module from Dessimate CRs above — a Supplier Change Request
