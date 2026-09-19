@@ -159,6 +159,8 @@
   .attachRow .attachLinks button:hover{ text-decoration:underline; }
   .attachRow .attachLinks .removeLink{ color:#b23b3b; }
   .attachRow .attachMeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
+  .attachRow .attachCommentInput{ flex-basis:100%; margin:4px 0 0 !important; padding:6px 8px !important;
+    font-size:12px !important; }
   .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
   .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
     padding:9px 0; font-size:12.5px; }
@@ -430,6 +432,7 @@
       <div class="modalError" id="modalError"></div>
       <div class="modalBtns">
         <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="button" class="pdfBtn" id="generatePdfBtn" style="display:none;">Generate PDF</button>
         <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
       </div>
     </form>
@@ -688,29 +691,6 @@
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
   });
-  function openPdfInViewer(filename, bytes){
-    var overlay = document.getElementById('docViewerOverlay');
-    var stateEl = document.getElementById('docViewerState');
-    var frame = document.getElementById('docViewerFrame');
-    var downloadBtn = document.getElementById('docViewerDownload');
-    document.getElementById('docViewerTitle').textContent = filename;
-    frame.style.display = 'none'; downloadBtn.style.display = 'none';
-    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
-    overlay.classList.add('open');
-    try {
-      var blob = new Blob([bytes], { type: 'application/pdf' });
-      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
-      docViewerObjectUrl = URL.createObjectURL(blob);
-      frame.src = docViewerObjectUrl; frame.style.display = 'block';
-      stateEl.style.display = 'none';
-      downloadBtn.href = docViewerObjectUrl;
-      downloadBtn.download = filename;
-      downloadBtn.style.display = 'inline-block';
-    } catch (e) {
-      console.error(e);
-      stateEl.textContent = 'Could not display this PDF (' + (e && e.message ? e.message : e) + ').';
-    }
-  }
   function isInlineViewable(mimeType, filename){
     var ext = docFileExt(filename).toLowerCase();
     if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
@@ -770,22 +750,18 @@
       stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
     }
   }
-  async function viewGeneratedPdf(id, crNumber, btn){
-    var originalText = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
-    try {
-      var res = await apiFetch('change-requests/' + encodeURIComponent(id) + '/pdf');
-      if (!res.ok) {
-        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
-        throw new Error(msg || ('HTTP ' + res.status));
-      }
-      var buf = await res.arrayBuffer();
-      openPdfInViewer('Change Request ' + crNumber + '.pdf', new Uint8Array(buf));
-    } catch (err) {
-      alert('Could not generate the CR PDF (' + (err && err.message ? err.message : err) + ').');
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+  // List's "View PDF" button - opens the CR's saved generated-report
+  // attachment (added by the form's "Generate PDF" button) rather than
+  // regenerating live on every click. If none has been generated yet, this
+  // says so instead of silently doing nothing.
+  var GENERATED_PDF_ID = 'generated-report';
+  function viewCrAttachmentPdf(cr){
+    var generated = (cr.attachments || []).find(function(a){ return a.id === GENERATED_PDF_ID; });
+    if (!generated) {
+      alert('No PDF has been generated for this Change Request yet. Open it and use "Generate PDF" to create one.');
+      return;
     }
+    openDocViewer({ filename: generated.filename, mimeType: generated.mimeType, path: generated.path });
   }
   // -----------------------------------------------------------------------------
 
@@ -926,7 +902,7 @@
         '<td>' + escapeHtml(cr.supplierOrg) + '</td>' +
         '<td>' + escapeHtml(phaseLabel(cr.phase)) + '</td>' +
         '<td>' + approvalPillHtml(cr.approvalStatus) + '</td>' +
-        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(cr.id) + '" data-crnum="' + escapeHtml(cr.crNumber) + '">View PDF</button></td>' +
+        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(cr.id) + '">View PDF</button></td>' +
         '<td><div class="rowActions">' +
           (canCreateOrEdit() ? '<button type="button" class="editBtn" data-edit="' + escapeHtml(cr.id) + '">Edit</button>' : '') +
           (canManageAll() ? '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(cr.id) + '">Delete</button>' : '') +
@@ -942,7 +918,8 @@
     });
     bodyEl.querySelectorAll('[data-pdf]').forEach(function(btn){
       btn.addEventListener('click', function(){
-        requireAuthThen(function(){ viewGeneratedPdf(btn.getAttribute('data-pdf'), btn.getAttribute('data-crnum'), btn); });
+        var cr = lastCrs.find(function(x){ return x.id === btn.getAttribute('data-pdf'); });
+        if (cr) requireAuthThen(function(){ viewCrAttachmentPdf(cr); });
       });
     });
   }
@@ -1053,6 +1030,7 @@
     } else {
       listEl.innerHTML = attachmentsState.map(function(entry, idx){
         var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var comment = entry.kind === 'pending' ? (entry.comment || '') : (entry.doc.comment || '');
         var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
         var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
         var viewBtn = entry.kind === 'pending'
@@ -1062,12 +1040,22 @@
           '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
           '<div class="attachLinks">' + viewBtn +
             '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' +
-          '</div>' + attachMetaHtml(entry, 'attachMeta') + '</div>';
+          '</div>' + attachMetaHtml(entry, 'attachMeta') +
+          '<input type="text" class="attachCommentInput" data-comment-idx="' + idx + '" placeholder="What is this attachment about?" value="' + escapeHtml(comment) + '">' +
+          '</div>';
       }).join('');
     }
     inputEl.disabled = count >= ATTACHMENTS_MAX;
     inputEl.title = inputEl.disabled ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached.' : '';
 
+    listEl.querySelectorAll('[data-comment-idx]').forEach(function(input){
+      input.addEventListener('input', function(){
+        var entry = attachmentsState[Number(input.getAttribute('data-comment-idx'))];
+        if (!entry) return;
+        if (entry.kind === 'pending') entry.comment = input.value;
+        else entry.doc.comment = input.value;
+      });
+    });
     listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
       btn.addEventListener('click', function(){
         var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
@@ -1146,6 +1134,10 @@
     var approvalInputs = document.querySelectorAll('#approvalSectionWrap input, #approvalSectionWrap textarea');
     approvalInputs.forEach(function(el){ el.disabled = !canManageAll(); });
     approvalNote.style.display = canManageAll() ? 'none' : '';
+    // Generate PDF needs a saved record to render from - available to
+    // whoever can edit this CR (Team Member+ or the owning Supplier), only
+    // once it already exists.
+    document.getElementById('generatePdfBtn').style.display = (canCreateOrEdit() && editingId) ? '' : 'none';
   }
 
   function resetForm(){
@@ -1229,12 +1221,14 @@
     if (e.target.id === 'crModalOverlay') closeModal();
   });
 
-  document.getElementById('crForm').addEventListener('submit', async function(e){
-    e.preventDefault();
-    var errEl = document.getElementById('modalError');
-    var saveBtn = document.getElementById('modalSaveBtn');
-    errEl.textContent = '';
-
+  // Collects the current form state and saves it (create or update),
+  // uploading any pending attachments/images along the way, then resyncs
+  // local attachmentsState/currentConditionState/newConditionState to the
+  // server's response so a second save in the same modal session (e.g.
+  // Generate PDF's two-step save) never re-uploads an already-saved
+  // pending file as a duplicate. Returns the saved, sanitized CR. Shared
+  // by the Save button and the Generate PDF button.
+  async function saveCr(){
     var phaseChecked = document.querySelector('input[name="f_phase"]:checked');
     var typeChecked = document.querySelector('input[name="f_changeType"]:checked');
     var approvalChecked = document.querySelector('input[name="f_approvalStatus"]:checked');
@@ -1262,70 +1256,138 @@
       baseFields.approvedByDate = document.getElementById('f_approvedByDate').value;
       baseFields.approvedByOrg = document.getElementById('f_approvedByOrg').value.trim();
     }
-    if (!baseFields.supplierOrg) { errEl.textContent = 'Select a Supplier.'; return; }
+    if (!baseFields.supplierOrg) throw new Error('Select a Supplier.');
 
+    var crId = editingId;
+    if (!crId) {
+      var createFields = Object.assign({}, baseFields);
+      if (canManageAll()) createFields.crNumber = document.getElementById('f_crNumber').value.trim();
+      var createRes = await apiFetch('change-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createFields) });
+      var createData = {}; try { createData = await createRes.json(); } catch(e){}
+      if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+      crId = createData.id;
+      editingId = crId;
+    }
+
+    var attachmentsPayload = [];
+    for (var i = 0; i < attachmentsState.length; i++) {
+      var entry = attachmentsState[i];
+      if (entry.kind === 'existing') {
+        attachmentsPayload.push(entry.doc);
+      } else {
+        var path = buildDocPath(crId, 'attachments', entry.filename, i);
+        await ghPutFile(path, entry.bytes, 'Upload attachment for Change Request ' + crId);
+        attachmentsPayload.push(Object.assign({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length, comment: entry.comment || '' }, stampUpload()));
+      }
+    }
+    var currentConditionPayload = null;
+    if (currentConditionState) {
+      if (currentConditionState.kind === 'existing') currentConditionPayload = currentConditionState.doc;
+      else {
+        var ccPath = buildDocPath(crId, 'current-condition', currentConditionState.filename, 0);
+        await ghPutFile(ccPath, currentConditionState.bytes, 'Upload current-condition image for Change Request ' + crId);
+        currentConditionPayload = Object.assign({ path: ccPath, filename: currentConditionState.filename, mimeType: currentConditionState.mimeType, size: currentConditionState.bytes.length }, stampUpload());
+      }
+    }
+    var newConditionPayload = null;
+    if (newConditionState) {
+      if (newConditionState.kind === 'existing') newConditionPayload = newConditionState.doc;
+      else {
+        var ncPath = buildDocPath(crId, 'new-condition', newConditionState.filename, 0);
+        await ghPutFile(ncPath, newConditionState.bytes, 'Upload new-condition image for Change Request ' + crId);
+        newConditionPayload = Object.assign({ path: ncPath, filename: newConditionState.filename, mimeType: newConditionState.mimeType, size: newConditionState.bytes.length }, stampUpload());
+      }
+    }
+
+    var putFields = Object.assign({}, baseFields, {
+      attachments: attachmentsPayload,
+      currentConditionImage: currentConditionPayload,
+      newConditionImage: newConditionPayload
+    });
+    if (canManageAll()) putFields.crNumber = document.getElementById('f_crNumber').value.trim();
+
+    var putRes = await apiFetch('change-requests/' + encodeURIComponent(crId), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(putFields)
+    });
+    var putData = {}; try { putData = await putRes.json(); } catch(e){}
+    if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
+
+    // Resync local state to the server's truth so a second save in this
+    // same modal session (Generate PDF calls saveCr twice) never
+    // re-uploads an already-saved pending file as a duplicate.
+    attachmentsState = (putData.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
+    currentConditionState = putData.currentConditionImage ? { kind: 'existing', doc: putData.currentConditionImage } : null;
+    newConditionState = putData.newConditionImage ? { kind: 'existing', doc: putData.newConditionImage } : null;
+    renderImageSlot('current');
+    renderImageSlot('new');
+
+    return putData;
+  }
+
+  document.getElementById('crForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
-      var crId = editingId;
-      if (!crId) {
-        var createFields = Object.assign({}, baseFields);
-        if (canManageAll()) createFields.crNumber = document.getElementById('f_crNumber').value.trim();
-        var createRes = await apiFetch('change-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createFields) });
-        var createData = {}; try { createData = await createRes.json(); } catch(e){}
-        if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
-        crId = createData.id;
-      }
-
-      var attachmentsPayload = [];
-      for (var i = 0; i < attachmentsState.length; i++) {
-        var entry = attachmentsState[i];
-        if (entry.kind === 'existing') {
-          attachmentsPayload.push(entry.doc);
-        } else {
-          var path = buildDocPath(crId, 'attachments', entry.filename, i);
-          await ghPutFile(path, entry.bytes, 'Upload attachment for Change Request ' + crId);
-          attachmentsPayload.push(Object.assign({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length }, stampUpload()));
-        }
-      }
-      var currentConditionPayload = null;
-      if (currentConditionState) {
-        if (currentConditionState.kind === 'existing') currentConditionPayload = currentConditionState.doc;
-        else {
-          var ccPath = buildDocPath(crId, 'current-condition', currentConditionState.filename, 0);
-          await ghPutFile(ccPath, currentConditionState.bytes, 'Upload current-condition image for Change Request ' + crId);
-          currentConditionPayload = Object.assign({ path: ccPath, filename: currentConditionState.filename, mimeType: currentConditionState.mimeType, size: currentConditionState.bytes.length }, stampUpload());
-        }
-      }
-      var newConditionPayload = null;
-      if (newConditionState) {
-        if (newConditionState.kind === 'existing') newConditionPayload = newConditionState.doc;
-        else {
-          var ncPath = buildDocPath(crId, 'new-condition', newConditionState.filename, 0);
-          await ghPutFile(ncPath, newConditionState.bytes, 'Upload new-condition image for Change Request ' + crId);
-          newConditionPayload = Object.assign({ path: ncPath, filename: newConditionState.filename, mimeType: newConditionState.mimeType, size: newConditionState.bytes.length }, stampUpload());
-        }
-      }
-
-      var putFields = Object.assign({}, baseFields, {
-        attachments: attachmentsPayload,
-        currentConditionImage: currentConditionPayload,
-        newConditionImage: newConditionPayload
-      });
-      if (canManageAll()) putFields.crNumber = document.getElementById('f_crNumber').value.trim();
-
-      var putRes = await apiFetch('change-requests/' + encodeURIComponent(crId), {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(putFields)
-      });
-      var putData = {}; try { putData = await putRes.json(); } catch(e){}
-      if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
-
+      await saveCr();
       closeModal();
       await loadCrs();
     } catch (err) {
       errEl.textContent = err && err.message ? err.message : 'Could not save this Change Request.';
     } finally {
       saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+
+  // Generate PDF (form button, available to whoever can edit this CR, only
+  // once it already exists): saves the form's current state, renders the
+  // PDF from that saved record, uploads it into the CR's own Attachments
+  // list (replacing any previous generated copy via a stable id/path so
+  // re-generating doesn't pile up duplicates), saves again to persist that
+  // attachment reference, and opens it - all without closing the modal.
+  // This is what makes the list's "View PDF" button able to just open a
+  // saved file instead of regenerating live every time (see
+  // viewCrAttachmentPdf / GENERATED_PDF_ID above).
+  document.getElementById('generatePdfBtn').addEventListener('click', async function(){
+    var btn = this;
+    var errEl = document.getElementById('modalError');
+    errEl.textContent = '';
+    var originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Generating…';
+    try {
+      var saved = await saveCr();
+      var crId = editingId;
+      var res = await apiFetch('change-requests/' + encodeURIComponent(crId) + '/pdf');
+      if (!res.ok) {
+        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
+        throw new Error(msg || ('HTTP ' + res.status));
+      }
+      var buf = await res.arrayBuffer();
+      var bytes = new Uint8Array(buf);
+      var filename = 'CR-' + (saved.crNumber || '') + '.pdf';
+      var stablePath = CR_DOC_FOLDER + '/' + crId + '/generated/report.pdf';
+      await ghPutFile(stablePath, bytes, 'Generate PDF for Change Request ' + crId);
+      var existingIdx = attachmentsState.findIndex(function(e2){ return e2.kind === 'existing' && e2.doc.id === GENERATED_PDF_ID; });
+      var priorComment = existingIdx !== -1 ? (attachmentsState[existingIdx].doc.comment || '') : '';
+      var generatedDoc = Object.assign(
+        { id: GENERATED_PDF_ID, path: stablePath, filename: filename, mimeType: 'application/pdf', size: bytes.length, comment: priorComment || 'This is a system-saved attachment and will change when a new PDF is generated by the user.' },
+        stampUpload()
+      );
+      if (existingIdx !== -1) attachmentsState[existingIdx] = { kind: 'existing', doc: generatedDoc };
+      else attachmentsState.push({ kind: 'existing', doc: generatedDoc });
+      renderAttachmentsList();
+
+      await saveCr();
+      await openDocViewer({ filename: filename, mimeType: 'application/pdf', bytes: bytes });
+      await loadCrs();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not generate the CR PDF.';
+    } finally {
+      btn.disabled = false; btn.textContent = originalText;
     }
   });
   // -----------------------------------------------------------------------------

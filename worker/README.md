@@ -868,10 +868,22 @@ role here at all.
 **CR Number** is formatted `CR-###` and auto-assigned like RFQ Number (a
 custom value is accepted too, and bumps the counter past it) — but only
 Team Member+ can set or change it; a Supplier's own Change Request is always
-auto-numbered. Click **View PDF** on any row to generate the
-`Dessimate_Change_Request(CR).xlsx` layout as a PDF from that row's data on
-the spot, the same drawn-from-scratch-on-the-backend approach as the
-Dessimate PO/Invoice PDFs.
+auto-numbered. Attachments carry a short `comment` field (what the file is
+about) that a Supplier can fill in too, same as the rest of their edit
+rights here.
+
+**PDF generation is a save, not a live render** (same pattern as DMR below
+- this is the first module it rolled out to). A **Generate PDF** button at
+the bottom of the form (available to whoever can edit the CR - Team
+Member+ or the owning Supplier - once it already exists) saves the form's
+current state, renders the `Dessimate_Change_Request(CR).xlsx` layout as a
+PDF (same drawn-from-scratch-on-the-backend approach as the Dessimate
+PO/Invoice PDFs), uploads that PDF into the CR's own Attachments list at a
+stable path (tagged with a fixed id so re-generating replaces it instead
+of piling up duplicates), saves again to persist that reference, and opens
+it - all without closing the modal. The list's **View PDF** button then
+just opens that saved attachment (no live regeneration); if none has been
+generated yet, it says so instead of silently doing nothing.
 
 ## Discrepant Material Reports (DMR)
 
@@ -927,9 +939,9 @@ tagged with a fixed `id` so re-generating replaces it instead of piling up
 duplicates), saves again to persist that reference, and opens it - all
 without closing the modal. The list's **View PDF** button then just opens
 that saved attachment (no live regeneration); if none has been generated
-yet, it says so instead of silently doing nothing. This save-then-link
-pattern is intended to roll out to the other PDF-producing modules next;
-for now it's DMR-only.
+yet, it says so instead of silently doing nothing. This is where the
+save-then-link pattern started; CR and SCR now use the same approach (see
+their own sections).
 
 ## Customer SCRs (SCR)
 
@@ -983,6 +995,19 @@ each checkbox's Word bookmark name — one of the template's 25 checkboxes
 lookup wouldn't have covered every field. There is no Dessimate-branded
 copy at all; the one document this generates is already the Customer's own
 format, so there's nothing else to brand it as.
+
+**Generating is a save, not a live render** (same save-then-link pattern
+as DMR/CR). A **Generate Document** button at the bottom of the form
+(staff-only, only once the SCR already exists) saves the form's current
+state, builds the .docx client-side from that saved record, uploads it
+into the SCR's own Attachments list at a stable path (tagged with a fixed
+id so re-generating replaces it instead of piling up duplicates), saves
+again to persist that reference, and opens it - all without closing the
+modal. The list's **View / Download** button then just opens that saved
+attachment instead of rebuilding it on every click; if none has been
+generated yet, it says so instead of silently doing nothing. Attachments
+here also carry a short `comment` field, staff-only like the rest of this
+module.
 
 ## About the GitHub repo's visibility
 

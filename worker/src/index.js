@@ -3665,6 +3665,29 @@ async function crNumberTaken(env, crNumber, excludeId) {
   return state.items.some(function (o) { return o.id !== excludeId && String(o.crNumber).toLowerCase() === target; });
 }
 
+// CR's Attachments section - same shape as sanitizeOrgDoc, plus a short
+// `comment` field (what the file is about) and `id` preserved through
+// (needed intact: the "Generate PDF" button tags its own saved copy with a
+// fixed id so re-generating replaces it in place instead of appending a
+// duplicate - see PDIR_ChangeRequests.html's GENERATED_PDF_ID).
+function sanitizeCrAttachment(d) {
+  if (!d || !d.path) return null;
+  return {
+    id: d.id || null,
+    path: d.path,
+    filename: d.filename || '',
+    mimeType: d.mimeType || 'application/octet-stream',
+    size: typeof d.size === 'number' ? d.size : 0,
+    comment: d.comment || '',
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
+  };
+}
+function sanitizeCrAttachments(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeCrAttachment).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
+}
+
 function sanitizeChangeRequest(o) {
   return {
     id: o.id,
@@ -3683,7 +3706,7 @@ function sanitizeChangeRequest(o) {
     newConditionImage: sanitizeOrgDoc(o.newConditionImage),
     detailsOfChange: o.detailsOfChange || '',
     purposeOfChange: o.purposeOfChange || '',
-    attachments: sanitizeOrgDocList(o.attachments),
+    attachments: sanitizeCrAttachments(o.attachments),
     requestedBySignature: o.requestedBySignature || '',
     requestedByCompany: o.requestedByCompany || '',
     requestedByDate: o.requestedByDate || '',
@@ -3714,7 +3737,7 @@ function validateChangeRequestFields(body, isSupplier) {
     newConditionImage: sanitizeOrgDoc(body.newConditionImage),
     detailsOfChange: (body.detailsOfChange || '').toString().trim(),
     purposeOfChange: (body.purposeOfChange || '').toString().trim(),
-    attachments: sanitizeOrgDocList(body.attachments),
+    attachments: sanitizeCrAttachments(body.attachments),
     requestedBySignature: (body.requestedBySignature || '').toString().trim(),
     requestedByCompany: (body.requestedByCompany || '').toString().trim(),
     requestedByDate: (body.requestedByDate || '').toString().trim()
@@ -4157,6 +4180,29 @@ async function scrNumberTaken(env, scrNumber, excludeId) {
   return state.items.some(function (o) { return o.id !== excludeId && String(o.scrNumber).toLowerCase() === target; });
 }
 
+// SCR's Attachments section - same shape as sanitizeOrgDoc, plus a short
+// `comment` field (what the file is about) and `id` preserved through
+// (needed intact: the "Generate Document" button tags its own saved copy
+// with a fixed id so re-generating replaces it in place instead of
+// appending a duplicate - see PDIR_SCR.html's GENERATED_DOC_ID).
+function sanitizeScrAttachment(d) {
+  if (!d || !d.path) return null;
+  return {
+    id: d.id || null,
+    path: d.path,
+    filename: d.filename || '',
+    mimeType: d.mimeType || 'application/octet-stream',
+    size: typeof d.size === 'number' ? d.size : 0,
+    comment: d.comment || '',
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
+  };
+}
+function sanitizeScrAttachments(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeScrAttachment).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
+}
+
 // One row of Section D's approval routing table (Acknowledgement/
 // Signature/Date/Approve-Disapprove/Comments per department).
 function sanitizeScrApproval(a) {
@@ -4224,7 +4270,7 @@ function sanitizeScr(o) {
     effectOther: !!o.effectOther,
     supplierQualityEngineerComment: o.supplierQualityEngineerComment || '',
     plannedAffectivity: o.plannedAffectivity || '',
-    attachments: sanitizeOrgDocList(o.attachments),
+    attachments: sanitizeScrAttachments(o.attachments),
     // D. Approval/Disapproval
     approvals: sanitizeScrApprovals(o.approvals),
     // E. Disposition
@@ -4276,7 +4322,7 @@ function validateScrFields(body) {
     effectOther: !!body.effectOther,
     supplierQualityEngineerComment: (body.supplierQualityEngineerComment || '').toString().trim(),
     plannedAffectivity: (body.plannedAffectivity || '').toString().trim(),
-    attachments: sanitizeOrgDocList(body.attachments),
+    attachments: sanitizeScrAttachments(body.attachments),
     approvals: validateScrApprovals(body.approvals),
     drawingChangeRequired: (body.drawingChangeRequired === 'yes' || body.drawingChangeRequired === 'no') ? body.drawingChangeRequired : '',
     drawingChangeCR: (body.drawingChangeCR || '').toString().trim(),

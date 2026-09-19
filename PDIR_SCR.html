@@ -151,6 +151,8 @@
   .attachRow .attachLinks button:hover{ text-decoration:underline; }
   .attachRow .attachLinks .removeLink{ color:#b23b3b; }
   .attachRow .attachMeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
+  .attachRow .attachCommentInput{ flex-basis:100%; margin:4px 0 0 !important; padding:6px 8px !important;
+    font-size:12px !important; }
   .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
   .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
     padding:9px 0; font-size:12.5px; }
@@ -454,6 +456,7 @@
       <div class="modalError" id="modalError"></div>
       <div class="modalBtns" id="modalBtnsWrap">
         <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="button" class="pdfBtn" id="generateDocBtn" style="display:none;">Generate Document</button>
         <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
       </div>
     </form>
@@ -958,22 +961,18 @@
     zip.file('word/document.xml', newXml, { createFolders: false });
     return await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
   }
-  async function viewGeneratedScrDoc(scr, btn){
-    var originalText = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
-    try {
-      var bytes = await buildScrDocxBytes(scr);
-      var filename = 'SCR ' + (scr.scrNumber || '') + '.docx';
-      await openDocViewer({
-        filename: filename,
-        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        bytes: bytes
-      });
-    } catch (err) {
-      alert('Could not generate the SCR document (' + (err && err.message ? err.message : err) + ').');
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+  // List's "View / Download" button - opens the SCR's saved
+  // generated-document attachment (added by the form's "Generate Document"
+  // button) rather than rebuilding it client-side on every click. If none
+  // has been generated yet, this says so instead of silently doing nothing.
+  var GENERATED_DOC_ID = 'generated-report';
+  function viewScrAttachmentDoc(scr){
+    var generated = (scr.attachments || []).find(function(a){ return a.id === GENERATED_DOC_ID; });
+    if (!generated) {
+      alert('No document has been generated for this SCR yet. Open it and use "Generate Document" to create one.');
+      return;
     }
+    openDocViewer({ filename: generated.filename, mimeType: generated.mimeType, path: generated.path });
   }
   // -----------------------------------------------------------------------------
 
@@ -1148,7 +1147,7 @@
     bodyEl.querySelectorAll('[data-doc]').forEach(function(btn){
       btn.addEventListener('click', function(){
         var scr = lastScrs.find(function(x){ return x.id === btn.getAttribute('data-doc'); });
-        if (scr) requireAuthThen(function(){ viewGeneratedScrDoc(scr, btn); });
+        if (scr) requireAuthThen(function(){ viewScrAttachmentDoc(scr); });
       });
     });
   }
@@ -1184,6 +1183,7 @@
     } else {
       listEl.innerHTML = attachmentsState.map(function(entry, idx){
         var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var comment = entry.kind === 'pending' ? (entry.comment || '') : (entry.doc.comment || '');
         var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
         var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
         var viewBtn = entry.kind === 'pending'
@@ -1193,12 +1193,23 @@
           '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
           '<div class="attachLinks">' + viewBtn +
             (canManageAll() ? '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' : '') +
-          '</div>' + attachMetaHtml(entry, 'attachMeta') + '</div>';
+          '</div>' + attachMetaHtml(entry, 'attachMeta') +
+          '<input type="text" class="attachCommentInput" data-comment-idx="' + idx + '" placeholder="What is this attachment about?" value="' + escapeHtml(comment) + '">' +
+          '</div>';
       }).join('');
     }
     inputEl.disabled = count >= ATTACHMENTS_MAX || !canManageAll();
     inputEl.title = count >= ATTACHMENTS_MAX ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached.' : '';
 
+    listEl.querySelectorAll('[data-comment-idx]').forEach(function(input){
+      input.disabled = !canManageAll();
+      input.addEventListener('input', function(){
+        var entry = attachmentsState[Number(input.getAttribute('data-comment-idx'))];
+        if (!entry) return;
+        if (entry.kind === 'pending') entry.comment = input.value;
+        else entry.doc.comment = input.value;
+      });
+    });
     listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
       btn.addEventListener('click', function(){
         var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
@@ -1331,6 +1342,9 @@
     renderShareChecklist([]);
     setNumberFieldEditable(canManageAll());
     setFormReadOnly(false);
+    // Generate Document needs a saved record to render from - staff-only,
+    // only once the SCR already exists, so it's hidden in Add mode.
+    document.getElementById('generateDocBtn').style.display = 'none';
   }
 
   function openAddModal(){
@@ -1406,6 +1420,7 @@
 
     setNumberFieldEditable(false);
     setFormReadOnly(!canManageAll());
+    document.getElementById('generateDocBtn').style.display = canManageAll() ? '' : 'none';
     document.getElementById('scrModalOverlay').classList.add('open');
   }
   function closeModal(){ document.getElementById('scrModalOverlay').classList.remove('open'); }
@@ -1417,13 +1432,14 @@
     if (e.target.id === 'scrModalOverlay') closeModal();
   });
 
-  document.getElementById('scrForm').addEventListener('submit', async function(e){
-    e.preventDefault();
-    if (!canManageAll()) return;
-    var errEl = document.getElementById('modalError');
-    var saveBtn = document.getElementById('modalSaveBtn');
-    errEl.textContent = '';
-
+  // Collects the current form state and saves it (create or update),
+  // uploading any pending attachments along the way, then resyncs local
+  // attachmentsState to the server's response so a second save in the same
+  // modal session (e.g. Generate Document's two-step save) never
+  // re-uploads an already-saved pending file as a duplicate. Returns the
+  // saved, sanitized SCR. Shared by the Save button and the Generate
+  // Document button - both staff-only, matching this module's model.
+  async function saveScr(){
     var drawingChecked = document.querySelector('input[name="f_drawingChangeRequired"]:checked');
     var carChecked = document.querySelector('input[name="f_carRequired"]:checked');
 
@@ -1469,48 +1485,118 @@
       finalDisposition: document.getElementById('f_finalDisposition').value.trim(),
       sharedWithCustomers: currentShareSelection()
     };
-    if (!baseFields.supplierOrg) { errEl.textContent = 'Select a Supplier.'; return; }
+    if (!baseFields.supplierOrg) throw new Error('Select a Supplier.');
 
+    var scrId = editingId;
+    if (!scrId) {
+      var createFields = Object.assign({}, baseFields);
+      createFields.scrNumber = document.getElementById('f_scrNumber').value.trim();
+      var createRes = await apiFetch('scrs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createFields) });
+      var createData = {}; try { createData = await createRes.json(); } catch(e){}
+      if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+      scrId = createData.id;
+      editingId = scrId;
+    }
+
+    var attachmentsPayload = [];
+    for (var i = 0; i < attachmentsState.length; i++) {
+      var entry = attachmentsState[i];
+      if (entry.kind === 'existing') {
+        attachmentsPayload.push(entry.doc);
+      } else {
+        var path = buildDocPath(scrId, 'attachments', entry.filename, i);
+        await ghPutFile(path, entry.bytes, 'Upload attachment for SCR ' + scrId);
+        attachmentsPayload.push(Object.assign({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length, comment: entry.comment || '' }, stampUpload()));
+      }
+    }
+
+    var putFields = Object.assign({}, baseFields, { attachments: attachmentsPayload });
+    putFields.scrNumber = document.getElementById('f_scrNumber').value.trim();
+
+    var putRes = await apiFetch('scrs/' + encodeURIComponent(scrId), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(putFields)
+    });
+    var putData = {}; try { putData = await putRes.json(); } catch(e){}
+    if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
+
+    // Resync local state to the server's truth so a second save in this
+    // same modal session (Generate Document calls saveScr twice) never
+    // re-uploads an already-saved pending file as a duplicate.
+    attachmentsState = (putData.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
+
+    return putData;
+  }
+
+  document.getElementById('scrForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    if (!canManageAll()) return;
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
-      var scrId = editingId;
-      if (!scrId) {
-        var createFields = Object.assign({}, baseFields);
-        createFields.scrNumber = document.getElementById('f_scrNumber').value.trim();
-        var createRes = await apiFetch('scrs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createFields) });
-        var createData = {}; try { createData = await createRes.json(); } catch(e){}
-        if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
-        scrId = createData.id;
-      }
-
-      var attachmentsPayload = [];
-      for (var i = 0; i < attachmentsState.length; i++) {
-        var entry = attachmentsState[i];
-        if (entry.kind === 'existing') {
-          attachmentsPayload.push(entry.doc);
-        } else {
-          var path = buildDocPath(scrId, 'attachments', entry.filename, i);
-          await ghPutFile(path, entry.bytes, 'Upload attachment for SCR ' + scrId);
-          attachmentsPayload.push(Object.assign({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length }, stampUpload()));
-        }
-      }
-
-      var putFields = Object.assign({}, baseFields, { attachments: attachmentsPayload });
-      putFields.scrNumber = document.getElementById('f_scrNumber').value.trim();
-
-      var putRes = await apiFetch('scrs/' + encodeURIComponent(scrId), {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(putFields)
-      });
-      var putData = {}; try { putData = await putRes.json(); } catch(e){}
-      if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
-
+      await saveScr();
       closeModal();
       await loadScrs();
     } catch (err) {
       errEl.textContent = err && err.message ? err.message : 'Could not save this SCR.';
     } finally {
       saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+
+  // Generate Document (form button, staff-only, edit mode only): saves the
+  // form's current state, builds the SCR Word document client-side from
+  // that saved record (same buildScrDocxBytes() the list's "View /
+  // Download" used to call live), uploads it into the SCR's own
+  // Attachments list (replacing any previous generated copy via a stable
+  // id/path so re-generating doesn't pile up duplicates), saves again to
+  // persist that attachment reference, and opens it - all without closing
+  // the modal. This is what makes the list's button able to just open a
+  // saved file instead of regenerating every time (see
+  // viewScrAttachmentDoc / GENERATED_DOC_ID above).
+  document.getElementById('generateDocBtn').addEventListener('click', async function(){
+    if (!canManageAll()) return;
+    var btn = this;
+    var errEl = document.getElementById('modalError');
+    errEl.textContent = '';
+    var originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Generating…';
+    try {
+      var saved = await saveScr();
+      var scrId = editingId;
+      var bytes = await buildScrDocxBytes(saved);
+      var filename = 'SCR-' + (saved.scrNumber || '') + '.docx';
+      var stablePath = SCR_DOC_FOLDER + '/' + scrId + '/generated/document.docx';
+      await ghPutFile(stablePath, bytes, 'Generate document for SCR ' + scrId);
+      var existingIdx = attachmentsState.findIndex(function(e2){ return e2.kind === 'existing' && e2.doc.id === GENERATED_DOC_ID; });
+      var priorComment = existingIdx !== -1 ? (attachmentsState[existingIdx].doc.comment || '') : '';
+      var generatedDoc = Object.assign(
+        {
+          id: GENERATED_DOC_ID, path: stablePath, filename: filename,
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          size: bytes.length,
+          comment: priorComment || 'This is a system-saved attachment and will change when a new document is generated by the user.'
+        },
+        stampUpload()
+      );
+      if (existingIdx !== -1) attachmentsState[existingIdx] = { kind: 'existing', doc: generatedDoc };
+      else attachmentsState.push({ kind: 'existing', doc: generatedDoc });
+      renderAttachmentsList();
+
+      await saveScr();
+      await openDocViewer({
+        filename: filename,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        bytes: bytes
+      });
+      await loadScrs();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not generate the SCR document.';
+    } finally {
+      btn.disabled = false; btn.textContent = originalText;
     }
   });
   // -----------------------------------------------------------------------------
