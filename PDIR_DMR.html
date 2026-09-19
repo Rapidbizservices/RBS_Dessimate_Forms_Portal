@@ -143,6 +143,11 @@
   .photoSlot h4{ font-size:12px; margin:0 0 6px; color:var(--ink); }
   .photoSlot input[type=text]{ margin-top:6px; }
   .docCell{ font-size:12px; color:var(--label); }
+  .attachCount{ font-weight:400; font-size:12.5px; color:var(--label); }
+  .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    padding:9px 0; font-size:12.5px; }
+  .docRow .docMain{ flex:1 1 auto; min-width:0; }
+  .docRow input[type=file]{ font-size:11.5px; margin-top:2px; }
   .attachmentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
   .attachRow{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:2px 12px;
     padding:7px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
@@ -365,6 +370,18 @@
       </div>
 
       <div class="modalSection">
+        <h3>Attachments <span class="attachCount" id="attachCount">(0 / 20)</span></h3>
+        <p class="modalSectionHint">Supporting documents for this DMR &mdash; up to 20.</p>
+        <div id="attachmentsList" class="attachmentsList"></div>
+        <div class="docRow">
+          <div class="docMain">
+            <input type="file" id="attachmentsDocInput" multiple>
+            <div class="modalError" id="attachError" style="margin-top:6px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modalSection">
         <h3>5. Photographic Evidence <span style="font-weight:400;">(up to 4 photos)</span></h3>
         <div class="photoSlots" id="photoSlotsWrap"></div>
       </div>
@@ -572,6 +589,7 @@
   }
   var DMR_DOC_FOLDER = 'dmr_docs';
   var PHOTO_SLOTS = 4;
+  var ATTACHMENTS_MAX = 20;
   function buildDocPath(dmrId, folder, filename, idx){
     var safeName = (filename || 'file').replace(/[\\/]/g, '_');
     return DMR_DOC_FOLDER + '/' + dmrId + '/' + folder + '/' + Date.now() + '-' + idx + '-' + safeName;
@@ -956,7 +974,87 @@
 
   // ---- Add / Edit modal --------------------------------------------------------
   var editingId = null;
+  var attachmentsState = [];
   var photoSlotsState = [null, null, null, null]; // each: null | {kind:'pending',bytes,filename,mimeType,caption} | {kind:'existing',doc:{...,caption}}
+
+  // Standard multi-file attachment section (same pattern as CR/SCR) -
+  // Dessimate-owned like Section 5 Photos, so the Remove link is hidden
+  // (not just the file input disabled) for a Supplier, same reasoning as
+  // renderPhotoSlot below.
+  function activeAttachmentCount(){ return attachmentsState.length; }
+  function renderAttachmentsList(){
+    var listEl = document.getElementById('attachmentsList');
+    var countEl = document.getElementById('attachCount');
+    var inputEl = document.getElementById('attachmentsDocInput');
+    var count = activeAttachmentCount();
+    countEl.textContent = '(' + count + ' / ' + ATTACHMENTS_MAX + ')';
+    if (!count) {
+      listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>';
+    } else {
+      listEl.innerHTML = attachmentsState.map(function(entry, idx){
+        var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
+        var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+        var viewBtn = entry.kind === 'pending'
+          ? '<button type="button" data-preview-idx="' + idx + '">Preview</button>'
+          : '<button type="button" data-view-idx="' + idx + '">View</button>';
+        var removeLinkHtml = canManageAll() ? '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' : '';
+        return '<div class="attachRow">' +
+          '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+          '<div class="attachLinks">' + viewBtn + removeLinkHtml +
+          '</div>' + attachMetaHtml(entry, 'attachMeta') + '</div>';
+      }).join('');
+    }
+    inputEl.disabled = count >= ATTACHMENTS_MAX || !canManageAll();
+    inputEl.title = count >= ATTACHMENTS_MAX ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached.' : '';
+
+    listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
+        if (entry) openDocViewer({ filename: entry.filename, mimeType: entry.mimeType, bytes: entry.bytes });
+      });
+    });
+    listEl.querySelectorAll('[data-view-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-view-idx'))];
+        if (entry) openDocViewer({ filename: entry.doc.filename, mimeType: entry.doc.mimeType, path: entry.doc.path });
+      });
+    });
+    listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var idx = Number(btn.getAttribute('data-remove-idx'));
+        var entry = attachmentsState[idx];
+        var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
+        if (!(await confirmDialog('Remove "' + name + '"?'))) return;
+        attachmentsState.splice(idx, 1);
+        renderAttachmentsList();
+      });
+    });
+  }
+  document.getElementById('attachmentsDocInput').addEventListener('change', async function(){
+    var files = this.files ? Array.from(this.files) : [];
+    this.value = '';
+    if (!files.length) return;
+    var errEl = document.getElementById('attachError');
+    errEl.textContent = '';
+    var room = ATTACHMENTS_MAX - activeAttachmentCount();
+    if (files.length > room) {
+      errEl.textContent = room <= 0
+        ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached — remove one before adding another.'
+        : 'Only ' + room + ' more file' + (room === 1 ? '' : 's') + ' can be added (limit ' + ATTACHMENTS_MAX + ').';
+      files = files.slice(0, Math.max(room, 0));
+    }
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      try {
+        var bytes = await readFileAsBytes(file);
+        attachmentsState.push({ kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' });
+      } catch (e) {
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      }
+    }
+    renderAttachmentsList();
+  });
 
   function renderPhotoSlots(){
     var wrap = document.getElementById('photoSlotsWrap');
@@ -1068,6 +1166,9 @@
   function resetForm(){
     document.getElementById('dmrForm').reset();
     document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = [];
+    renderAttachmentsList();
     document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions('');
     document.getElementById('f_partNumber').innerHTML = partOptions('');
     document.getElementById('f_dmrNumber').value = '';
@@ -1091,6 +1192,9 @@
     editingId = id;
     document.getElementById('dmrForm').reset();
     document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
+    attachmentsState = (dmr.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
 
     document.getElementById('modalTitle').textContent = (canManageAll() ? 'Edit ' : 'Respond to ') + 'DMR ' + dmr.dmrNumber;
     document.getElementById('modalSub').textContent = canManageAll() ? 'DMR Number can be changed any time.' : 'Only Section 7 (Supplier Response) can be updated below.';
@@ -1220,6 +1324,19 @@
         if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
         dmrId = createData.id;
       }
+
+      var attachmentsPayload = [];
+      for (var ai = 0; ai < attachmentsState.length; ai++) {
+        var attEntry = attachmentsState[ai];
+        if (attEntry.kind === 'existing') {
+          attachmentsPayload.push(attEntry.doc);
+        } else {
+          var attPath = buildDocPath(dmrId, 'attachments', attEntry.filename, ai);
+          await ghPutFile(attPath, attEntry.bytes, 'Upload attachment for DMR ' + dmrId);
+          attachmentsPayload.push(Object.assign({ path: attPath, filename: attEntry.filename, mimeType: attEntry.mimeType, size: attEntry.bytes.length }, stampUpload()));
+        }
+      }
+      baseFields.attachments = attachmentsPayload;
 
       var photosPayload = [];
       for (var i = 0; i < PHOTO_SLOTS; i++) {

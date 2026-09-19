@@ -4495,6 +4495,10 @@ function sanitizeDmr(o) {
     discOtherDetail: o.discOtherDetail || '',
     // 4. Description of Discrepancy
     descriptionOfDiscrepancy: o.descriptionOfDiscrepancy || '',
+    // Supporting documents (not a numbered template section - same
+    // standard multi-file attachment pattern as CR/SCR, up to
+    // PART_ATTACHMENTS_MAX with uploadedBy/uploadedAt stamping).
+    attachments: sanitizeOrgDocList(o.attachments),
     // 5. Photographic Evidence
     photos: sanitizeDmrPhotos(o.photos),
     // 6. Disposition Requested
@@ -4554,6 +4558,7 @@ function validateDmrFields(body, isSupplier) {
     discOther: !!body.discOther,
     discOtherDetail: (body.discOtherDetail || '').toString().trim(),
     descriptionOfDiscrepancy: (body.descriptionOfDiscrepancy || '').toString().trim(),
+    attachments: sanitizeOrgDocList(body.attachments),
     photos: sanitizeDmrPhotos(body.photos),
     dispReturnToSupplier: !!body.dispReturnToSupplier,
     dispRework: !!body.dispRework,
@@ -4835,6 +4840,10 @@ async function buildDmrPdf(dmr, photoDocs) {
   const descShown = (descLines.length ? descLines : ['']).slice(0, 3);
   descShown.forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
   y -= 4;
+  if (dmr.attachments && dmr.attachments.length) {
+    const attLine = 'Attachments: ' + dmr.attachments.map(function (a) { return a.filename; }).join(', ');
+    wrapLines(attLine, contentW, 8).slice(0, 2).forEach(function (l) { leftText(l, margin, y, 8, { color: labelGray }); y -= 11; });
+  }
   if (dmr.photos && dmr.photos.length) {
     leftText('Photographic evidence: ' + dmr.photos.length + ' photo' + (dmr.photos.length === 1 ? '' : 's') + ' attached (see page 2).', margin, y, 8, { color: labelGray });
     y -= 16;

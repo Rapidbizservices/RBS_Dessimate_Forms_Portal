@@ -907,13 +907,16 @@ Customer login has no role in this module.
 
 **DMR Number** is formatted `DMR-####` (4 digits, matching the template's
 `DMR-0000` placeholder) and auto-assigned like CR/SCR Number, Team Member+
-only. **Photographic Evidence** is up to 4 photo slots, each with its own
-caption - Dessimate-owned like every other non-Section-7 field, so a
-Supplier can view but never add, remove, or re-caption a photo. **View
+only. An **Attachments** section (up to 20 files, each stamped with who
+uploaded it and when - the same standard multi-file pattern used
+throughout this app) sits below Section 4 for supporting documents, and
+**Photographic Evidence** is up to 4 photo slots, each with its own
+caption. Both are Dessimate-owned like every other non-Section-7 field, so
+a Supplier can view but never add, remove, or re-caption a file. **View
 PDF** renders the drawn-from-scratch layout (same pdf-lib approach as
-buildCrPdf/buildScrPdf); when at least one photo is attached, a second
-page is appended as a 2x2 photo grid with captions - otherwise the DMR is
-a single page.
+buildCrPdf/buildScrPdf) with an "Attachments:" line listing filenames;
+when at least one photo is attached, a second page is appended as a 2x2
+photo grid with captions - otherwise the DMR is a single page.
 
 ## Customer SCRs (SCR)
 
