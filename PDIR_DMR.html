@@ -448,6 +448,7 @@
       <div class="modalError" id="modalError"></div>
       <div class="modalBtns" id="modalBtnsWrap">
         <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="button" class="pdfBtn" id="generatePdfBtn" style="display:none;">Generate PDF</button>
         <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
       </div>
     </form>
@@ -706,29 +707,6 @@
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
   });
-  function openPdfInViewer(filename, bytes){
-    var overlay = document.getElementById('docViewerOverlay');
-    var stateEl = document.getElementById('docViewerState');
-    var frame = document.getElementById('docViewerFrame');
-    var downloadBtn = document.getElementById('docViewerDownload');
-    document.getElementById('docViewerTitle').textContent = filename;
-    frame.style.display = 'none'; downloadBtn.style.display = 'none';
-    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
-    overlay.classList.add('open');
-    try {
-      var blob = new Blob([bytes], { type: 'application/pdf' });
-      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
-      docViewerObjectUrl = URL.createObjectURL(blob);
-      frame.src = docViewerObjectUrl; frame.style.display = 'block';
-      stateEl.style.display = 'none';
-      downloadBtn.href = docViewerObjectUrl;
-      downloadBtn.download = filename;
-      downloadBtn.style.display = 'inline-block';
-    } catch (e) {
-      console.error(e);
-      stateEl.textContent = 'Could not display this PDF (' + (e && e.message ? e.message : e) + ').';
-    }
-  }
   function isInlineViewable(mimeType, filename){
     var ext = docFileExt(filename).toLowerCase();
     if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
@@ -788,22 +766,18 @@
       stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
     }
   }
-  async function viewGeneratedPdf(id, dmrNumber, btn){
-    var originalText = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
-    try {
-      var res = await apiFetch('dmrs/' + encodeURIComponent(id) + '/pdf');
-      if (!res.ok) {
-        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
-        throw new Error(msg || ('HTTP ' + res.status));
-      }
-      var buf = await res.arrayBuffer();
-      openPdfInViewer('DMR ' + dmrNumber + '.pdf', new Uint8Array(buf));
-    } catch (err) {
-      alert('Could not generate the DMR PDF (' + (err && err.message ? err.message : err) + ').');
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+  // List's "View PDF" button - opens the DMR's saved generated-report
+  // attachment (added by the form's "Generate PDF" button) rather than
+  // regenerating live on every click. If none has been generated yet, this
+  // says so instead of silently doing nothing.
+  var GENERATED_PDF_ID = 'generated-report';
+  function viewDmrAttachmentPdf(dmr){
+    var generated = (dmr.attachments || []).find(function(a){ return a.id === GENERATED_PDF_ID; });
+    if (!generated) {
+      alert('No PDF has been generated for this DMR yet. Open it and use "Generate PDF" to create one.');
+      return;
     }
+    openDocViewer({ filename: generated.filename, mimeType: generated.mimeType, path: generated.path });
   }
   // -----------------------------------------------------------------------------
 
@@ -936,7 +910,7 @@
         '<td>' + escapeHtml(dmr.partNumber) + '</td>' +
         '<td>' + escapeHtml(fmtDateMDY(dmr.dateIssued)) + '</td>' +
         '<td>' + statusPillHtml(dmr.status) + '</td>' +
-        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(dmr.id) + '" data-dmrnum="' + escapeHtml(dmr.dmrNumber) + '">View PDF</button></td>' +
+        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(dmr.id) + '">View PDF</button></td>' +
         '<td><div class="rowActions">' +
           '<button type="button" class="editBtn" data-edit="' + escapeHtml(dmr.id) + '">' + (canManageAll() ? 'Edit' : 'Respond') + '</button>' +
           (canManageAll() ? '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(dmr.id) + '">Delete</button>' : '') +
@@ -952,7 +926,8 @@
     });
     bodyEl.querySelectorAll('[data-pdf]').forEach(function(btn){
       btn.addEventListener('click', function(){
-        requireAuthThen(function(){ viewGeneratedPdf(btn.getAttribute('data-pdf'), btn.getAttribute('data-dmrnum'), btn); });
+        var dmr = lastDmrs.find(function(x){ return x.id === btn.getAttribute('data-pdf'); });
+        if (dmr) requireAuthThen(function(){ viewDmrAttachmentPdf(dmr); });
       });
     });
   }
@@ -1161,6 +1136,11 @@
       el.disabled = !canManageAll() && SECTION7_IDS.indexOf(el.id) === -1;
     });
     document.getElementById('supplierSectionNote').style.display = isSupplierUser() ? '' : 'none';
+    // Generate PDF needs a saved record to render from - staff-only (a
+    // Supplier can't persist a new attachment anyway; see the module
+    // comment above the click handler) and only once the DMR already
+    // exists, so it's hidden in Add mode.
+    document.getElementById('generatePdfBtn').style.display = (canManageAll() && editingId) ? '' : 'none';
   }
 
   function resetForm(){
@@ -1262,12 +1242,13 @@
     if (e.target.id === 'dmrModalOverlay') closeModal();
   });
 
-  document.getElementById('dmrForm').addEventListener('submit', async function(e){
-    e.preventDefault();
-    var errEl = document.getElementById('modalError');
-    var saveBtn = document.getElementById('modalSaveBtn');
-    errEl.textContent = '';
-
+  // Collects the current form state and saves it (create or update),
+  // uploading any pending attachments/photos along the way, then resyncs
+  // local attachmentsState/photoSlotsState to the server's response so a
+  // second save in the same modal session (e.g. Generate PDF's two-step
+  // save) never re-uploads an already-saved file. Returns the saved,
+  // sanitized DMR. Shared by the Save button and the Generate PDF button.
+  async function saveDmr(){
     var statusChecked = document.querySelector('input[name="f_status"]:checked');
 
     var baseFields = {
@@ -1311,61 +1292,127 @@
       comments: document.getElementById('f_comments').value.trim()
     };
     if (canManageAll()) baseFields.supplierOrg = document.getElementById('f_supplierOrg').value;
-    if (canManageAll() && !baseFields.supplierOrg && !editingId) { errEl.textContent = 'Select a Supplier.'; return; }
+    if (canManageAll() && !baseFields.supplierOrg && !editingId) throw new Error('Select a Supplier.');
 
+    var dmrId = editingId;
+    if (!dmrId) {
+      var createFields = Object.assign({}, baseFields);
+      createFields.dmrNumber = document.getElementById('f_dmrNumber').value.trim();
+      var createRes = await apiFetch('dmrs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createFields) });
+      var createData = {}; try { createData = await createRes.json(); } catch(e){}
+      if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+      dmrId = createData.id;
+      editingId = dmrId;
+    }
+
+    var attachmentsPayload = [];
+    for (var ai = 0; ai < attachmentsState.length; ai++) {
+      var attEntry = attachmentsState[ai];
+      if (attEntry.kind === 'existing') {
+        attachmentsPayload.push(attEntry.doc);
+      } else {
+        var attPath = buildDocPath(dmrId, 'attachments', attEntry.filename, ai);
+        await ghPutFile(attPath, attEntry.bytes, 'Upload attachment for DMR ' + dmrId);
+        attachmentsPayload.push(Object.assign({ path: attPath, filename: attEntry.filename, mimeType: attEntry.mimeType, size: attEntry.bytes.length }, stampUpload()));
+      }
+    }
+    baseFields.attachments = attachmentsPayload;
+
+    var photosPayload = [];
+    for (var i = 0; i < PHOTO_SLOTS; i++) {
+      var state = photoSlotsState[i];
+      if (!state) continue;
+      if (state.kind === 'existing') {
+        photosPayload.push(state.doc);
+      } else {
+        var path = buildDocPath(dmrId, 'photos', state.filename, i);
+        await ghPutFile(path, state.bytes, 'Upload photo for DMR ' + dmrId);
+        photosPayload.push(Object.assign({ path: path, filename: state.filename, mimeType: state.mimeType, size: state.bytes.length, caption: state.caption || '' }, stampUpload()));
+      }
+    }
+    baseFields.photos = photosPayload;
+    if (canManageAll()) baseFields.dmrNumber = document.getElementById('f_dmrNumber').value.trim();
+
+    var putRes = await apiFetch('dmrs/' + encodeURIComponent(dmrId), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(baseFields)
+    });
+    var putData = {}; try { putData = await putRes.json(); } catch(e){}
+    if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
+
+    // Resync local state to the server's truth so a second save in this
+    // same modal session (Generate PDF calls saveDmr twice) never re-
+    // uploads an already-saved pending file as a duplicate.
+    attachmentsState = (putData.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
+    photoSlotsState = [null, null, null, null];
+    (putData.photos || []).forEach(function(doc, pi){ if (pi < PHOTO_SLOTS) photoSlotsState[pi] = { kind: 'existing', doc: doc }; });
+    renderPhotoSlots();
+
+    return putData;
+  }
+
+  document.getElementById('dmrForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
-      var dmrId = editingId;
-      if (!dmrId) {
-        var createFields = Object.assign({}, baseFields);
-        createFields.dmrNumber = document.getElementById('f_dmrNumber').value.trim();
-        var createRes = await apiFetch('dmrs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createFields) });
-        var createData = {}; try { createData = await createRes.json(); } catch(e){}
-        if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
-        dmrId = createData.id;
-      }
-
-      var attachmentsPayload = [];
-      for (var ai = 0; ai < attachmentsState.length; ai++) {
-        var attEntry = attachmentsState[ai];
-        if (attEntry.kind === 'existing') {
-          attachmentsPayload.push(attEntry.doc);
-        } else {
-          var attPath = buildDocPath(dmrId, 'attachments', attEntry.filename, ai);
-          await ghPutFile(attPath, attEntry.bytes, 'Upload attachment for DMR ' + dmrId);
-          attachmentsPayload.push(Object.assign({ path: attPath, filename: attEntry.filename, mimeType: attEntry.mimeType, size: attEntry.bytes.length }, stampUpload()));
-        }
-      }
-      baseFields.attachments = attachmentsPayload;
-
-      var photosPayload = [];
-      for (var i = 0; i < PHOTO_SLOTS; i++) {
-        var state = photoSlotsState[i];
-        if (!state) continue;
-        if (state.kind === 'existing') {
-          photosPayload.push(state.doc);
-        } else {
-          var path = buildDocPath(dmrId, 'photos', state.filename, i);
-          await ghPutFile(path, state.bytes, 'Upload photo for DMR ' + dmrId);
-          photosPayload.push(Object.assign({ path: path, filename: state.filename, mimeType: state.mimeType, size: state.bytes.length, caption: state.caption || '' }, stampUpload()));
-        }
-      }
-      baseFields.photos = photosPayload;
-      if (canManageAll()) baseFields.dmrNumber = document.getElementById('f_dmrNumber').value.trim();
-
-      var putRes = await apiFetch('dmrs/' + encodeURIComponent(dmrId), {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(baseFields)
-      });
-      var putData = {}; try { putData = await putRes.json(); } catch(e){}
-      if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
-
+      await saveDmr();
       closeModal();
       await loadDmrs();
     } catch (err) {
       errEl.textContent = err && err.message ? err.message : 'Could not save this DMR.';
     } finally {
       saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+
+  // Generate PDF (form button, staff-only, edit mode only - see
+  // applyRoleUIForModal): saves the form's current state, renders the PDF
+  // from that saved record, uploads it into the DMR's own Attachments list
+  // (replacing any previous generated copy via a stable id/path so
+  // re-generating doesn't pile up duplicates), saves again to persist that
+  // attachment reference, and opens it - all without closing the modal.
+  // This is what makes the list's "View PDF" button able to just open a
+  // saved file instead of regenerating live every time (see
+  // viewDmrAttachmentPdf / GENERATED_PDF_ID above).
+  document.getElementById('generatePdfBtn').addEventListener('click', async function(){
+    var btn = this;
+    var errEl = document.getElementById('modalError');
+    errEl.textContent = '';
+    var originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Generating…';
+    try {
+      var saved = await saveDmr();
+      var dmrId = editingId;
+      var res = await apiFetch('dmrs/' + encodeURIComponent(dmrId) + '/pdf');
+      if (!res.ok) {
+        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
+        throw new Error(msg || ('HTTP ' + res.status));
+      }
+      var buf = await res.arrayBuffer();
+      var bytes = new Uint8Array(buf);
+      var filename = 'DMR-' + (saved.dmrNumber || '') + '.pdf';
+      var stablePath = DMR_DOC_FOLDER + '/' + dmrId + '/generated/report.pdf';
+      await ghPutFile(stablePath, bytes, 'Generate PDF for DMR ' + dmrId);
+      var generatedDoc = Object.assign(
+        { id: GENERATED_PDF_ID, path: stablePath, filename: filename, mimeType: 'application/pdf', size: bytes.length },
+        stampUpload()
+      );
+      var idx = attachmentsState.findIndex(function(e2){ return e2.kind === 'existing' && e2.doc.id === GENERATED_PDF_ID; });
+      if (idx !== -1) attachmentsState[idx] = { kind: 'existing', doc: generatedDoc };
+      else attachmentsState.push({ kind: 'existing', doc: generatedDoc });
+      renderAttachmentsList();
+
+      await saveDmr();
+      await openDocViewer({ filename: filename, mimeType: 'application/pdf', bytes: bytes });
+      await loadDmrs();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not generate the DMR PDF.';
+    } finally {
+      btn.disabled = false; btn.textContent = originalText;
     }
   });
   // -----------------------------------------------------------------------------

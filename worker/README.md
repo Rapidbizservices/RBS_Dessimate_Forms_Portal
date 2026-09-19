@@ -912,11 +912,22 @@ uploaded it and when - the same standard multi-file pattern used
 throughout this app) sits below Section 4 for supporting documents, and
 **Photographic Evidence** is up to 4 photo slots, each with its own
 caption. Both are Dessimate-owned like every other non-Section-7 field, so
-a Supplier can view but never add, remove, or re-caption a file. **View
-PDF** renders the drawn-from-scratch layout (same pdf-lib approach as
-buildCrPdf/buildScrPdf) with an "Attachments:" line listing filenames;
-when at least one photo is attached, a second page is appended as a 2x2
-photo grid with captions - otherwise the DMR is a single page.
+a Supplier can view but never add, remove, or re-caption a file.
+
+**PDF generation is a save, not a live render.** A **Generate PDF** button
+at the bottom of the form (staff-only, only once the DMR already exists)
+saves the form's current state, renders the drawn-from-scratch layout
+(same pdf-lib approach as buildCrPdf/buildScrPdf - an "Attachments:" line
+lists filenames, and a second page is appended as a 2x2 photo grid with
+captions when at least one photo is attached), uploads that PDF into the
+DMR's own Attachments list at a stable path (`.../generated/report.pdf`,
+tagged with a fixed `id` so re-generating replaces it instead of piling up
+duplicates), saves again to persist that reference, and opens it - all
+without closing the modal. The list's **View PDF** button then just opens
+that saved attachment (no live regeneration); if none has been generated
+yet, it says so instead of silently doing nothing. This save-then-link
+pattern is intended to roll out to the other PDF-producing modules next;
+for now it's DMR-only.
 
 ## Customer SCRs (SCR)
 
