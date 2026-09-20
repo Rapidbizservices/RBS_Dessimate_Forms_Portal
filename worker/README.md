@@ -1005,15 +1005,17 @@ with the same per-file `comment` box as every other module) and
 Photographic Evidence (staff-only, 4 slots) are otherwise identical to
 Dessimate DMR's.
 
-**PDF generation is a save, not a live render**, same save-then-link
-pattern as every other module above. A staff-only **Generate PDF** button
-(edit mode only) saves the form, renders the layout (same pdf-lib approach
-as `buildDmrPdf`, with Section 8 relabeled "CUSTOMER REVIEW / CLOSURE" and
-rendered as a compact, newest-first, truncated one-line-per-entry list
-instead of a paragraph - the full untruncated thread is always visible in
-the app itself, this is just a print snapshot), uploads it into the
-record's own Attachments list at a stable path, saves again, and opens it.
-The list's **View PDF** button just opens that saved attachment.
+**Unlike every other module above, Dessimate never generates this PDF.**
+The Customer generates their own DMR document and sends it to us; staff
+attach it as a regular file under Attachments instead. The form's
+**Generate PDF** button and the list's **View PDF** button are both
+permanently greyed out (disabled, with a tooltip explaining why) rather
+than wired up to the save-then-link flow every other module uses. The
+backend still has `buildCustomerDmrPdf` / `GET /customer-dmrs/<id>/pdf`
+(same drawn-from-scratch pdf-lib layout as `buildDmrPdf`, Section 8
+relabeled "CUSTOMER REVIEW / CLOSURE" and rendered as a compact,
+newest-first, truncated one-line-per-entry list) - unused by the UI today,
+kept in case that changes.
 
 **Agentic 8D Generation** is a staff-only stub button at the bottom of the
 form (edit mode only) - clicking it just explains the feature is coming

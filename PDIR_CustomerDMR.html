@@ -90,6 +90,8 @@
   .editBtn:hover{ background:#eef1fa; }
   .pdfBtn{ color:#1f9254; background:#fff; border:1px solid #1f9254; }
   .pdfBtn:hover{ background:#eaf6ef; }
+  .pdfBtn:disabled{ color:var(--label); background:#f4f5f8; border-color:var(--line); cursor:not-allowed; }
+  .pdfBtn:disabled:hover{ background:#f4f5f8; }
   .deleteBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
   .deleteBtn:hover{ background:#fbeaea; border-color:#b23b3b; }
 
@@ -471,7 +473,7 @@
       <div class="modalError" id="modalError"></div>
       <div class="modalBtns" id="modalBtnsWrap">
         <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
-        <button type="button" class="pdfBtn" id="generatePdfBtn" style="display:none;">Generate PDF</button>
+        <button type="button" class="pdfBtn" id="generatePdfBtn" style="display:none;" disabled title="Dessimate doesn't generate this PDF — the Customer generates their own DMR and sends it to us; attach it under Attachments above.">Generate PDF</button>
         <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
       </div>
     </form>
@@ -791,19 +793,10 @@
       stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
     }
   }
-  // List's "View PDF" button - opens the DMR's saved generated-report
-  // attachment (added by the form's "Generate PDF" button) rather than
-  // regenerating live on every click. If none has been generated yet, this
-  // says so instead of silently doing nothing.
-  var GENERATED_PDF_ID = 'generated-report';
-  function viewDmrAttachmentPdf(dmr){
-    var generated = (dmr.attachments || []).find(function(a){ return a.id === GENERATED_PDF_ID; });
-    if (!generated) {
-      alert('No PDF has been generated for this Customer DMR yet. Open it and use "Generate PDF" to create one.');
-      return;
-    }
-    openDocViewer({ filename: generated.filename, mimeType: generated.mimeType, path: generated.path });
-  }
+  // Unlike Dessimate DMR/CR/SCR, there's no system-generated PDF here at
+  // all - the list's "View PDF" button is permanently greyed out (see
+  // renderTable below) instead of opening a saved generated-report
+  // attachment.
   // -----------------------------------------------------------------------------
 
   function escapeHtml(s){
@@ -935,7 +928,7 @@
         '<td>' + escapeHtml(dmr.partNumber) + '</td>' +
         '<td>' + escapeHtml(fmtDateMDY(dmr.dateIssued)) + '</td>' +
         '<td>' + statusPillHtml(dmr.status) + '</td>' +
-        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(dmr.id) + '">View PDF</button></td>' +
+        '<td><button type="button" class="pdfBtn" disabled title="Dessimate doesn\'t generate this PDF — the Customer generates their own DMR and sends it to us; find it under Attachments instead.">View PDF</button></td>' +
         '<td><div class="rowActions">' +
           '<button type="button" class="editBtn" data-edit="' + escapeHtml(dmr.id) + '">' + (canManageAll() ? 'Edit' : 'Respond') + '</button>' +
           (canManageAll() ? '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(dmr.id) + '">Delete</button>' : '') +
@@ -948,12 +941,6 @@
     });
     bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
       btn.addEventListener('click', function(){ deleteDmr(this.getAttribute('data-delete')); });
-    });
-    bodyEl.querySelectorAll('[data-pdf]').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        var dmr = lastDmrs.find(function(x){ return x.id === btn.getAttribute('data-pdf'); });
-        if (dmr) requireAuthThen(function(){ viewDmrAttachmentPdf(dmr); });
-      });
     });
   }
 
@@ -1451,56 +1438,12 @@
     }
   });
 
-  // Generate PDF (form button, staff-only, edit mode only - see
-  // applyRoleUIForModal): saves the form's current state, renders the PDF
-  // from that saved record, uploads it into the Customer DMR's own
-  // Attachments list (replacing any previous generated copy via a stable
-  // id/path so re-generating doesn't pile up duplicates), saves again to
-  // persist that attachment reference, and opens it - all without closing
-  // the modal. This is what makes the list's "View PDF" button able to
-  // just open a saved file instead of regenerating live every time (see
-  // viewDmrAttachmentPdf / GENERATED_PDF_ID above).
-  document.getElementById('generatePdfBtn').addEventListener('click', async function(){
-    var btn = this;
-    var errEl = document.getElementById('modalError');
-    errEl.textContent = '';
-    var originalText = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Generating…';
-    try {
-      var saved = await saveDmr();
-      var dmrId = editingId;
-      var res = await apiFetch('customer-dmrs/' + encodeURIComponent(dmrId) + '/pdf');
-      if (!res.ok) {
-        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
-        throw new Error(msg || ('HTTP ' + res.status));
-      }
-      var buf = await res.arrayBuffer();
-      var bytes = new Uint8Array(buf);
-      var filename = 'Customer DMR-' + (saved.dmrNumber || '') + '.pdf';
-      var stablePath = CUSTOMER_DMR_DOC_FOLDER + '/' + dmrId + '/generated/report.pdf';
-      await ghPutFile(stablePath, bytes, 'Generate PDF for Customer DMR ' + dmrId);
-      var existingIdx = attachmentsState.findIndex(function(e2){ return e2.kind === 'existing' && e2.doc.id === GENERATED_PDF_ID; });
-      // Keep whatever comment was already on the generated-report entry
-      // (a user may have overwritten the default) rather than stomping it
-      // on every re-generation.
-      var priorComment = existingIdx !== -1 ? (attachmentsState[existingIdx].doc.comment || '') : '';
-      var generatedDoc = Object.assign(
-        { id: GENERATED_PDF_ID, path: stablePath, filename: filename, mimeType: 'application/pdf', size: bytes.length, comment: priorComment || 'This is a system-saved attachment and will change when a new PDF is generated by the user.' },
-        stampUpload()
-      );
-      if (existingIdx !== -1) attachmentsState[existingIdx] = { kind: 'existing', doc: generatedDoc };
-      else attachmentsState.push({ kind: 'existing', doc: generatedDoc });
-      renderAttachmentsList();
-
-      await saveDmr();
-      await openDocViewer({ filename: filename, mimeType: 'application/pdf', bytes: bytes });
-      await loadDmrs();
-    } catch (err) {
-      errEl.textContent = err && err.message ? err.message : 'Could not generate the Customer DMR PDF.';
-    } finally {
-      btn.disabled = false; btn.textContent = originalText;
-    }
-  });
+  // Generate PDF and the list's View PDF are both permanently disabled
+  // (greyed out, see the HTML/CSS above and renderTable below) - unlike
+  // Dessimate DMR/CR/SCR, Dessimate never generates the DMR document here:
+  // the Customer generates their own DMR and sends it to us, and staff
+  // attach it as a regular file under Attachments instead. No click
+  // handler is wired up for either button.
   // -----------------------------------------------------------------------------
 
   requireAuthThen(async function(){ await resolveMe(); applyAccessLevelUI(); await loadDropdownData(); await loadDmrs(); });
