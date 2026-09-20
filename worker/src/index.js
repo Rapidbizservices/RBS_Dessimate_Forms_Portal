@@ -5059,7 +5059,7 @@ async function buildDmrPdf(dmr, photoDocs) {
   checkbox(margin, y, dmr.dispUseAsIs, 'Use As-Is (Dessimate Approval Required)', { size: 8.5 });
   checkbox(margin + 300, y, dmr.dispSortInspect, 'Sort & 100% Inspect at Dessimate', { size: 8.5 });
   y -= 18;
-  leftText('Containment Action Required:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText('Interim Corrective Action (ICA):', margin, y, 8.5, { bold: true, color: labelGray });
   y -= 12;
   wrapLines(dmr.containmentActionRequired, contentW - 6, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
   leftText('Supplier Response Due:', margin, y, 8.5, { bold: true, color: labelGray });
@@ -5073,7 +5073,7 @@ async function buildDmrPdf(dmr, photoDocs) {
   y -= 11;
   wrapLines(dmr.rootCause, contentW - 12, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
   y -= 4;
-  leftText('Corrective / Containment Action:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText('Permanent Corrective Action (PCA):', margin, y, 8.5, { bold: true, color: labelGray });
   y -= 11;
   wrapLines(dmr.correctiveAction, contentW - 12, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
   y -= 6;
@@ -5678,7 +5678,7 @@ async function buildCustomerDmrPdf(dmr, photoDocs) {
   checkbox(margin, y, dmr.dispUseAsIs, 'Use As-Is (Dessimate Approval Required)', { size: 8.5 });
   checkbox(margin + 300, y, dmr.dispSortInspect, 'Sort & 100% Inspect at Dessimate', { size: 8.5 });
   y -= 18;
-  leftText('Containment Action Required:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText('Interim Corrective Action (ICA):', margin, y, 8.5, { bold: true, color: labelGray });
   y -= 12;
   wrapLines(dmr.containmentActionRequired, contentW - 6, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
   leftText('Supplier Response Due:', margin, y, 8.5, { bold: true, color: labelGray });
@@ -5692,7 +5692,7 @@ async function buildCustomerDmrPdf(dmr, photoDocs) {
   y -= 11;
   wrapLines(dmr.rootCause, contentW - 12, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
   y -= 4;
-  leftText('Corrective / Containment Action:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText('Permanent Corrective Action (PCA):', margin, y, 8.5, { bold: true, color: labelGray });
   y -= 11;
   wrapLines(dmr.correctiveAction, contentW - 12, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
   y -= 6;
