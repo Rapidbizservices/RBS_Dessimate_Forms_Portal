@@ -1103,15 +1103,21 @@ A Supplier login has no role in this module whatsoever.
 CR/SCR/DMR Number, Team Member+ only (a custom value is accepted too, and
 bumps the counter past it).
 
-**Notes/Comments is a multi-entry, append-only thread**, same shape as
-Customer DMR's Section 8 - its own dedicated route,
-`POST /customer-open-issues/<id>/comments`, appends one
-`{authorUsername, text, createdAt}` entry and returns the updated record;
-there is no edit/delete route, and this array is never accepted through
-the generic PUT at all. Both Team Member+ and the owning Customer can post
-to it, once the issue already exists (a Customer never creates one). The
-list view shows the two most recent notes per row (newest first) so staff
-and Customer alike can scan recent activity without opening each record.
+**Notes/Comments is a multi-entry thread**, same base shape as Customer
+DMR's Section 8 but editable (Rev2.24) - unlike Customer DMR, entries here
+aren't purely append-only. Two dedicated routes, never the generic PUT
+(so nobody can silently rewrite the whole thread by resending a modified
+array): `POST /customer-open-issues/<id>/comments` appends one
+`{authorUsername, text, createdAt}` entry, and
+`PUT /customer-open-issues/<id>/comments/<commentId>` edits an existing
+one's text in place and stamps `editedAt` (shown in the UI as an
+"(edited)" tag). Both Team Member+ and the owning Customer can post a new
+note, once the issue already exists (a Customer never creates the issue
+itself); for editing, Team Member+ can edit *any* comment, but a Customer
+can only edit their own - never someone else's note, even on their own
+org's issue. There is still no delete route. The list view shows only the
+single latest note per row (with a "+N more" count) to keep the row
+compact; the full thread, with editing, lives in the modal.
 
 **Attachments** (up to 20 files, each stamped with who uploaded it and
 when, plus a short freeform `comment` box, same standard multi-file

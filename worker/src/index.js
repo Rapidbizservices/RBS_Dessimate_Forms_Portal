@@ -237,7 +237,10 @@
  *                                        edits the record itself, only comments).
  *   POST   /customer-open-issues/<id>/comments - team_member or above, OR the owning
  *                                        Customer; appends one authored/timestamped entry to
- *                                        the Notes/Comments thread. No edit/delete route.
+ *                                        the Notes/Comments thread.
+ *   PUT    /customer-open-issues/<id>/comments/<commentId> - team_member or above (any
+ *                                        comment), OR the owning Customer (their own comment
+ *                                        only); edits that entry's text. No delete route.
  *   DELETE /customer-open-issues/<id>  - team_member or above required.
  *   GET    /contents/<path...>        - reads one file from R2 (blocked for anything
  *                                        under data/ - see above), or lists a "directory"
@@ -895,14 +898,22 @@ export default {
         return await handlePeekOpenIssueNumber(env, origin);
       }
 
-      // Notes/Comments thread - append-only, its own route (see the
-      // module comment above). Checked before the generic PUT/DELETE
-      // block below so it doesn't get swallowed by the id-only match.
+      // Notes/Comments thread - its own routes (see the module comment
+      // above). Checked before the generic PUT/DELETE block below so
+      // they don't get swallowed by the id-only match.
       if (/^\/customer-open-issues\/[^/]+\/comments$/.test(url.pathname) && request.method === 'POST') {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         return await handleAddOpenIssueComment(request, env, origin, id, auth.accessLevel, auth.username);
+      }
+      if (/^\/customer-open-issues\/[^/]+\/comments\/[^/]+$/.test(url.pathname) && request.method === 'PUT') {
+        const parts = url.pathname.split('/');
+        const id = decodeURIComponent(parts[2]);
+        const commentId = decodeURIComponent(parts[4]);
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleEditOpenIssueComment(request, env, origin, id, commentId, auth.accessLevel, auth.username);
       }
 
       if (url.pathname.startsWith('/customer-open-issues/')) {
@@ -5962,16 +5973,19 @@ function sanitizeOpenIssueAttachments(list) {
   return arr.map(sanitizeOpenIssueAttachment).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
 }
 
-// Notes/Comments thread - append-only, written only by
-// handleAddOpenIssueComment below, never by the generic PUT (so neither
-// staff nor the Customer can silently rewrite a prior entry).
+// Notes/Comments thread - entries are appended by handleAddOpenIssueComment
+// and may later be edited (text only) by handleEditOpenIssueComment, never
+// by the generic PUT (so nobody can silently rewrite the whole thread by
+// resending a modified array). editedAt is set only once a comment has
+// actually been edited, so the UI can show a "(edited)" marker.
 function sanitizeOpenIssueComment(c) {
   if (!c) return null;
   return {
     id: c.id || cryptoRandomId(),
     authorUsername: c.authorUsername || '',
     text: c.text || '',
-    createdAt: c.createdAt || null
+    createdAt: c.createdAt || null,
+    editedAt: c.editedAt || null
   };
 }
 function sanitizeOpenIssueComments(list) {
@@ -6106,11 +6120,10 @@ async function handleDeleteCustomerOpenIssue(env, origin, id) {
   return json({ ok: true }, 200, origin);
 }
 
-// Notes/Comments thread - the only way an issue's comments array ever
-// changes. Team Member+ can comment on any issue; a Customer can comment
-// only on one naming their own organization. Appends and returns the full
-// updated record; there is no edit/delete route, by design (see the
-// module comment above).
+// Notes/Comments thread - appends a new entry (editing an existing one is
+// handleEditOpenIssueComment below; there is still no delete route).
+// Team Member+ can comment on any issue; a Customer can comment only on
+// one naming their own organization. Returns the full updated record.
 async function handleAddOpenIssueComment(request, env, origin, id, accessLevel, username) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
@@ -6137,6 +6150,49 @@ async function handleAddOpenIssueComment(request, env, origin, id, accessLevel, 
     return { items: items };
   }, { requireFound: true });
 
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeCustomerOpenIssue(saved), 200, origin);
+}
+
+// Edits one existing comment's text in place. Team Member+ can edit any
+// comment on any issue; a Customer can edit only their OWN comment
+// (matched by authorUsername), and only on an issue naming their own
+// organization - never someone else's note, even on their own org's
+// issue. Stamps editedAt so the UI can show a "(edited)" marker; there is
+// still no delete route.
+async function handleEditOpenIssueComment(request, env, origin, id, commentId, accessLevel, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const text = (body.text || '').toString().trim();
+  if (!text) return json({ message: 'Comment text is required.' }, 400, origin);
+
+  const isStaff = accessLevel === 'team_member' || accessLevel === 'admin' || accessLevel === 'super_admin';
+  const isCustomer = accessLevel === 'customer';
+  let callerOrg = '';
+  if (isCustomer) {
+    callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Customer organization.' }, 403, origin);
+  }
+
+  let saved = null;
+  let forbidden = false;
+  const result = await mutateJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    if (isCustomer && target.customerOrg !== callerOrg) return null;
+    const comments = Array.isArray(target.comments) ? target.comments : [];
+    const comment = comments.find(function (c) { return c.id === commentId; });
+    if (!comment) return null;
+    if (!isStaff && comment.authorUsername !== username) { forbidden = true; return null; }
+    comment.text = text;
+    comment.editedAt = new Date().toISOString();
+    target.comments = comments;
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (forbidden) return json({ message: 'You can only edit your own comments.' }, 403, origin);
   if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   return json(sanitizeCustomerOpenIssue(saved), 200, origin);

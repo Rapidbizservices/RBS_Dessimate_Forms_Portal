@@ -182,6 +182,19 @@
   .reviewCommentRow{ padding:8px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
   .reviewCommentRow .commentMeta{ font-size:10.5px; color:var(--label); font-weight:700; margin-bottom:3px; }
   .reviewCommentRow .commentText{ white-space:pre-wrap; overflow-wrap:anywhere; }
+  .commentEditedTag{ font-weight:400; font-style:italic; }
+  .commentEditLink{ font-family:inherit; font-size:10.5px; font-weight:700; cursor:pointer;
+    background:none; border:none; padding:0; margin-left:6px; color:var(--brand); text-decoration:none; }
+  .commentEditLink:hover{ text-decoration:underline; }
+  .commentEditInput{ margin-top:4px !important; font-size:12.5px !important; padding:6px 8px !important; }
+  .commentEditBtns{ display:flex; gap:8px; margin-top:6px; }
+  .commentEditBtns button{ font-family:inherit; font-size:11.5px; font-weight:700; cursor:pointer;
+    border-radius:6px; padding:6px 12px; white-space:nowrap; }
+  .commentSaveBtn{ color:#fff; background:var(--brand); border:none; }
+  .commentSaveBtn:hover{ background:var(--brand-dark); }
+  .commentSaveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .commentCancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .commentCancelBtn:hover{ background:#f4f5f8; }
   .addCommentRow{ display:flex; gap:8px; margin-top:4px; }
   .addCommentRow input{ flex:1 1 auto; margin:0 !important; }
   .addCommentRow button{ flex:0 0 auto; font-family:inherit; font-size:12.5px; font-weight:700; cursor:pointer;
@@ -821,16 +834,15 @@
     }
   }
 
+  // List view only shows the single latest note (full thread, with
+  // editing, lives in the modal) - keeps the row compact.
   function notesCellHtml(comments){
     var list = Array.isArray(comments) ? comments : [];
     if (!list.length) return '<div class="notesCell"><span class="noPic">No notes yet.</span></div>';
-    var ordered = list.slice().reverse();
-    var shown = ordered.slice(0, 2);
-    var html = shown.map(function(c){
-      return '<div class="noteLine"><span class="noteMeta">' + escapeHtml(fmtDateMDY((c.createdAt || '').slice(0, 10))) + ' — ' + escapeHtml(c.authorUsername || 'Unknown') + ':</span> ' + escapeHtml(c.text) + '</div>';
-    }).join('');
-    if (ordered.length > shown.length) {
-      html += '<div class="noteMore">+' + (ordered.length - shown.length) + ' more…</div>';
+    var latest = list[list.length - 1];
+    var html = '<div class="noteLine"><span class="noteMeta">' + escapeHtml(fmtDateMDY((latest.createdAt || '').slice(0, 10))) + ' — ' + escapeHtml(latest.authorUsername || 'Unknown') + ':</span> ' + escapeHtml(latest.text) + (latest.editedAt ? ' <span class="noteMore">(edited)</span>' : '') + '</div>';
+    if (list.length > 1) {
+      html += '<div class="noteMore">+' + (list.length - 1) + ' more…</div>';
     }
     return '<div class="notesCell">' + html + '</div>';
   }
@@ -923,6 +935,7 @@
   var attachmentsState = [];
   var picState = null; // null | {kind:'pending',bytes,filename,mimeType} | {kind:'existing',doc:{...}}
   var reviewCommentsState = [];
+  var editingCommentId = null; // id of the comment currently in inline-edit mode, if any
 
   function renderPartNumbers(){
     var wrap = document.getElementById('partNumbersWrap');
@@ -1087,15 +1100,70 @@
   // issue exists, to staff and to the matching Customer.
   function renderReviewComments(){
     var listEl = document.getElementById('reviewCommentsList');
+    var session = getSession();
+    var myUsername = (session && session.username) || '';
     if (!reviewCommentsState.length) {
       listEl.innerHTML = '<div class="attachEmpty">No notes yet.</div>';
     } else {
       listEl.innerHTML = reviewCommentsState.map(function(c){
+        // Team Member+ can edit any comment; a Customer can edit only
+        // their own - matches handleEditOpenIssueComment's permission
+        // check server-side.
+        var canEditThis = !!editingId && (canManageAll() || c.authorUsername === myUsername);
+        if (editingCommentId === c.id) {
+          return '<div class="reviewCommentRow">' +
+            '<div class="commentMeta">' + escapeHtml(c.authorUsername || 'Unknown') + ' — ' + escapeHtml(fmtDateMDY((c.createdAt || '').slice(0, 10))) + '</div>' +
+            '<textarea class="commentEditInput" data-comment-edit-id="' + escapeHtml(c.id) + '" rows="2">' + escapeHtml(c.text) + '</textarea>' +
+            '<div class="commentEditBtns">' +
+              '<button type="button" class="commentSaveBtn" data-comment-save="' + escapeHtml(c.id) + '">Save</button>' +
+              '<button type="button" class="commentCancelBtn" data-comment-cancel>Cancel</button>' +
+            '</div></div>';
+        }
         return '<div class="reviewCommentRow">' +
-          '<div class="commentMeta">' + escapeHtml(c.authorUsername || 'Unknown') + ' — ' + escapeHtml(fmtDateMDY((c.createdAt || '').slice(0, 10))) + '</div>' +
+          '<div class="commentMeta">' + escapeHtml(c.authorUsername || 'Unknown') + ' — ' + escapeHtml(fmtDateMDY((c.createdAt || '').slice(0, 10))) +
+            (c.editedAt ? ' <span class="commentEditedTag">(edited)</span>' : '') +
+            (canEditThis ? ' <button type="button" class="commentEditLink" data-comment-edit="' + escapeHtml(c.id) + '">Edit</button>' : '') +
+          '</div>' +
           '<div class="commentText">' + escapeHtml(c.text) + '</div>' +
           '</div>';
       }).join('');
+
+      listEl.querySelectorAll('[data-comment-edit]').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          editingCommentId = this.getAttribute('data-comment-edit');
+          renderReviewComments();
+        });
+      });
+      listEl.querySelectorAll('[data-comment-cancel]').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          editingCommentId = null;
+          renderReviewComments();
+        });
+      });
+      listEl.querySelectorAll('[data-comment-save]').forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          var commentId = this.getAttribute('data-comment-save');
+          var textarea = listEl.querySelector('[data-comment-edit-id="' + commentId + '"]');
+          var newText = textarea.value.trim();
+          if (!newText) { alert('Comment text is required.'); return; }
+          btn.disabled = true; btn.textContent = 'Saving…';
+          try {
+            var res = await apiFetch('customer-open-issues/' + encodeURIComponent(editingId) + '/comments/' + encodeURIComponent(commentId), {
+              method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: newText })
+            });
+            var data = {}; try { data = await res.json(); } catch(e){}
+            if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+            reviewCommentsState = Array.isArray(data.comments) ? data.comments : [];
+            editingCommentId = null;
+            renderReviewComments();
+            var idx = lastIssues.findIndex(function(x){ return x.id === editingId; });
+            if (idx !== -1) lastIssues[idx] = data;
+          } catch (err) {
+            alert('Could not save this note (' + (err && err.message ? err.message : err) + ').');
+            btn.disabled = false; btn.textContent = 'Save';
+          }
+        });
+      });
     }
     var canComment = (canManageAll() || isCustomerUser()) && !!editingId;
     document.getElementById('addCommentRow').style.display = canComment ? 'flex' : 'none';
@@ -1178,6 +1246,7 @@
     attachmentsState = [];
     picState = null;
     reviewCommentsState = [];
+    editingCommentId = null;
     setNumberFieldEditable(true);
     applyRoleUIForModal();
   }
@@ -1214,6 +1283,7 @@
     document.getElementById('f_permCM').value = issue.permCM || '';
     attachmentsState = (issue.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
     reviewCommentsState = Array.isArray(issue.comments) ? issue.comments : [];
+    editingCommentId = null;
 
     setNumberFieldEditable(canManageAll());
     applyRoleUIForModal();
