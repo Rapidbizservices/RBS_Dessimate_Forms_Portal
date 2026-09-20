@@ -1131,6 +1131,30 @@ exists for it yet.
 
 No PDF generation - not requested for this module.
 
+**Download Excel** (Rev2.23) - a "Download Excel" button in the header
+(visible to staff and a Customer login alike, since both can view this
+list) exports whatever rows are currently loaded - i.e. already scoped
+server-side to what that login can see - as a formatted `.xlsx` file, no
+backend round-trip needed. Built from scratch as raw SpreadsheetML,
+zipped client-side with JSZip (the same CDN-lazy-loaded library SCR.html
+already uses for its docx generation) rather than a full xlsx-writing
+library: the common free/community one (SheetJS) doesn't actually write
+cell styling - fills, fonts, borders - into `.xlsx` output, that's a
+paid-tier feature there, and real styling is the point of a "professional"
+export. The sheet has a merged title band, a "Generated <date> - N
+issues" subtitle, a bold white-on-brand-blue header row, a frozen top
+(title+subtitle+header stay visible while scrolling), an AutoFilter on
+the header (sort/filter directly in Excel), sized columns, wrapped text
+for long fields, and the Status column color-coded to match the app
+(yellow fill for Open, green for Closed). Columns go beyond the list
+view with a few computed, review-friendly fields: **Days Since Created**
+(ticket age), **Date Created** / **Created By**, **Attachments** /
+**Notes Count** (activity counts), **Has Picture**, and **Latest Note**
+(most recent comment) - so a reviewer can triage from the spreadsheet
+alone without opening every record. Long text fields are truncated (with
+an ellipsis) past a few hundred characters to keep rows readable; the
+full text is always still on the record itself.
+
 ## Customer SCRs (SCR)
 
 A separate module from Dessimate CRs above — a Supplier Change Request
