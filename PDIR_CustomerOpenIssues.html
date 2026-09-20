@@ -766,6 +766,13 @@
   function statusPillHtml(status){
     return status === 'closed' ? '<span class="statusPill closed">Closed</span>' : '<span class="statusPill open">Open</span>';
   }
+  // List view only - strips the "OI-" prefix so the column just reads
+  // 0001, 0002, etc. The stored value (and everywhere else it's shown -
+  // the modal, Excel export, delete confirmation) keeps the full
+  // "OI-####" form; this is a display-only simplification for the list.
+  function displayIssueNumber(issueNumber){
+    return (issueNumber || '').toString().replace(/^OI-/i, '');
+  }
 
   // ---- Customer / Parts dropdowns --------------------------------------------
   var lastOrgs = [];
@@ -867,7 +874,7 @@
         ? '<img class="picThumb" src="" data-pic-thumb="' + escapeHtml(issue.id) + '" alt="Issue picture">'
         : '<span class="noPic">No picture</span>';
       return '<tr>' +
-        '<td><button type="button" class="issueNumberLink" data-edit="' + escapeHtml(issue.id) + '">' + escapeHtml(issue.issueNumber) + '</button></td>' +
+        '<td><button type="button" class="issueNumberLink" data-edit="' + escapeHtml(issue.id) + '" title="' + escapeHtml(issue.issueNumber) + '">' + escapeHtml(displayIssueNumber(issue.issueNumber)) + '</button></td>' +
         '<td>' + statusPillHtml(issue.status) + '</td>' +
         '<td>' + escapeHtml(issue.customerOrg) + '</td>' +
         '<td>' + escapeHtml((issue.partNumbers || []).join(', ')) + '</td>' +
