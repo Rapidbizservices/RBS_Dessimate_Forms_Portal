@@ -6003,6 +6003,10 @@ function sanitizeCustomerOpenIssue(o) {
     partNumbers: Array.isArray(o.partNumbers)
       ? o.partNumbers.map(function (p) { return (p || '').toString().trim(); }).filter(Boolean).slice(0, OPEN_ISSUE_PART_NUMBERS_MAX)
       : [],
+    // Rev2.25: a short title shown in the list view (Issue Description is
+    // still the full write-up, shown in the modal/export only) - matches
+    // the DMR/CR/SCR Title pattern already used elsewhere in this app.
+    issueTitle: o.issueTitle || '',
     issueDescription: o.issueDescription || '',
     issuePicture: sanitizeOpenIssuePicture(o.issuePicture),
     rootCause: o.rootCause || '',
@@ -6025,6 +6029,7 @@ function validateCustomerOpenIssueFields(body) {
     partNumbers: Array.isArray(body.partNumbers)
       ? body.partNumbers.map(function (p) { return (p || '').toString().trim(); }).filter(Boolean).slice(0, OPEN_ISSUE_PART_NUMBERS_MAX)
       : [],
+    issueTitle: (body.issueTitle || '').toString().trim(),
     issueDescription: (body.issueDescription || '').toString().trim(),
     issuePicture: sanitizeOpenIssuePicture(body.issuePicture),
     rootCause: (body.rootCause || '').toString().trim(),

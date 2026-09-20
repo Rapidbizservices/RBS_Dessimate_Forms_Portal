@@ -279,7 +279,7 @@
           <th data-sort-key="issueNumber">Issue #</th>
           <th data-sort-key="status">Status</th>
           <th>Part Number(s)</th>
-          <th>Issue Description</th>
+          <th data-sort-key="issueTitle">Issue Title</th>
           <th>Issue Picture</th>
           <th>Root Cause</th>
           <th>Interim C/M</th>
@@ -338,6 +338,10 @@
           </div>
         </div>
       </div>
+
+      <label>Issue Title <span style="font-weight:400;">(short summary — shown in the list view)</span>
+        <input type="text" id="f_issueTitle" placeholder="Short summary of the issue">
+      </label>
 
       <div class="modalGrid2">
         <label>Customer Organization
@@ -772,6 +776,13 @@
   function displayIssueNumber(issueNumber){
     return (issueNumber || '').toString().replace(/^OI-/i, '');
   }
+  // List view shows Issue Title; a record saved before that field existed
+  // falls back to a truncated Issue Description so its row isn't blank.
+  function listTitleText(issue){
+    if (issue.issueTitle) return issue.issueTitle;
+    var desc = issue.issueDescription || '';
+    return desc.length > 80 ? desc.slice(0, 79) + '…' : desc;
+  }
 
   // ---- Customer / Parts dropdowns --------------------------------------------
   var lastOrgs = [];
@@ -876,7 +887,7 @@
         '<td><button type="button" class="issueNumberLink" data-edit="' + escapeHtml(issue.id) + '" title="' + escapeHtml(issue.issueNumber) + '">' + escapeHtml(displayIssueNumber(issue.issueNumber)) + '</button></td>' +
         '<td>' + statusPillHtml(issue.status) + '</td>' +
         '<td>' + escapeHtml((issue.partNumbers || []).join(', ')) + '</td>' +
-        '<td><div class="cellClamp" title="' + escapeHtml(issue.issueDescription) + '">' + escapeHtml(issue.issueDescription) + '</div></td>' +
+        '<td><div class="cellClamp" title="' + escapeHtml(issue.issueTitle || issue.issueDescription) + '">' + escapeHtml(listTitleText(issue)) + '</div></td>' +
         '<td>' + picHtml + '</td>' +
         '<td><div class="cellClamp short" title="' + escapeHtml(issue.rootCause) + '">' + escapeHtml(issue.rootCause) + '</div></td>' +
         '<td><div class="cellClamp short" title="' + escapeHtml(issue.interimCM) + '">' + escapeHtml(issue.interimCM) + '</div></td>' +
@@ -1280,6 +1291,7 @@
     if (statusInput) statusInput.checked = true;
 
     partNumberRows = (issue.partNumbers || []).slice();
+    document.getElementById('f_issueTitle').value = issue.issueTitle || '';
     document.getElementById('f_issueDescription').value = issue.issueDescription || '';
     picState = issue.issuePicture ? { kind: 'existing', doc: issue.issuePicture } : null;
     document.getElementById('f_rootCause').value = issue.rootCause || '';
@@ -1313,6 +1325,7 @@
     var baseFields = {
       customerOrg: document.getElementById('f_customerOrg').value,
       partNumbers: partNumberRows.filter(Boolean),
+      issueTitle: document.getElementById('f_issueTitle').value.trim(),
       issueDescription: document.getElementById('f_issueDescription').value.trim(),
       rootCause: document.getElementById('f_rootCause').value.trim(),
       interimCM: document.getElementById('f_interimCM').value.trim(),
@@ -1446,6 +1459,7 @@
     { header: 'Status', width: 11, key: 'status', statusStyled: true },
     { header: 'Customer Organization', width: 24, key: 'customerOrg' },
     { header: 'Part Number(s)', width: 20, key: 'partNumbers' },
+    { header: 'Issue Title', width: 26, key: 'issueTitle', wrap: true },
     { header: 'Issue Description', width: 34, key: 'issueDescription', wrap: true },
     { header: 'Root Cause', width: 28, key: 'rootCause', wrap: true },
     { header: 'Interim C/M', width: 28, key: 'interimCM', wrap: true },
@@ -1470,6 +1484,7 @@
       status: issue.status === 'closed' ? 'Closed' : 'Open',
       customerOrg: issue.customerOrg || '',
       partNumbers: (issue.partNumbers || []).join(', '),
+      issueTitle: truncateForExport(issue.issueTitle, 300),
       issueDescription: truncateForExport(issue.issueDescription, 300),
       rootCause: truncateForExport(issue.rootCause, 300),
       interimCM: truncateForExport(issue.interimCM, 300),

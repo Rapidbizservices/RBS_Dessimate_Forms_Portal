@@ -1090,14 +1090,22 @@ Customer, not built yet.
 
 **Staff-only end to end, except a Customer login can view + comment.**
 Team Member+ creates, edits, and deletes every field on the record
-(Customer Organization, up to 5 Part Numbers Affected, Issue Description,
-a single Issue Picture, Root Cause, Interim C/M, Perm C/M, Next Action,
-Champion/Responsible, Attachments, and Status); a Customer login sees only
-issues naming their own organization and can add to the **Notes/Comments**
-thread, but has **no PUT access to the record at all** - unlike DMR/
-Customer DMR's Section-split model, there's no carved-out set of fields a
-Customer can edit here, only the append-only comment thread (see below).
-A Supplier login has no role in this module whatsoever.
+(Customer Organization, up to 5 Part Numbers Affected, **Issue Title**, Issue
+Description, a single Issue Picture, Root Cause, Interim C/M, Perm C/M,
+Next Action, Champion/Responsible, Attachments, and Status); a Customer
+login sees only issues naming their own organization and can add to the
+**Notes/Comments** thread, but has **no PUT access to the record at all**
+- unlike DMR/Customer DMR's Section-split model, there's no carved-out
+set of fields a Customer can edit here, only the append-only comment
+thread (see below). A Supplier login has no role in this module
+whatsoever.
+
+**Issue Title** (Rev2.25) is a short summary field, separate from the full
+**Issue Description** - it's what shows in the list view's title column
+(a record saved before this field existed falls back to a truncated Issue
+Description there instead of a blank cell). Issue Description itself is
+unchanged and still only shown in the modal and the Excel export, which
+carries both fields as separate columns.
 
 **Issue Number** is formatted `OI-####` (4 digits) and auto-assigned like
 CR/SCR/DMR Number, Team Member+ only (a custom value is accepted too, and
