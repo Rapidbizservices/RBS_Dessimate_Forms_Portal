@@ -226,6 +226,19 @@
  *                                        one authored/timestamped entry to Section 8's comment
  *                                        thread. No edit/delete route - by design.
  *   DELETE /customer-dmrs/<id>         - team_member or above required.
+ *   GET    /customer-open-issues       - any signed-in user; scoped (team_member or above sees
+ *                                        every open issue; a Customer login sees only ones
+ *                                        naming its own org; a Supplier login sees none).
+ *   POST   /customer-open-issues       - team_member or above required (a Customer never
+ *                                        creates one, only views/comments - see module comment).
+ *   GET    /customer-open-issues/peek-number - team_member or above required; preview of the
+ *                                        next auto-assigned Issue Number (does not consume it).
+ *   PUT    /customer-open-issues/<id>  - team_member or above required (a Customer never
+ *                                        edits the record itself, only comments).
+ *   POST   /customer-open-issues/<id>/comments - team_member or above, OR the owning
+ *                                        Customer; appends one authored/timestamped entry to
+ *                                        the Notes/Comments thread. No edit/delete route.
+ *   DELETE /customer-open-issues/<id>  - team_member or above required.
  *   GET    /contents/<path...>        - reads one file from R2 (blocked for anything
  *                                        under data/ - see above), or lists a "directory"
  *                                        prefix, in a shape mirroring GitHub's old API.
@@ -855,6 +868,54 @@ export default {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
           return await handleDeleteCustomerDmr(env, origin, id);
+        }
+      }
+
+      if (url.pathname === '/customer-open-issues') {
+        if (request.method === 'GET') {
+          // Any signed-in user is "ok" here - scopeCustomerOpenIssues
+          // itself narrows a Customer to their own org and a Supplier to
+          // nothing.
+          const auth = await requireAuthWithScope(request, env);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleListCustomerOpenIssues(env, origin, auth.accessLevel, auth.organization);
+        }
+        if (request.method === 'POST') {
+          // Staff-only - a Customer never creates an open issue, see the
+          // module comment above.
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleCreateCustomerOpenIssue(request, env, origin, auth.username);
+        }
+      }
+
+      if (url.pathname === '/customer-open-issues/peek-number' && request.method === 'GET') {
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handlePeekOpenIssueNumber(env, origin);
+      }
+
+      // Notes/Comments thread - append-only, its own route (see the
+      // module comment above). Checked before the generic PUT/DELETE
+      // block below so it doesn't get swallowed by the id-only match.
+      if (/^\/customer-open-issues\/[^/]+\/comments$/.test(url.pathname) && request.method === 'POST') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleAddOpenIssueComment(request, env, origin, id, auth.accessLevel, auth.username);
+      }
+
+      if (url.pathname.startsWith('/customer-open-issues/')) {
+        const id = decodeURIComponent(url.pathname.slice('/customer-open-issues/'.length));
+        if (request.method === 'PUT') {
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleUpdateCustomerOpenIssue(request, env, origin, id);
+        }
+        if (request.method === 'DELETE') {
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleDeleteCustomerOpenIssue(env, origin, id);
         }
       }
 
@@ -2377,6 +2438,15 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
       const dmr = await resolveCustomerDmrRecord(env, customerDmrDocsMatch[1]);
       return !!dmr && dmr.customerOrg === organization;
     }
+    // A Customer can read the issue picture/attachments on their own
+    // Customer Open Issue (customer_open_issue_docs) - same direct
+    // customerOrg ownership check scopeCustomerOpenIssues uses for the
+    // list itself.
+    const customerOpenIssueDocsMatch = /^customer_open_issue_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (customerOpenIssueDocsMatch) {
+      const issue = await resolveCustomerOpenIssueRecord(env, customerOpenIssueDocsMatch[1]);
+      return !!issue && issue.customerOrg === organization;
+    }
   }
 
   return false;
@@ -2589,7 +2659,8 @@ const DEFAULT_COUNTERS = {
   nextRfqNumber: 9009, // RFQ module - client's 9000-series, latest used was 9008
   nextCrNumber: 1, // Change Request module - formatted "CR-###" (see reserveCrNumber)
   nextScrNumber: 1, // Customer SCR module - formatted "SCR-###" (see reserveScrNumber)
-  nextDmrNumber: 1 // Discrepant Material Report module - formatted "DMR-####" (see reserveDmrNumber)
+  nextDmrNumber: 1, // Discrepant Material Report module - formatted "DMR-####" (see reserveDmrNumber)
+  nextOpenIssueNumber: 1 // Customer Open Issues List module - formatted "OI-####" (see reserveOpenIssueNumber)
 };
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -5818,6 +5889,262 @@ async function handleGetCustomerDmrPdf(env, origin, id, accessLevel, organizatio
     return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
   }
   return pdfResponse(pdfBytes, 'Customer DMR ' + clean.dmrNumber + '.pdf', origin);
+}
+
+// ---- Customer Open Issues List (Rev2.22) - a running log of open
+// production/quality issues tied to a Customer's parts, tracked entirely
+// by Dessimate staff (a Customer never creates or edits one - only views
+// their own org's issues and adds to the comment thread). A future
+// "Dessimate Open Issues List" sibling module (internal-only issues, no
+// Customer org) is planned but not built yet - see the prompt this was
+// built from. No PDF generation - not requested for this module.
+const CUSTOMER_OPEN_ISSUES_FILE_PATH = 'data/customer_open_issues.json';
+const CUSTOMER_OPEN_ISSUE_DOC_FOLDER = 'customer_open_issue_docs';
+const OPEN_ISSUE_PART_NUMBERS_MAX = 5;
+
+// Open Issue # is formatted "OI-####" (4 digits), same voluntary/custom-
+// value auto-numbering as CR/SCR/DMR Number.
+async function reserveOpenIssueNumber(env, clientIssueNumber) {
+  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+    let issueNumber;
+    if (clientIssueNumber) {
+      issueNumber = clientIssueNumber;
+      const m = /^OI-(\d+)$/i.exec(clientIssueNumber);
+      if (m) {
+        const seq = Number(m[1]);
+        if (seq >= obj.nextOpenIssueNumber) obj.nextOpenIssueNumber = seq + 1;
+      }
+    } else {
+      issueNumber = 'OI-' + pad4(obj.nextOpenIssueNumber);
+      obj.nextOpenIssueNumber = obj.nextOpenIssueNumber + 1;
+    }
+    return { obj: obj, meta: { issueNumber: issueNumber } };
+  });
+  if (!result.ok) throw new Error(result.message);
+  return result.meta.issueNumber;
+}
+async function handlePeekOpenIssueNumber(env, origin) {
+  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
+  return json({ issueNumber: 'OI-' + pad4(state.obj.nextOpenIssueNumber) }, 200, origin);
+}
+async function openIssueNumberTaken(env, issueNumber, excludeId) {
+  const state = await readJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH);
+  const target = String(issueNumber).toLowerCase();
+  return state.items.some(function (o) { return o.id !== excludeId && String(o.issueNumber).toLowerCase() === target; });
+}
+
+function sanitizeOpenIssuePicture(d) {
+  if (!d || !d.path) return null;
+  return {
+    path: d.path,
+    filename: d.filename || '',
+    mimeType: d.mimeType || 'application/octet-stream',
+    size: typeof d.size === 'number' ? d.size : 0,
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
+  };
+}
+function sanitizeOpenIssueAttachment(d) {
+  if (!d || !d.path) return null;
+  return {
+    id: d.id || null,
+    path: d.path,
+    filename: d.filename || '',
+    mimeType: d.mimeType || 'application/octet-stream',
+    size: typeof d.size === 'number' ? d.size : 0,
+    comment: d.comment || '',
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
+  };
+}
+function sanitizeOpenIssueAttachments(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeOpenIssueAttachment).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
+}
+
+// Notes/Comments thread - append-only, written only by
+// handleAddOpenIssueComment below, never by the generic PUT (so neither
+// staff nor the Customer can silently rewrite a prior entry).
+function sanitizeOpenIssueComment(c) {
+  if (!c) return null;
+  return {
+    id: c.id || cryptoRandomId(),
+    authorUsername: c.authorUsername || '',
+    text: c.text || '',
+    createdAt: c.createdAt || null
+  };
+}
+function sanitizeOpenIssueComments(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeOpenIssueComment).filter(Boolean);
+}
+
+function sanitizeCustomerOpenIssue(o) {
+  return {
+    id: o.id,
+    issueNumber: o.issueNumber || '',
+    createdAt: o.createdAt || null,
+    createdBy: o.createdBy || '',
+    customerOrg: o.customerOrg || '',
+    partNumbers: Array.isArray(o.partNumbers)
+      ? o.partNumbers.map(function (p) { return (p || '').toString().trim(); }).filter(Boolean).slice(0, OPEN_ISSUE_PART_NUMBERS_MAX)
+      : [],
+    issueDescription: o.issueDescription || '',
+    issuePicture: sanitizeOpenIssuePicture(o.issuePicture),
+    rootCause: o.rootCause || '',
+    interimCM: o.interimCM || '',
+    permCM: o.permCM || '',
+    nextAction: o.nextAction || '',
+    championResponsible: o.championResponsible || '',
+    status: o.status === 'closed' ? 'closed' : 'open',
+    attachments: sanitizeOpenIssueAttachments(o.attachments),
+    comments: sanitizeOpenIssueComments(o.comments)
+  };
+}
+
+// Staff-only end to end (a Customer never creates/edits, only comments -
+// see the module comment above), so there's no isCustomer split here the
+// way DMR/Customer DMR need.
+function validateCustomerOpenIssueFields(body) {
+  return {
+    customerOrg: (body.customerOrg || '').toString().trim(),
+    partNumbers: Array.isArray(body.partNumbers)
+      ? body.partNumbers.map(function (p) { return (p || '').toString().trim(); }).filter(Boolean).slice(0, OPEN_ISSUE_PART_NUMBERS_MAX)
+      : [],
+    issueDescription: (body.issueDescription || '').toString().trim(),
+    issuePicture: sanitizeOpenIssuePicture(body.issuePicture),
+    rootCause: (body.rootCause || '').toString().trim(),
+    interimCM: (body.interimCM || '').toString().trim(),
+    permCM: (body.permCM || '').toString().trim(),
+    nextAction: (body.nextAction || '').toString().trim(),
+    championResponsible: (body.championResponsible || '').toString().trim(),
+    status: body.status === 'closed' ? 'closed' : 'open',
+    attachments: sanitizeOpenIssueAttachments(body.attachments)
+  };
+}
+
+// Team Member+ sees every issue; a Customer sees only ones naming their
+// own organization. A Supplier login has no role in this module.
+function scopeCustomerOpenIssues(items, accessLevel, organization) {
+  if (accessLevel === 'customer') {
+    return items.filter(function (o) { return organization && o.customerOrg === organization; });
+  }
+  if (accessLevel === 'supplier') return [];
+  return items;
+}
+
+async function handleListCustomerOpenIssues(env, origin, accessLevel, organization) {
+  const state = await readJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH);
+  const items = scopeCustomerOpenIssues(state.items.map(sanitizeCustomerOpenIssue), accessLevel, organization);
+  return json({ openIssues: items }, 200, origin);
+}
+
+async function handleCreateCustomerOpenIssue(request, env, origin, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const fields = validateCustomerOpenIssueFields(body);
+  if (!fields.customerOrg) return json({ message: 'Customer Organization is required.' }, 400, origin);
+
+  const clientIssueNumber = (body.issueNumber || '').toString().trim();
+  if (clientIssueNumber && await openIssueNumberTaken(env, clientIssueNumber, null)) {
+    return json({ message: 'That Issue Number is already in use.' }, 409, origin);
+  }
+  const issueNumber = await reserveOpenIssueNumber(env, clientIssueNumber);
+
+  const newIssue = Object.assign(
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), createdBy: username || '', issueNumber: issueNumber, comments: [] },
+    fields
+  );
+
+  const result = await mutateJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, function (items) {
+    items.push(newIssue);
+    return { items: items };
+  });
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeCustomerOpenIssue(newIssue), 201, origin);
+}
+
+async function handleUpdateCustomerOpenIssue(request, env, origin, id) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const fields = validateCustomerOpenIssueFields(body);
+
+  let newIssueNumber; // undefined = leave as-is
+  if (body.issueNumber !== undefined) {
+    const requested = (body.issueNumber === null ? '' : String(body.issueNumber)).trim();
+    if (!requested) return json({ message: 'Issue Number is required.' }, 400, origin);
+    if (await openIssueNumberTaken(env, requested, id)) {
+      return json({ message: 'That Issue Number is already in use.' }, 409, origin);
+    }
+    newIssueNumber = requested;
+  }
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    Object.assign(target, fields);
+    if (newIssueNumber !== undefined) target.issueNumber = newIssueNumber;
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeCustomerOpenIssue(saved), 200, origin);
+}
+
+async function handleDeleteCustomerOpenIssue(env, origin, id) {
+  const result = await mutateJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, function (items) {
+    const idx = items.findIndex(function (o) { return o.id === id; });
+    if (idx === -1) return null;
+    items.splice(idx, 1);
+    return { items: items };
+  }, { requireFound: true });
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json({ ok: true }, 200, origin);
+}
+
+// Notes/Comments thread - the only way an issue's comments array ever
+// changes. Team Member+ can comment on any issue; a Customer can comment
+// only on one naming their own organization. Appends and returns the full
+// updated record; there is no edit/delete route, by design (see the
+// module comment above).
+async function handleAddOpenIssueComment(request, env, origin, id, accessLevel, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const text = (body.text || '').toString().trim();
+  if (!text) return json({ message: 'Comment text is required.' }, 400, origin);
+
+  const isCustomer = accessLevel === 'customer';
+  let callerOrg = '';
+  if (isCustomer) {
+    callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Customer organization.' }, 403, origin);
+  }
+
+  const comment = { id: cryptoRandomId(), authorUsername: username || '', text: text, createdAt: new Date().toISOString() };
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    if (isCustomer && target.customerOrg !== callerOrg) return null;
+    target.comments = Array.isArray(target.comments) ? target.comments : [];
+    target.comments.push(comment);
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeCustomerOpenIssue(saved), 200, origin);
+}
+
+async function resolveCustomerOpenIssueRecord(env, id) {
+  const state = await readJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH);
+  return state.items.find(function (o) { return o.id === id; }) || null;
 }
 
 // ---- Supplier Invoices (what a Supplier bills Dessimate against a

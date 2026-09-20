@@ -1077,6 +1077,60 @@ soon. The idea, per the brief: "In the future we will create an AI agent
 to generate 8D using information provided in this form." No backend route
 exists for it yet.
 
+## Customer Open Issues List
+
+A running log of open production/quality issues tied to a Customer's
+parts - `PDIR_CustomerOpenIssues.html`, stored in
+`data/customer_open_issues.json`, reached via its own "Open Issues List"
+sidebar entry -> a chooser hub (`PDIR_OpenIssuesHub.html`, same two-tile
+pattern as DMR/Change Requests) with a "Customer Open Issues List" tile
+(this module, live) and a "Dessimate Open Issues List" tile shown as
+"Coming soon" - a future module for internal-only issues not tied to any
+Customer, not built yet.
+
+**Staff-only end to end, except a Customer login can view + comment.**
+Team Member+ creates, edits, and deletes every field on the record
+(Customer Organization, up to 5 Part Numbers Affected, Issue Description,
+a single Issue Picture, Root Cause, Interim C/M, Perm C/M, Next Action,
+Champion/Responsible, Attachments, and Status); a Customer login sees only
+issues naming their own organization and can add to the **Notes/Comments**
+thread, but has **no PUT access to the record at all** - unlike DMR/
+Customer DMR's Section-split model, there's no carved-out set of fields a
+Customer can edit here, only the append-only comment thread (see below).
+A Supplier login has no role in this module whatsoever.
+
+**Issue Number** is formatted `OI-####` (4 digits) and auto-assigned like
+CR/SCR/DMR Number, Team Member+ only (a custom value is accepted too, and
+bumps the counter past it).
+
+**Notes/Comments is a multi-entry, append-only thread**, same shape as
+Customer DMR's Section 8 - its own dedicated route,
+`POST /customer-open-issues/<id>/comments`, appends one
+`{authorUsername, text, createdAt}` entry and returns the updated record;
+there is no edit/delete route, and this array is never accepted through
+the generic PUT at all. Both Team Member+ and the owning Customer can post
+to it, once the issue already exists (a Customer never creates one). The
+list view shows the two most recent notes per row (newest first) so staff
+and Customer alike can scan recent activity without opening each record.
+
+**Attachments** (up to 20 files, each stamped with who uploaded it and
+when, plus a short freeform `comment` box, same standard multi-file
+pattern used throughout this app) and the single **Issue Picture** slot
+are both staff-owned - a Customer can view but never add, remove, or
+re-comment a file.
+
+**Status** is a simple Open/Closed toggle, rendered as a color-coded pill
+in the list (yellow for Open, green for Closed) per the brief.
+
+**Agentic AI issue summary** is a staff-and-Customer-visible stub button
+per row in the list (not the modal, unlike DMR's Agentic 8D button) -
+clicking it just explains the feature is coming soon. The idea, per the
+brief: an AI agent will summarize the issue in text and audio, answer a
+user's follow-up query, and read its summary aloud. No backend route
+exists for it yet.
+
+No PDF generation - not requested for this module.
+
 ## Customer SCRs (SCR)
 
 A separate module from Dessimate CRs above — a Supplier Change Request

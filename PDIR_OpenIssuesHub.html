@@ -1,0 +1,277 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Open Issues List &mdash; DSCM</title>
+<script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:900px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+
+  .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .homeBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
+    border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
+    color:var(--brand); background:#fff; border:1px solid var(--brand);
+  }
+  .homeBtn:hover{ background:#eef1fa; }
+  html[data-embedded] .homeBtn{ display:none !important; }
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
+    font-size:12.5px; margin:10px 0 18px; width:100%; max-width:900px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  /* Login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+  .authNote{ font-size:11.5px; color:var(--label); background:#f7f8fb; border:1px solid var(--line);
+    border-radius:6px; padding:8px 10px; margin:0 0 16px; line-height:1.45; }
+  .authAttempts{ font-size:12px; color:var(--label); min-height:14px; margin-top:4px; }
+
+  .tiles{ display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:22px; }
+  @media (max-width:640px){ .tiles{ grid-template-columns:1fr; } }
+  .tile{ display:flex; flex-direction:column; gap:10px; background:#fff; border:1px solid var(--line);
+    border-radius:12px; padding:26px 24px; text-decoration:none; color:inherit;
+    box-shadow:0 1px 2px rgba(20,22,28,.04); transition:box-shadow .15s, border-color .15s; }
+  .tile:hover{ border-color:var(--brand); box-shadow:0 8px 22px rgba(43,78,163,.12); }
+  .tileIcon{ width:44px; height:44px; border-radius:10px; background:#eef1fa; color:var(--brand);
+    display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:800; }
+  .tile h2{ font-size:16.5px; margin:2px 0 0; color:var(--ink); }
+  .tile p{ font-size:12.5px; color:var(--label); margin:0; line-height:1.5; }
+  .tileGo{ font-size:12.5px; font-weight:700; color:var(--brand); margin-top:auto; padding-top:6px; }
+  .tile.tileDisabled{ cursor:default; opacity:.6; }
+  .tile.tileDisabled:hover{ border-color:var(--line); box-shadow:0 1px 2px rgba(20,22,28,.04); }
+  .tile.tileDisabled .tileIcon{ background:#eef0f4; color:var(--label); }
+  .comingSoonBadge{ display:inline-block; font-size:10.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:.03em; color:var(--label); background:#eef0f4; border-radius:5px; padding:3px 7px;
+    margin-top:auto; align-self:flex-start; }
+
+  .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>Open Issues List</h1>
+        <p class="sub">Choose which kind of open issues list to work with.</p>
+      </div>
+    </div>
+    <div class="headerBtns">
+      <a class="homeBtn" href="index.html">Home</a>
+    </div>
+  </div>
+
+  <div class="ghbar">
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
+  </div>
+
+  <div id="loadingState" class="state">Loading&hellip;</div>
+  <div class="tiles" id="tilesWrap" style="display:none;">
+    <a class="tile" id="tileCustomerOpenIssues" href="PDIR_CustomerOpenIssues.html" style="display:none;">
+      <div class="tileIcon">OI</div>
+      <h2>Customer Open Issues List</h2>
+      <p>Open production/quality issues tracked against a Customer's parts &mdash; Dessimate documents and manages each issue, the Customer can view and add notes.</p>
+      <div class="tileGo">Open Customer Open Issues &rarr;</div>
+    </a>
+    <div class="tile tileDisabled" id="tileDessimateOpenIssues" style="display:none;">
+      <div class="tileIcon">OI</div>
+      <h2>Dessimate Open Issues List</h2>
+      <p>Internal open issues not tied to a specific Customer. Not built yet.</p>
+      <div class="comingSoonBadge">Coming soon</div>
+    </div>
+  </div>
+
+  <footer>Dessimate &middot; DSCM &middot; Open Issues List &middot; <span id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</span></footer>
+</div>
+
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to use the DSCM system.</p>
+    <p class="authNote">Please check the username and password provided by your Dessimate contact. Your account will be locked after 3 unsuccessful login attempts.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+      <div class="authAttempts" id="authAttempts"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function(){
+  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
+  (function stampAppVersion(){
+    fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg || !cfg.version) return;
+      var el = document.getElementById('appVersionStamp');
+      if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+    }).catch(function(){});
+  })();
+
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  var pendingAfterAuth = null;
+  function refreshGhStatus(){
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Welcome, ' + session.username;
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Log out';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Log out';
+    }
+  }
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
+    refreshGhStatus();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var attemptsEl = document.getElementById('authAttempts');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = ''; attemptsEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) {
+          var loginErr = new Error(data.message || ('HTTP ' + res.status));
+          loginErr.attemptsRemaining = data.attemptsRemaining;
+          throw loginErr;
+        }
+        try { localStorage.setItem(SESSION_KEY, JSON.stringify({ token: data.token, username: data.username, expiresAt: data.expiresAt })); } catch (e) {}
+        document.getElementById('authPassword').value = '';
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+        attemptsEl.textContent = (err && typeof err.attemptsRemaining === 'number' && err.attemptsRemaining > 0)
+          ? 'Sign-in attempt ' + (3 - err.attemptsRemaining) + ' of 3 — this account locks after 3 failed attempts.'
+          : '';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  refreshGhStatus();
+
+  // Customer Open Issues List is visible to staff + Customer (a Customer
+  // can view + comment on issues naming their org - see
+  // PDIR_CustomerOpenIssues.html). Dessimate Open Issues List is a future
+  // module for internal-only issues, not tied to any Customer - only staff
+  // reach this hub at all today for that reason, so the "Coming soon" tile
+  // is shown to whoever can see the live tile, as a preview of what's next.
+  function applyTileVisibility(accessLevel){
+    var isStaff = accessLevel === 'team_member' || accessLevel === 'admin' || accessLevel === 'super_admin';
+    document.getElementById('tileCustomerOpenIssues').style.display = (isStaff || accessLevel === 'customer') ? '' : 'none';
+    document.getElementById('tileDessimateOpenIssues').style.display = isStaff ? '' : 'none';
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('tilesWrap').style.display = 'grid';
+  }
+
+  async function resolveMeAndShowTiles(){
+    var session = getSession();
+    var accessLevel = 'team_member';
+    if (session) {
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+        if (res.ok) {
+          var data = await res.json();
+          accessLevel = data.accessLevel || 'team_member';
+        }
+      } catch (e) { console.error('Could not resolve access level', e); }
+    }
+    applyTileVisibility(accessLevel);
+  }
+
+  requireAuthThen(resolveMeAndShowTiles);
+})();
+</script>
