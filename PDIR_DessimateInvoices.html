@@ -92,7 +92,9 @@
   table.poTable tr:last-child td{ border-bottom:none; }
   .poNumber{ font-weight:700; }
   .statusPill{ display:inline-block; font-size:11.5px; font-weight:700; border-radius:5px; padding:3px 9px; }
-  .statusPill.unpaid{ color:#a06a1c; background:#fbf1e0; }
+  .statusPill.started{ color:#5b5f66; background:#eef0f4; }
+  .statusPill.internalCompleted{ color:#1c3877; background:#e8ecfa; }
+  .statusPill.submitted{ color:#a06a1c; background:#fbf1e0; }
   .statusPill.paid{ color:#187b46; background:#e6f5ec; }
   .rowActions{ display:flex; gap:8px; white-space:nowrap; }
   .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
@@ -349,7 +351,9 @@
       <div class="modalGrid3">
         <label>Status
           <select id="f_status">
-            <option value="Unpaid">Unpaid</option>
+            <option value="Started / Placeholder">Started / Placeholder</option>
+            <option value="Internal Completed">Internal Completed</option>
+            <option value="Submitted to Customer">Submitted to Customer</option>
             <option value="Paid">Paid</option>
           </select>
         </label>
@@ -1130,8 +1134,9 @@
     });
     window.SortableTable.updateSortIndicators(document.getElementById('invTableHead'), invSortState);
 
+    var STATUS_CLASSES = { 'Started / Placeholder': 'started', 'Internal Completed': 'internalCompleted', 'Submitted to Customer': 'submitted', 'Paid': 'paid' };
     bodyEl.innerHTML = sorted.map(function(inv){
-      var statusClass = inv.status === 'Paid' ? 'paid' : 'unpaid';
+      var statusClass = STATUS_CLASSES[inv.status] || 'started';
       return '<tr>' +
         '<td class="poNumber">' + escapeHtml(inv.invoiceNumber) + '</td>' +
         '<td>' + escapeHtml(inv.customer) + '</td>' +
@@ -1348,7 +1353,7 @@
     document.getElementById('f_fromAddress').value = addressLines(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
     document.getElementById('f_shipToSelect').innerHTML = orgAddressOptions(null);
     document.getElementById('f_shipTo').value = '';
-    document.getElementById('f_status').value = 'Unpaid';
+    document.getElementById('f_status').value = 'Started / Placeholder';
     document.getElementById('f_invoiceNumber').value = '';
     setNumberFieldEditable(true);
     document.getElementById('modalGenerateBtns').style.display = 'none';
@@ -1411,7 +1416,7 @@
     document.getElementById('f_notes').value = inv.notes || '';
     document.getElementById('f_shipVia').value = inv.shipVia || '';
     document.getElementById('f_shipDate').value = inv.shipDate || '';
-    document.getElementById('f_status').value = inv.status || 'Unpaid';
+    document.getElementById('f_status').value = inv.status || 'Started / Placeholder';
     document.getElementById('modalGenerateBtns').style.display = 'flex';
     renderLines();
     document.getElementById('invModalOverlay').classList.add('open');

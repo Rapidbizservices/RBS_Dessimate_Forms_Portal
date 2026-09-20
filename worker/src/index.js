@@ -5969,7 +5969,11 @@ async function handleDeleteSupplierInvoice(env, origin, id) {
 // not row removal) so the invoice number sequence stays intact for audit -
 // a deleted invoice is simply hidden from the normal list.
 const DESSIMATE_INVOICES_FILE_PATH = 'data/dessimate_invoices.json';
-const DESSIMATE_INVOICE_STATUSES = ['Unpaid', 'Paid'];
+// Rev2.21: a 4-stage workflow status (was just Unpaid/Paid) - each value
+// tracks how far the invoice has moved from an internal draft through to
+// being paid. Defaults to the first stage for a brand-new invoice.
+const DESSIMATE_INVOICE_STATUSES = ['Started / Placeholder', 'Internal Completed', 'Submitted to Customer', 'Paid'];
+const DESSIMATE_INVOICE_DEFAULT_STATUS = 'Started / Placeholder';
 
 // Used by isContentsPathAllowedForExternal to gate a Customer's raw
 // /contents/ access to their own Dessimate Invoice's attachments (path
@@ -5977,10 +5981,18 @@ const DESSIMATE_INVOICE_STATUSES = ['Unpaid', 'Paid'];
 // PDIR_DessimateInvoices.html - no backend constant for it since the
 // generic /contents/ proxy never constructs paths itself). Returns the org
 // name on file, or null if the invoice doesn't exist.
+// Only ever consulted for a Customer login (see
+// isContentsPathAllowedForExternal) - returns null (deny) if the invoice
+// isn't at a Customer-visible status yet, same gate scopeDessimateInvoices
+// applies to the list/record/PDF routes, so a Customer can't reach an
+// early-stage invoice's attachments by guessing its file path either.
 async function resolveDessimateInvoiceOwner(env, invoiceId) {
   const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
   const inv = state.items.find(function (o) { return o.id === invoiceId; });
-  return inv ? (inv.customer || '') : null;
+  if (!inv) return null;
+  const status = migrateDessimateInvoiceStatus(inv.status);
+  if (DESSIMATE_INVOICE_CUSTOMER_VISIBLE_STATUSES.indexOf(status) === -1) return null;
+  return inv.customer || '';
 }
 
 async function assignDessimateInvoiceNumber(env) {
@@ -6063,6 +6075,18 @@ function sanitizeDessimateInvoiceAttachments(list) {
   return arr.map(sanitizeDessimateInvoiceAttachment).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
 }
 
+// Rev2.21 replaced the old 2-value Unpaid/Paid status with the 4-stage
+// workflow above. A record still on file with the old "Unpaid" value (from
+// before this change) is read as "Submitted to Customer" rather than
+// falling all the way back to the new first stage - an already-existing
+// invoice that was unpaid had certainly already gone out the door, so that
+// reads truer than resetting it to a fresh, not-yet-submitted placeholder.
+// "Paid" needs no mapping - it's still a valid value as-is.
+function migrateDessimateInvoiceStatus(status) {
+  if (status === 'Unpaid') return 'Submitted to Customer';
+  return status;
+}
+
 function sanitizeDessimateInvoice(o) {
   const lines = Array.isArray(o.lines) ? o.lines.map(sanitizeDessimateInvoiceLine) : [];
   // Rev2.4: customerPoRefs (array) replaces the old single customerPoRef -
@@ -6089,7 +6113,10 @@ function sanitizeDessimateInvoice(o) {
     notes: o.notes || '',
     shipVia: o.shipVia || '',
     shipDate: o.shipDate || '',
-    status: DESSIMATE_INVOICE_STATUSES.indexOf(o.status) !== -1 ? o.status : 'Unpaid',
+    status: (function () {
+      const migrated = migrateDessimateInvoiceStatus(o.status);
+      return DESSIMATE_INVOICE_STATUSES.indexOf(migrated) !== -1 ? migrated : DESSIMATE_INVOICE_DEFAULT_STATUS;
+    })(),
     deleted: !!o.deleted,
     deletedAt: o.deletedAt || null,
     lines: lines,
@@ -6101,12 +6128,20 @@ function sanitizeDessimateInvoice(o) {
   };
 }
 
+// Rev2.21: a Customer only sees an invoice once it's actually gone out the
+// door - "Started / Placeholder" and "Internal Completed" are internal
+// drafting stages, not something to expose to the org being billed just
+// because it's saved against their name.
+const DESSIMATE_INVOICE_CUSTOMER_VISIBLE_STATUSES = ['Submitted to Customer', 'Paid'];
 function scopeDessimateInvoices(invoices, accessLevel, organization) {
-  // A Customer login sees only invoices billed to their own organization.
+  // A Customer login sees only invoices billed to their own organization,
+  // and only once staff have actually submitted it to them.
   // A Dessimate Invoice bills a Customer, not a Supplier, so a Supplier
   // login has no relationship to it at all.
   if (accessLevel === 'customer') {
-    return invoices.filter(function (o) { return organization && o.customer === organization; });
+    return invoices.filter(function (o) {
+      return organization && o.customer === organization && DESSIMATE_INVOICE_CUSTOMER_VISIBLE_STATUSES.indexOf(o.status) !== -1;
+    });
   }
   if (accessLevel === 'supplier') return [];
   return invoices;
@@ -6125,7 +6160,7 @@ function validateDessimateInvoiceFields(body, origin) {
   const linesIn = Array.isArray(body.lines) ? body.lines : [];
   const lines = linesIn.map(sanitizeDessimateInvoiceLine).filter(function (l) { return l.partNumber; });
   if (!lines.length) return { error: json({ message: 'Add at least one line item with a Part Number.' }, 400, origin) };
-  const status = DESSIMATE_INVOICE_STATUSES.indexOf(body.status) !== -1 ? body.status : 'Unpaid';
+  const status = DESSIMATE_INVOICE_STATUSES.indexOf(body.status) !== -1 ? body.status : DESSIMATE_INVOICE_DEFAULT_STATUS;
   const customerPoRefs = Array.isArray(body.customerPoRefs)
     ? Array.from(new Set(body.customerPoRefs.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
     : [];

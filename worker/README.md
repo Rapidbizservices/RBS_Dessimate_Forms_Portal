@@ -854,6 +854,19 @@ nothing.
 Attachments on both pages now also carry a short `comment` field so
 whoever uploaded a file can say what it is.
 
+### Dessimate Invoice Status (Rev2.21)
+
+A 4-stage workflow status instead of the old plain Unpaid/Paid: **Started /
+Placeholder** (default for a brand-new invoice) → **Internal Completed** →
+**Submitted to Customer** → **Paid**. The first two are internal drafting
+stages - a Customer login only ever sees their own invoice once it's
+**Submitted to Customer** or **Paid** (`scopeDessimateInvoices` and the
+attachments-access check both apply this, not just the list view), so
+saving a placeholder against their org doesn't expose it to them early. A
+record still on file with the old "Unpaid" value reads as "Submitted to
+Customer" instead (a truer read than resetting it
+to a fresh placeholder); "Paid" needed no migration.
+
 ### Deleting
 
 Customer PO, Dessimate PO, and Supplier Invoice deletes remove the row
