@@ -890,7 +890,7 @@
     if (!lastCrs.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var defaultOrder = lastCrs.slice().sort(function(a, b){ return String(b.crNumber || '').localeCompare(String(a.crNumber || ''), undefined, { numeric: true }); });
+    var defaultOrder = lastCrs.slice().sort(function(a, b){ return String(a.crNumber || '').localeCompare(String(b.crNumber || ''), undefined, { numeric: true }); });
     var sorted = window.SortableTable.sortItems(defaultOrder, crSortState, function(cr, key){ return cr[key]; });
     window.SortableTable.updateSortIndicators(document.getElementById('crTableHead'), crSortState);
 

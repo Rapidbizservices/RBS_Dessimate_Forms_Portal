@@ -1117,7 +1117,7 @@
     }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var defaultOrder = lastScrs.slice().sort(function(a, b){ return String(b.scrNumber || '').localeCompare(String(a.scrNumber || ''), undefined, { numeric: true }); });
+    var defaultOrder = lastScrs.slice().sort(function(a, b){ return String(a.scrNumber || '').localeCompare(String(b.scrNumber || ''), undefined, { numeric: true }); });
     var sorted = window.SortableTable.sortItems(defaultOrder, scrSortState, function(scr, key){ return scr[key]; });
     window.SortableTable.updateSortIndicators(document.getElementById('scrTableHead'), scrSortState);
 
