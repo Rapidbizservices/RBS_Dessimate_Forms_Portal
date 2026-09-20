@@ -862,10 +862,19 @@ Placeholder** (default for a brand-new invoice) → **Internal Completed** →
 stages - a Customer login only ever sees their own invoice once it's
 **Submitted to Customer** or **Paid** (`scopeDessimateInvoices` and the
 attachments-access check both apply this, not just the list view), so
-saving a placeholder against their org doesn't expose it to them early. A
-record still on file with the old "Unpaid" value reads as "Submitted to
-Customer" instead (a truer read than resetting it
-to a fresh placeholder); "Paid" needed no migration.
+saving a placeholder against their org doesn't expose it to them early.
+
+**No auto-migration from the old value.** A record still on file with the
+old "Unpaid" status reads as the new default ("Started / Placeholder")
+rather than being guessed into one of the new stages - an existing
+"Unpaid" invoice could just as easily have been a never-finished
+placeholder as an already-submitted one, and there's no way to tell which
+from the data alone, so it's left for a person to open the record and pick
+the real status by hand instead of risking a wrong guess. Until that
+happens, it also won't be visible to its Customer (per the gating above),
+so it's worth reviewing existing invoices' statuses soon after upgrading
+rather than leaving them on the default indefinitely. "Paid" needed no
+migration - it's still a valid value as-is.
 
 ### Deleting
 

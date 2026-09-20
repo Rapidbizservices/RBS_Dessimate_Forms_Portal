@@ -5990,8 +5990,7 @@ async function resolveDessimateInvoiceOwner(env, invoiceId) {
   const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
   const inv = state.items.find(function (o) { return o.id === invoiceId; });
   if (!inv) return null;
-  const status = migrateDessimateInvoiceStatus(inv.status);
-  if (DESSIMATE_INVOICE_CUSTOMER_VISIBLE_STATUSES.indexOf(status) === -1) return null;
+  if (DESSIMATE_INVOICE_CUSTOMER_VISIBLE_STATUSES.indexOf(inv.status) === -1) return null;
   return inv.customer || '';
 }
 
@@ -6075,18 +6074,6 @@ function sanitizeDessimateInvoiceAttachments(list) {
   return arr.map(sanitizeDessimateInvoiceAttachment).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
 }
 
-// Rev2.21 replaced the old 2-value Unpaid/Paid status with the 4-stage
-// workflow above. A record still on file with the old "Unpaid" value (from
-// before this change) is read as "Submitted to Customer" rather than
-// falling all the way back to the new first stage - an already-existing
-// invoice that was unpaid had certainly already gone out the door, so that
-// reads truer than resetting it to a fresh, not-yet-submitted placeholder.
-// "Paid" needs no mapping - it's still a valid value as-is.
-function migrateDessimateInvoiceStatus(status) {
-  if (status === 'Unpaid') return 'Submitted to Customer';
-  return status;
-}
-
 function sanitizeDessimateInvoice(o) {
   const lines = Array.isArray(o.lines) ? o.lines.map(sanitizeDessimateInvoiceLine) : [];
   // Rev2.4: customerPoRefs (array) replaces the old single customerPoRef -
@@ -6113,10 +6100,14 @@ function sanitizeDessimateInvoice(o) {
     notes: o.notes || '',
     shipVia: o.shipVia || '',
     shipDate: o.shipDate || '',
-    status: (function () {
-      const migrated = migrateDessimateInvoiceStatus(o.status);
-      return DESSIMATE_INVOICE_STATUSES.indexOf(migrated) !== -1 ? migrated : DESSIMATE_INVOICE_DEFAULT_STATUS;
-    })(),
+    // Rev2.21 replaced the old 2-value Unpaid/Paid status with the 4-stage
+    // workflow above - deliberately no auto-migration from the old value
+    // (an existing "Unpaid" invoice could just as easily have been a
+    // never-finished placeholder as an already-submitted one, and guessing
+    // wrong either way is worse than asking). A record still carrying the
+    // old value reads as the new default until someone opens it and picks
+    // the real status by hand.
+    status: DESSIMATE_INVOICE_STATUSES.indexOf(o.status) !== -1 ? o.status : DESSIMATE_INVOICE_DEFAULT_STATUS,
     deleted: !!o.deleted,
     deletedAt: o.deletedAt || null,
     lines: lines,
