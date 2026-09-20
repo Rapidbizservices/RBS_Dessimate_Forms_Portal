@@ -2577,6 +2577,30 @@ function sanitizeDessimatePoLine(l) {
     requestedDeliveryDate: (l && l.requestedDeliveryDate) || ''
   };
 }
+
+// Dessimate PO's Attachments section - same shape as sanitizeOrgDoc, plus a
+// short `comment` field (what the file is about) and `id` preserved
+// through (needed intact: the "Generate PDF" button tags its own saved
+// copy with a fixed id so re-generating replaces it in place instead of
+// appending a duplicate - see PDIR_DessimatePOs.html's GENERATED_PDF_ID).
+function sanitizeDessimatePoAttachment(d) {
+  if (!d || !d.path) return null;
+  return {
+    id: d.id || null,
+    path: d.path,
+    filename: d.filename || '',
+    mimeType: d.mimeType || 'application/octet-stream',
+    size: typeof d.size === 'number' ? d.size : 0,
+    comment: d.comment || '',
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
+  };
+}
+function sanitizeDessimatePoAttachments(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeDessimatePoAttachment).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
+}
+
 function sanitizeDessimatePo(o) {
   const lines = Array.isArray(o.lines) ? o.lines.map(sanitizeDessimatePoLine) : [];
   // Rev2.4: customerPoRefs (array) replaces the old single customerPoRef -
@@ -2610,7 +2634,7 @@ function sanitizeDessimatePo(o) {
     // sanitizer.
     released: o.released !== false,
     relatedPoIds: Array.isArray(o.relatedPoIds) ? o.relatedPoIds.filter(Boolean) : [],
-    attachments: sanitizeOrgDocList(o.attachments),
+    attachments: sanitizeDessimatePoAttachments(o.attachments),
     createdAt: o.createdAt || null
   };
 }
@@ -2734,7 +2758,7 @@ async function handleCreateDessimatePo(request, env, origin) {
 
   const numbers = await reserveDessimatePoNumbers(env, clientPoNumber, clientShipmentNumber);
   const newPo = Object.assign(
-    { id: cryptoRandomId(), createdAt: new Date().toISOString(), poNumber: numbers.poNumber, shipmentNumber: numbers.shipmentNumber, attachments: sanitizeOrgDocList(body.attachments) },
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), poNumber: numbers.poNumber, shipmentNumber: numbers.shipmentNumber, attachments: sanitizeDessimatePoAttachments(body.attachments) },
     fields
   );
 
@@ -2758,7 +2782,7 @@ async function handleUpdateDessimatePo(request, env, origin, id) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
     Object.assign(target, fields); // poNumber/shipmentNumber are never in `fields` - immutable once assigned
-    if (body.attachments !== undefined) target.attachments = sanitizeOrgDocList(body.attachments);
+    if (body.attachments !== undefined) target.attachments = sanitizeDessimatePoAttachments(body.attachments);
     syncRelatedPoLinks(items, id, fields.relatedPoIds);
     saved = target;
     return { items: items };
@@ -5256,6 +5280,31 @@ function sanitizeDessimateInvoiceLine(l) {
     extendedPrice: Math.round(qty * price * 100) / 100
   };
 }
+
+// Dessimate Invoice's Attachments section - same shape as sanitizeOrgDoc,
+// plus a short `comment` field (what the file is about) and `id`
+// preserved through (needed intact: the "Generate Invoice"/"Generate
+// Packing Slip" buttons tag their own saved copies with fixed ids so
+// re-generating replaces them in place instead of appending duplicates -
+// see PDIR_DessimateInvoices.html's GENERATED_PDF_ID/GENERATED_PACKING_SLIP_ID).
+function sanitizeDessimateInvoiceAttachment(d) {
+  if (!d || !d.path) return null;
+  return {
+    id: d.id || null,
+    path: d.path,
+    filename: d.filename || '',
+    mimeType: d.mimeType || 'application/octet-stream',
+    size: typeof d.size === 'number' ? d.size : 0,
+    comment: d.comment || '',
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
+  };
+}
+function sanitizeDessimateInvoiceAttachments(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeDessimateInvoiceAttachment).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
+}
+
 function sanitizeDessimateInvoice(o) {
   const lines = Array.isArray(o.lines) ? o.lines.map(sanitizeDessimateInvoiceLine) : [];
   // Rev2.4: customerPoRefs (array) replaces the old single customerPoRef -
@@ -5289,7 +5338,7 @@ function sanitizeDessimateInvoice(o) {
     invoiceTotal: Math.round(lines.reduce(function (sum, l) { return sum + l.extendedPrice; }, 0) * 100) / 100,
     // Rev2.1: ability to attach files (e.g. invoices uploaded from a legacy
     // system) - same {path, filename, mimeType, size} shape/cap as Parts.
-    attachments: sanitizeOrgDocList(o.attachments),
+    attachments: sanitizeDessimateInvoiceAttachments(o.attachments),
     createdAt: o.createdAt || null
   };
 }
@@ -5338,7 +5387,7 @@ function validateDessimateInvoiceFields(body, origin) {
     shipDate: (body.shipDate || '').toString().trim(),
     status: status,
     lines: lines,
-    attachments: sanitizeOrgDocList(body.attachments)
+    attachments: sanitizeDessimateInvoiceAttachments(body.attachments)
   };
 }
 

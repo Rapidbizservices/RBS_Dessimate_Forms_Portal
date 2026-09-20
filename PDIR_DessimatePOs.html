@@ -172,6 +172,8 @@
   .attachRow .attachLinks button:hover{ text-decoration:underline; }
   .attachRow .attachLinks .removeLink{ color:#b23b3b; }
   .attachRow .attachMeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
+  .attachRow .attachCommentInput{ flex-basis:100%; margin:4px 0 0 !important; padding:6px 8px !important;
+    font-size:12px !important; }
   .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
   .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
     padding:9px 0; font-size:12.5px; }
@@ -427,6 +429,7 @@
       <div class="modalError" id="modalError"></div>
       <div class="modalBtns">
         <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="button" class="pdfBtn" id="generatePdfBtn" style="display:none;">Generate PDF</button>
         <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
       </div>
     </form>
@@ -680,32 +683,19 @@
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
   });
-  function openPdfInViewer(filename, bytes){
-    var overlay = document.getElementById('docViewerOverlay');
-    var stateEl = document.getElementById('docViewerState');
-    var frame = document.getElementById('docViewerFrame');
-    var downloadBtn = document.getElementById('docViewerDownload');
-    document.getElementById('docViewerTitle').textContent = filename;
-    frame.style.display = 'none'; downloadBtn.style.display = 'none';
-    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
-    overlay.classList.add('open');
-    try {
-      var blob = new Blob([bytes], { type: 'application/pdf' });
-      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
-      docViewerObjectUrl = URL.createObjectURL(blob);
-      frame.src = docViewerObjectUrl; frame.style.display = 'block';
-      stateEl.style.display = 'none';
-      downloadBtn.href = docViewerObjectUrl;
-      downloadBtn.download = filename;
-      downloadBtn.style.display = 'inline-block';
-    } catch (e) {
-      console.error(e);
-      stateEl.textContent = 'Could not display this PDF (' + (e && e.message ? e.message : e) + ').';
+  // List's "View PDF" button - opens the PO's saved generated-report
+  // attachment (added by the form's "Generate PDF" button) rather than
+  // regenerating live on every click. If none has been generated yet, this
+  // says so instead of silently doing nothing.
+  var GENERATED_PDF_ID = 'generated-report';
+  function viewPoAttachmentPdf(po){
+    var generated = (po.attachments || []).find(function(a){ return a.id === GENERATED_PDF_ID; });
+    if (!generated) {
+      alert('No PDF has been generated for this Dessimate PO yet. Open it and use "Generate PDF" to create one.');
+      return;
     }
+    openDocViewer({ filename: generated.filename, mimeType: generated.mimeType, path: generated.path });
   }
-  // Same overlay, used for an attachment picked from the Attachments list
-  // (as opposed to openPdfInViewer above, which only ever shows the
-  // server-generated PO PDF) - shares docViewerImg, unused until now.
   function isInlineViewable(mimeType, filename){
     var ext = docFileExt(filename).toLowerCase();
     if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
@@ -763,23 +753,6 @@
     } catch (e) {
       console.error(e);
       stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
-    }
-  }
-  async function viewGeneratedPdf(id, poNumber, btn){
-    var originalText = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
-    try {
-      var res = await apiFetch('dessimate-pos/' + encodeURIComponent(id) + '/pdf');
-      if (!res.ok) {
-        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
-        throw new Error(msg || ('HTTP ' + res.status));
-      }
-      var buf = await res.arrayBuffer();
-      openPdfInViewer('Dessimate PO ' + poNumber + '.pdf', new Uint8Array(buf));
-    } catch (err) {
-      alert('Could not generate the PO PDF (' + (err && err.message ? err.message : err) + ').');
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = originalText; }
     }
   }
   // -----------------------------------------------------------------------------
@@ -1069,7 +1042,7 @@
         '<td>' + escapeHtml(fmtDateMDY(po.poDate)) + '</td>' +
         '<td>' + (po.lines ? po.lines.length : 0) + '</td>' +
         '<td class="moneyCell">' + escapeHtml(po.currency || '') + ' ' + money(po.poTotal) + '</td>' +
-        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(po.id) + '" data-ponum="' + escapeHtml(po.poNumber) + '">View PDF</button></td>' +
+        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(po.id) + '">View PDF</button></td>' +
         '<td class="docCell">' + attCell + '</td>' +
         '<td><div class="rowActions">' + (canManageRecords()
           ? '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
@@ -1095,7 +1068,8 @@
     });
     bodyEl.querySelectorAll('[data-pdf]').forEach(function(btn){
       btn.addEventListener('click', function(){
-        requireAuthThen(function(){ viewGeneratedPdf(btn.getAttribute('data-pdf'), btn.getAttribute('data-ponum'), btn); });
+        var po = lastPos.find(function(x){ return x.id === btn.getAttribute('data-pdf'); });
+        if (po) requireAuthThen(function(){ viewPoAttachmentPdf(po); });
       });
     });
   }
@@ -1136,6 +1110,7 @@
     } else {
       listEl.innerHTML = attachmentsState.map(function(entry, idx){
         var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var comment = entry.kind === 'pending' ? (entry.comment || '') : (entry.doc.comment || '');
         var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
         var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
         var viewBtn = entry.kind === 'pending'
@@ -1145,12 +1120,22 @@
           '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
           '<div class="attachLinks">' + viewBtn +
             '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' +
-          '</div>' + attachMetaHtml(entry, 'attachMeta') + '</div>';
+          '</div>' + attachMetaHtml(entry, 'attachMeta') +
+          '<input type="text" class="attachCommentInput" data-comment-idx="' + idx + '" placeholder="What is this attachment about?" value="' + escapeHtml(comment) + '">' +
+          '</div>';
       }).join('');
     }
     inputEl.disabled = count >= PO_ATTACHMENTS_MAX;
     inputEl.title = inputEl.disabled ? 'Maximum of ' + PO_ATTACHMENTS_MAX + ' attachments reached.' : '';
 
+    listEl.querySelectorAll('[data-comment-idx]').forEach(function(input){
+      input.addEventListener('input', function(){
+        var entry = attachmentsState[Number(input.getAttribute('data-comment-idx'))];
+        if (!entry) return;
+        if (entry.kind === 'pending') entry.comment = input.value;
+        else entry.doc.comment = input.value;
+      });
+    });
     listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
       btn.addEventListener('click', function(){
         var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
@@ -1329,6 +1314,8 @@
     setNumberFieldsEditable(true);
     initRelatedPoChecklist([], null);
     renderLines();
+    // Generate PDF needs a saved record to render from - hidden in Add mode.
+    document.getElementById('generatePdfBtn').style.display = 'none';
   }
 
   // Read-only mode for the "View" path (Team Member logins - this page's
@@ -1397,6 +1384,10 @@
     document.getElementById('f_approver').innerHTML = approverOptions(po.approverUsername || '');
     document.getElementById('f_released').checked = !!po.released;
     renderLines();
+    // Generate PDF is admin+ only, same write gate as the rest of this
+    // module - a Team Member's read-only View path never shows it, since
+    // clicking it now performs a save (see the click handler below).
+    document.getElementById('generatePdfBtn').style.display = canManageRecords() ? '' : 'none';
     document.getElementById('poModalOverlay').classList.add('open');
   }
   function closeModal(){ document.getElementById('poModalOverlay').classList.remove('open'); }
@@ -1408,12 +1399,14 @@
     if (e.target.id === 'poModalOverlay') closeModal();
   });
 
-  document.getElementById('poForm').addEventListener('submit', async function(e){
-    e.preventDefault();
-    var errEl = document.getElementById('modalError');
-    var saveBtn = document.getElementById('modalSaveBtn');
-    errEl.textContent = '';
-
+  // Collects the current form state and saves it (create or update),
+  // uploading any pending attachments along the way, then resyncs local
+  // attachmentsState to the server's response so a second save in the same
+  // modal session (Generate PDF's two-step save) never re-uploads an
+  // already-saved pending file as a duplicate. Returns the saved,
+  // sanitized PO. Shared by the Save button and the Generate PDF button -
+  // both admin+ only, matching this module's write gate.
+  async function savePo(){
     var approverSelect = document.getElementById('f_approver');
     var approverOpt = approverSelect.options[approverSelect.selectedIndex];
     var approverName = approverOpt ? (approverOpt.getAttribute('data-name') || approverOpt.textContent) : '';
@@ -1436,44 +1429,108 @@
       lines: lineRows.filter(function(r){ return r.partNumber; }),
       relatedPoIds: getSelectedRelatedPoIds()
     };
-    if (!baseFields.supplier) { errEl.textContent = 'Select a Supplier.'; return; }
-    if (!baseFields.lines.length) { errEl.textContent = 'Add at least one line item with a Part Number.'; return; }
+    if (!baseFields.supplier) throw new Error('Select a Supplier.');
+    if (!baseFields.lines.length) throw new Error('Add at least one line item with a Part Number.');
 
+    var poId = editingId;
+    if (!poId) {
+      var createRes = await apiFetch('dessimate-pos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
+      var createData = {}; try { createData = await createRes.json(); } catch(e){}
+      if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+      poId = createData.id;
+      editingId = poId;
+    }
+
+    var attachmentsPayload = [];
+    for (var i = 0; i < attachmentsState.length; i++) {
+      var entry = attachmentsState[i];
+      if (entry.kind === 'existing') {
+        attachmentsPayload.push(entry.doc);
+      } else {
+        var path = buildAttachmentDocPath(poId, entry.filename, i);
+        await ghPutFile(path, entry.bytes, 'Upload attachment for Dessimate PO ' + (baseFields.poNumber || poId));
+        attachmentsPayload.push(Object.assign({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length, comment: entry.comment || '' }, stampUpload()));
+      }
+    }
+
+    var putRes = await apiFetch('dessimate-pos/' + encodeURIComponent(poId), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({}, baseFields, { attachments: attachmentsPayload }))
+    });
+    var putData = {}; try { putData = await putRes.json(); } catch(e){}
+    if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
+
+    // Resync local state to the server's truth so a second save in this
+    // same modal session (Generate PDF calls savePo twice) never
+    // re-uploads an already-saved pending file as a duplicate.
+    attachmentsState = (putData.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
+
+    return putData;
+  }
+
+  document.getElementById('poForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
-      var poId = editingId;
-      if (!poId) {
-        var createRes = await apiFetch('dessimate-pos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
-        var createData = {}; try { createData = await createRes.json(); } catch(e){}
-        if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
-        poId = createData.id;
-      }
-
-      var attachmentsPayload = [];
-      for (var i = 0; i < attachmentsState.length; i++) {
-        var entry = attachmentsState[i];
-        if (entry.kind === 'existing') {
-          attachmentsPayload.push(entry.doc);
-        } else {
-          var path = buildAttachmentDocPath(poId, entry.filename, i);
-          await ghPutFile(path, entry.bytes, 'Upload attachment for Dessimate PO ' + (baseFields.poNumber || poId));
-          attachmentsPayload.push(Object.assign({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length }, stampUpload()));
-        }
-      }
-
-      var putRes = await apiFetch('dessimate-pos/' + encodeURIComponent(poId), {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({}, baseFields, { attachments: attachmentsPayload }))
-      });
-      var putData = {}; try { putData = await putRes.json(); } catch(e){}
-      if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
-
+      await savePo();
       closeModal();
       await loadPos();
     } catch (err) {
       errEl.textContent = err && err.message ? err.message : 'Could not save this Dessimate PO.';
     } finally {
       saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+
+  // Generate PDF (form button, admin+ only, once the PO already exists):
+  // saves the form's current state, renders the PDF from that saved
+  // record, uploads it into the PO's own Attachments list (replacing any
+  // previous generated copy via a stable id/path so re-generating doesn't
+  // pile up duplicates), saves again to persist that attachment reference,
+  // and opens it - all without closing the modal. This is what makes the
+  // list's "View PDF" button able to just open a saved file instead of
+  // regenerating live every time (see viewPoAttachmentPdf / GENERATED_PDF_ID
+  // above).
+  document.getElementById('generatePdfBtn').addEventListener('click', async function(){
+    var btn = this;
+    var errEl = document.getElementById('modalError');
+    errEl.textContent = '';
+    var originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Generating…';
+    try {
+      var saved = await savePo();
+      var poId = editingId;
+      var res = await apiFetch('dessimate-pos/' + encodeURIComponent(poId) + '/pdf');
+      if (!res.ok) {
+        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
+        throw new Error(msg || ('HTTP ' + res.status));
+      }
+      var buf = await res.arrayBuffer();
+      var bytes = new Uint8Array(buf);
+      var filename = 'Dessimate PO ' + (saved.poNumber || '') + '.pdf';
+      var stablePath = DESSIMATE_PO_DOC_FOLDER + '/' + poId + '/generated/report.pdf';
+      await ghPutFile(stablePath, bytes, 'Generate PDF for Dessimate PO ' + poId);
+      var existingIdx = attachmentsState.findIndex(function(e2){ return e2.kind === 'existing' && e2.doc.id === GENERATED_PDF_ID; });
+      var priorComment = existingIdx !== -1 ? (attachmentsState[existingIdx].doc.comment || '') : '';
+      var generatedDoc = Object.assign(
+        { id: GENERATED_PDF_ID, path: stablePath, filename: filename, mimeType: 'application/pdf', size: bytes.length, comment: priorComment || 'This is a system-saved attachment and will change when a new PDF is generated by the user.' },
+        stampUpload()
+      );
+      if (existingIdx !== -1) attachmentsState[existingIdx] = { kind: 'existing', doc: generatedDoc };
+      else attachmentsState.push({ kind: 'existing', doc: generatedDoc });
+      renderAttachmentsList();
+
+      await savePo();
+      await openDocViewer({ filename: filename, mimeType: 'application/pdf', bytes: bytes });
+      await loadPos();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not generate the PO PDF.';
+    } finally {
+      btn.disabled = false; btn.textContent = originalText;
     }
   });
   // -----------------------------------------------------------------------------

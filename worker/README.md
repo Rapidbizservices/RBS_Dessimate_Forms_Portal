@@ -762,7 +762,7 @@ they cross-reference each other by dropdown wherever it makes sense.
 | Page | Who can add/edit | Stored in | Numbering |
 |---|---|---|---|
 | **Customer POs** | Admin, Super Admin | `data/customer_pos.json` | You type the customer's own PO number — it's theirs, not generated here. |
-| **Dessimate POs** | Team Member and up | `data/dessimate_pos.json` | **PO Number** and **Shipment Number** are both assigned automatically when you click Save (see below) — neither can be typed or edited afterward. |
+| **Dessimate POs** | Admin, Super Admin | `data/dessimate_pos.json` | **PO Number** and **Shipment Number** are both assigned automatically when you click Save (see below) — neither can be typed or edited afterward. |
 | **Supplier Invoices** | Team Member and up | `data/supplier_invoices.json` | You type the supplier's own invoice number — it's theirs, not generated here. |
 | **Dessimate Invoices** | Admin, Super Admin | `data/dessimate_invoices.json` | **Invoice Number** is assigned automatically when you click Save, and can't be edited afterward. |
 
@@ -812,16 +812,35 @@ chip back to the other on the list page. The link is two-way automatically
 — linking B to A also shows A linked to B, and unlinking either side
 removes it from both.
 
-### Generated PDFs ("View PDF")
+### Generated PDFs ("View PDF") and Attachments comments
 
 Dessimate POs and Dessimate Invoices don't need a source file uploaded —
-click **View PDF** on any row and the backend builds the document from that
-row's data on the spot (letterhead, line-item table, totals) and shows it
-right in the page, with a **Download** link. This is a real backend
-template (not something hand-formatted in the browser), so the layout stays
-consistent no matter who's viewing it, and it always reflects the latest
-saved data. A Dessimate PO's PDF includes the **Approver's stamp** (see
-above) when one is set; a Dessimate Invoice's PDF never does.
+the backend builds the document (letterhead, line-item table, totals) from
+the record's own data. A Dessimate PO's PDF includes the **Approver's
+stamp** (see above) when one is set; a Dessimate Invoice's PDF never does;
+a Dessimate Invoice also has its own second document, the **Packing Slip**
+(Customer/Manufacturer part numbers pulled from the Parts master).
+
+**Generating is a save, not a live render** (same save-then-link pattern as
+CR/SCR/DMR). A **Generate PDF** button at the bottom of the Dessimate PO
+form (or **Generate Invoice** / **Generate Packing Slip**, above the
+Dessimate Invoice form — Invoice keeps its own separate slot for each of
+its two documents) is available once the record already exists, to whoever
+can edit it (Admin+ for both modules — hidden in the read-only "View" path
+a Team Member or, for Dessimate Invoice, a Customer viewing their own
+invoice gets instead, since clicking it now saves). It saves the form's
+current state, renders the PDF, uploads it into that record's own
+Attachments list at a stable path (tagged with a fixed id so re-generating
+replaces it instead of piling up duplicates), saves again to persist that
+reference, and opens it - all without closing the modal. The list's own
+**View PDF** button then just opens the saved Invoice/PO PDF (not the
+Packing Slip, which has no separate list-level entry point - once
+generated it's simply another Attachments row) instead of regenerating
+live; if none has been generated yet, it says so instead of silently doing
+nothing.
+
+Attachments on both pages now also carry a short `comment` field so
+whoever uploaded a file can say what it is.
 
 ### Deleting
 

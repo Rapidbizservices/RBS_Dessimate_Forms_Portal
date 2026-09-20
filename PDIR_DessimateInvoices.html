@@ -167,6 +167,8 @@
   .attachRow .attachLinks button:hover{ text-decoration:underline; }
   .attachRow .attachLinks .removeLink{ color:#b23b3b; }
   .attachRow .attachMeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
+  .attachRow .attachCommentInput{ flex-basis:100%; margin:4px 0 0 !important; padding:6px 8px !important;
+    font-size:12px !important; }
   .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
 
   .linesWrap{ overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
@@ -624,6 +626,7 @@
     } else {
       listEl.innerHTML = attachmentsState.map(function(entry, idx){
         var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var comment = entry.kind === 'pending' ? (entry.comment || '') : (entry.doc.comment || '');
         var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
         var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
         var viewBtn = entry.kind === 'pending'
@@ -633,12 +636,22 @@
           '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
           '<div class="attachLinks">' + viewBtn +
             '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' +
-          '</div>' + attachMetaHtml(entry, 'attachMeta') + '</div>';
+          '</div>' + attachMetaHtml(entry, 'attachMeta') +
+          '<input type="text" class="attachCommentInput" data-comment-idx="' + idx + '" placeholder="What is this attachment about?" value="' + escapeHtml(comment) + '">' +
+          '</div>';
       }).join('');
     }
     inputEl.disabled = count >= DESSIMATE_INVOICE_ATTACHMENTS_MAX;
     inputEl.title = inputEl.disabled ? 'Maximum of ' + DESSIMATE_INVOICE_ATTACHMENTS_MAX + ' attachments reached.' : '';
 
+    listEl.querySelectorAll('[data-comment-idx]').forEach(function(input){
+      input.addEventListener('input', function(){
+        var entry = attachmentsState[Number(input.getAttribute('data-comment-idx'))];
+        if (!entry) return;
+        if (entry.kind === 'pending') entry.comment = input.value;
+        else entry.doc.comment = input.value;
+      });
+    });
     listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
       btn.addEventListener('click', function(){
         var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
@@ -790,32 +803,25 @@
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
   });
-  function openPdfInViewer(filename, bytes){
-    var overlay = document.getElementById('docViewerOverlay');
-    var stateEl = document.getElementById('docViewerState');
-    var frame = document.getElementById('docViewerFrame');
-    var downloadBtn = document.getElementById('docViewerDownload');
-    document.getElementById('docViewerTitle').textContent = filename;
-    frame.style.display = 'none'; downloadBtn.style.display = 'none';
-    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
-    overlay.classList.add('open');
-    try {
-      var blob = new Blob([bytes], { type: 'application/pdf' });
-      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
-      docViewerObjectUrl = URL.createObjectURL(blob);
-      frame.src = docViewerObjectUrl; frame.style.display = 'block';
-      stateEl.style.display = 'none';
-      downloadBtn.href = docViewerObjectUrl;
-      downloadBtn.download = filename;
-      downloadBtn.style.display = 'inline-block';
-    } catch (e) {
-      console.error(e);
-      stateEl.textContent = 'Could not display this PDF (' + (e && e.message ? e.message : e) + ').';
+  // List's "View PDF" button - opens the invoice's saved generated-invoice
+  // attachment (added by the form's "Generate Invoice" button) rather than
+  // regenerating live on every click. If none has been generated yet, this
+  // says so instead of silently doing nothing. The Packing Slip has no
+  // separate list-level entry point - once generated it's just another
+  // attachment, viewable from the Attachments section like any other.
+  var GENERATED_PDF_ID = 'generated-invoice';
+  var GENERATED_PACKING_SLIP_ID = 'generated-packing-slip';
+  function viewInvoiceAttachmentPdf(inv){
+    var generated = (inv.attachments || []).find(function(a){ return a.id === GENERATED_PDF_ID; });
+    if (!generated) {
+      alert('No PDF has been generated for this Dessimate Invoice yet. Open it and use "Generate Invoice" to create one.');
+      return;
     }
+    openDocViewer({ filename: generated.filename, mimeType: generated.mimeType, path: generated.path });
   }
-  // Generic path/bytes-based viewer for Attachments (Rev2.1) - separate from
-  // openPdfInViewer above, which is specific to the already-fetched-bytes
-  // generated invoice PDF. Same pattern as Parts.html's openDocViewer.
+  // Generic path/bytes-based viewer for Attachments (Rev2.1) - same pattern
+  // as Parts.html's openDocViewer, and now also what viewInvoiceAttachmentPdf
+  // above uses to open the saved generated-invoice attachment.
   async function openDocViewer(source){
     var overlay = document.getElementById('docViewerOverlay');
     var stateEl = document.getElementById('docViewerState');
@@ -866,37 +872,47 @@
       stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
     }
   }
-  async function viewGeneratedPdf(id, invoiceNumber, btn){
+  // Shared by both Generate buttons below (Invoice PDF and Packing Slip -
+  // same drawn-from-scratch pdf-lib route, different endpoint): saves the
+  // form's current state, renders the PDF from that saved record, uploads
+  // it into the invoice's own Attachments list (replacing any previous
+  // generated copy of that SAME kind via a stable id/path so re-generating
+  // doesn't pile up duplicates - Invoice PDF and Packing Slip each keep
+  // their own slot), saves again to persist that attachment reference, and
+  // opens it - all without closing the modal.
+  async function generateAndAttachInvoiceDoc(opts, btn){
+    var errEl = document.getElementById('modalError');
+    errEl.textContent = '';
     var originalText = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
     try {
-      var res = await apiFetch('dessimate-invoices/' + encodeURIComponent(id) + '/pdf');
+      var saved = await saveInvoice();
+      var invoiceId = editingId;
+      var res = await apiFetch('dessimate-invoices/' + encodeURIComponent(invoiceId) + opts.apiSuffix);
       if (!res.ok) {
         var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
         throw new Error(msg || ('HTTP ' + res.status));
       }
       var buf = await res.arrayBuffer();
-      openPdfInViewer('Dessimate Invoice ' + invoiceNumber + '.pdf', new Uint8Array(buf));
+      var bytes = new Uint8Array(buf);
+      var filename = opts.filename(saved);
+      var stablePath = DESSIMATE_INVOICE_DOC_FOLDER + '/' + invoiceId + '/generated/' + opts.pathSuffix;
+      await ghPutFile(stablePath, bytes, 'Generate ' + opts.label + ' for Dessimate Invoice ' + invoiceId);
+      var existingIdx = attachmentsState.findIndex(function(e2){ return e2.kind === 'existing' && e2.doc.id === opts.generatedId; });
+      var priorComment = existingIdx !== -1 ? (attachmentsState[existingIdx].doc.comment || '') : '';
+      var generatedDoc = Object.assign(
+        { id: opts.generatedId, path: stablePath, filename: filename, mimeType: 'application/pdf', size: bytes.length, comment: priorComment || opts.defaultComment },
+        stampUpload()
+      );
+      if (existingIdx !== -1) attachmentsState[existingIdx] = { kind: 'existing', doc: generatedDoc };
+      else attachmentsState.push({ kind: 'existing', doc: generatedDoc });
+      renderAttachmentsList();
+
+      await saveInvoice();
+      await openDocViewer({ filename: filename, mimeType: 'application/pdf', bytes: bytes });
+      await loadInvoices();
     } catch (err) {
-      alert('Could not generate the invoice PDF (' + (err && err.message ? err.message : err) + ').');
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = originalText; }
-    }
-  }
-  // Rev2.4: the Packing Slip - a second PDF generated from the same record.
-  async function viewGeneratedPackingSlip(id, invoiceNumber, btn){
-    var originalText = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
-    try {
-      var res = await apiFetch('dessimate-invoices/' + encodeURIComponent(id) + '/packing-slip');
-      if (!res.ok) {
-        var msg = ''; try { msg = (await res.json()).message || ''; } catch(e){}
-        throw new Error(msg || ('HTTP ' + res.status));
-      }
-      var buf = await res.arrayBuffer();
-      openPdfInViewer('Dessimate Invoice ' + invoiceNumber + ' Packing Slip.pdf', new Uint8Array(buf));
-    } catch (err) {
-      alert('Could not generate the packing slip (' + (err && err.message ? err.message : err) + ').');
+      errEl.textContent = err && err.message ? err.message : ('Could not generate the ' + opts.label + '.');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = originalText; }
     }
@@ -1123,7 +1139,7 @@
         '<td><span class="statusPill ' + statusClass + '">' + escapeHtml(inv.status) + '</span></td>' +
         '<td>' + (inv.lines ? inv.lines.length : 0) + '</td>' +
         '<td class="moneyCell">' + escapeHtml(inv.currency || '') + ' ' + money(inv.invoiceTotal) + '</td>' +
-        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(inv.id) + '" data-invnum="' + escapeHtml(inv.invoiceNumber) + '">View PDF</button></td>' +
+        '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(inv.id) + '">View PDF</button></td>' +
         '<td><div class="rowActions">' + (canManageRecords()
           ? '<button type="button" class="editBtn" data-edit="' + escapeHtml(inv.id) + '">Edit</button>' +
             '<button type="button" class="editBtn" data-duplicate="' + escapeHtml(inv.id) + '">Duplicate</button>' +
@@ -1154,7 +1170,8 @@
     });
     bodyEl.querySelectorAll('[data-pdf]').forEach(function(btn){
       btn.addEventListener('click', function(){
-        requireAuthThen(function(){ viewGeneratedPdf(btn.getAttribute('data-pdf'), btn.getAttribute('data-invnum'), btn); });
+        var inv = lastInvoices.find(function(x){ return x.id === btn.getAttribute('data-pdf'); });
+        if (inv) requireAuthThen(function(){ viewInvoiceAttachmentPdf(inv); });
       });
     });
   }
@@ -1290,10 +1307,12 @@
   // Read-only mode for the "View" path (Team Member, or a Customer viewing
   // their own invoice - GET is open to both, writes are Admin+ only) -
   // disables every field, hides every write-affordance (Add/Remove Line,
-  // the attachment upload input and its Remove links, Save), and relabels
-  // Cancel to Close. View/Preview on an attachment, and the existing
-  // Generate Invoice/Packing Slip/View PDF buttons, still work - those are
-  // reads, not writes.
+  // the attachment upload input and its Remove links, Save, and now
+  // Generate Invoice/Packing Slip too, since those save the current form
+  // state before rendering - see saveInvoice()/the two click handlers
+  // below), and relabels Cancel to Close. View/Preview on an attachment
+  // and the list's own View PDF still work from outside this modal - those
+  // stay pure reads.
   var viewOnlyMode = false;
   function applyModalReadOnlyMode(readOnly){
     viewOnlyMode = readOnly;
@@ -1304,6 +1323,7 @@
     if (docRow) docRow.style.display = readOnly ? 'none' : '';
     document.querySelectorAll('#attachmentsList [data-remove-idx]').forEach(function(el){ el.style.display = readOnly ? 'none' : ''; });
     document.getElementById('modalSaveBtn').style.display = readOnly ? 'none' : '';
+    if (readOnly) document.getElementById('modalGenerateBtns').style.display = 'none';
     document.getElementById('modalCancelBtn').textContent = readOnly ? 'Close' : 'Cancel';
   }
   function openViewModal(id){
@@ -1434,18 +1454,36 @@
     if (e.target.id === 'invModalOverlay') closeModal();
   });
   document.getElementById('generateInvoiceBtn').addEventListener('click', function(){
-    if (editingId) viewGeneratedPdf(editingId, document.getElementById('f_invoiceNumber').value, this);
+    if (!editingId) return;
+    generateAndAttachInvoiceDoc({
+      apiSuffix: '/pdf',
+      pathSuffix: 'invoice.pdf',
+      generatedId: GENERATED_PDF_ID,
+      label: 'Invoice PDF',
+      filename: function(saved){ return 'Dessimate Invoice ' + (saved.invoiceNumber || '') + '.pdf'; },
+      defaultComment: 'This is a system-saved attachment and will change when a new PDF is generated by the user.'
+    }, this);
   });
   document.getElementById('generatePackingSlipBtn').addEventListener('click', function(){
-    if (editingId) viewGeneratedPackingSlip(editingId, document.getElementById('f_invoiceNumber').value, this);
+    if (!editingId) return;
+    generateAndAttachInvoiceDoc({
+      apiSuffix: '/packing-slip',
+      pathSuffix: 'packing-slip.pdf',
+      generatedId: GENERATED_PACKING_SLIP_ID,
+      label: 'Packing Slip',
+      filename: function(saved){ return 'Dessimate Invoice ' + (saved.invoiceNumber || '') + ' Packing Slip.pdf'; },
+      defaultComment: 'This is a system-saved attachment and will change when a new packing slip is generated by the user.'
+    }, this);
   });
 
-  document.getElementById('invForm').addEventListener('submit', async function(e){
-    e.preventDefault();
-    var errEl = document.getElementById('modalError');
-    var saveBtn = document.getElementById('modalSaveBtn');
-    errEl.textContent = '';
-
+  // Collects the current form state and saves it (create or update),
+  // uploading any pending attachments along the way, then resyncs local
+  // attachmentsState to the server's response so a second save in the same
+  // modal session (Generate Invoice/Packing Slip's two-step save) never
+  // re-uploads an already-saved pending file as a duplicate. Returns the
+  // saved, sanitized invoice. Shared by the Save button and both Generate
+  // buttons - all admin+ only, matching this module's write gate.
+  async function saveInvoice(){
     var baseFields = {
       invoiceNumber: document.getElementById('f_invoiceNumber').value.trim(),
       invoiceDate: document.getElementById('f_invoiceDate').value,
@@ -1464,52 +1502,69 @@
       status: document.getElementById('f_status').value,
       lines: lineRows.filter(function(r){ return r.partNumber; })
     };
-    if (!baseFields.customer) { errEl.textContent = 'Select a Customer.'; return; }
-    if (!baseFields.lines.length) { errEl.textContent = 'Add at least one line item with a Part Number.'; return; }
+    if (!baseFields.customer) throw new Error('Select a Customer.');
+    if (!baseFields.lines.length) throw new Error('Add at least one line item with a Part Number.');
     // Invoice Number is editable now (Rev2.4), but still required once an
     // invoice exists - only creating a brand new one can leave it blank
     // (auto-assign).
-    if (editingId && !baseFields.invoiceNumber) { errEl.textContent = 'Invoice Number is required.'; return; }
+    if (editingId && !baseFields.invoiceNumber) throw new Error('Invoice Number is required.');
 
+    var invoiceId = editingId;
+    if (!invoiceId) {
+      // New invoice: create it first (without attachments - none can exist
+      // yet, since attachment file paths are keyed by invoice id) to get
+      // an id, then upload any pending files and follow up with a PUT that
+      // sets everything, attachments included - same two-step pattern
+      // Parts.html uses.
+      var createRes = await apiFetch('dessimate-invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
+      var createData = {}; try { createData = await createRes.json(); } catch(e){}
+      if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+      invoiceId = createData.id;
+      editingId = invoiceId;
+      // The server just assigned (or accepted) the real Invoice Number -
+      // carry it into the follow-up PUT below so that request doesn't
+      // send a blank one (which would now fail: Invoice Number is
+      // editable, but never blank, on an existing invoice).
+      baseFields.invoiceNumber = createData.invoiceNumber;
+    }
+
+    var attachmentsPayload = [];
+    for (var i = 0; i < attachmentsState.length; i++) {
+      var entry = attachmentsState[i];
+      if (entry.kind === 'existing') {
+        attachmentsPayload.push(entry.doc);
+      } else {
+        var path = buildAttachmentDocPath(invoiceId, entry.filename, i);
+        await ghPutFile(path, entry.bytes, 'Upload attachment for Dessimate Invoice ' + (baseFields.invoiceNumber || invoiceId));
+        attachmentsPayload.push(Object.assign({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length, comment: entry.comment || '' }, stampUpload()));
+      }
+    }
+
+    var putRes = await apiFetch('dessimate-invoices/' + encodeURIComponent(invoiceId), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({}, baseFields, { attachments: attachmentsPayload }))
+    });
+    var putData = {}; try { putData = await putRes.json(); } catch(e){}
+    if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
+
+    // Resync local state to the server's truth so a second save in this
+    // same modal session (Generate Invoice/Packing Slip calls saveInvoice
+    // twice) never re-uploads an already-saved pending file as a
+    // duplicate.
+    attachmentsState = (putData.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
+
+    return putData;
+  }
+
+  document.getElementById('invForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
-      var invoiceId = editingId;
-      if (!invoiceId) {
-        // New invoice: create it first (without attachments - none can exist
-        // yet, since attachment file paths are keyed by invoice id) to get
-        // an id, then upload any pending files and follow up with a PUT that
-        // sets everything, attachments included - same two-step pattern
-        // Parts.html uses.
-        var createRes = await apiFetch('dessimate-invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(baseFields) });
-        var createData = {}; try { createData = await createRes.json(); } catch(e){}
-        if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
-        invoiceId = createData.id;
-        // The server just assigned (or accepted) the real Invoice Number -
-        // carry it into the follow-up PUT below so that request doesn't
-        // send a blank one (which would now fail: Invoice Number is
-        // editable, but never blank, on an existing invoice).
-        baseFields.invoiceNumber = createData.invoiceNumber;
-      }
-
-      var attachmentsPayload = [];
-      for (var i = 0; i < attachmentsState.length; i++) {
-        var entry = attachmentsState[i];
-        if (entry.kind === 'existing') {
-          attachmentsPayload.push(entry.doc);
-        } else {
-          var path = buildAttachmentDocPath(invoiceId, entry.filename, i);
-          await ghPutFile(path, entry.bytes, 'Upload attachment for Dessimate Invoice ' + (baseFields.invoiceNumber || invoiceId));
-          attachmentsPayload.push(Object.assign({ path: path, filename: entry.filename, mimeType: entry.mimeType, size: entry.bytes.length }, stampUpload()));
-        }
-      }
-
-      var putRes = await apiFetch('dessimate-invoices/' + encodeURIComponent(invoiceId), {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({}, baseFields, { attachments: attachmentsPayload }))
-      });
-      var putData = {}; try { putData = await putRes.json(); } catch(e){}
-      if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
-
+      await saveInvoice();
       closeModal();
       await loadInvoices();
     } catch (err) {
