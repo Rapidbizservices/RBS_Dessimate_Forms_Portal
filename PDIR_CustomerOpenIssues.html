@@ -278,7 +278,6 @@
         <tr>
           <th data-sort-key="issueNumber">Issue #</th>
           <th data-sort-key="status">Status</th>
-          <th data-sort-key="customerOrg">Customer</th>
           <th>Part Number(s)</th>
           <th>Issue Description</th>
           <th>Issue Picture</th>
@@ -876,7 +875,6 @@
       return '<tr>' +
         '<td><button type="button" class="issueNumberLink" data-edit="' + escapeHtml(issue.id) + '" title="' + escapeHtml(issue.issueNumber) + '">' + escapeHtml(displayIssueNumber(issue.issueNumber)) + '</button></td>' +
         '<td>' + statusPillHtml(issue.status) + '</td>' +
-        '<td>' + escapeHtml(issue.customerOrg) + '</td>' +
         '<td>' + escapeHtml((issue.partNumbers || []).join(', ')) + '</td>' +
         '<td><div class="cellClamp" title="' + escapeHtml(issue.issueDescription) + '">' + escapeHtml(issue.issueDescription) + '</div></td>' +
         '<td>' + picHtml + '</td>' +
