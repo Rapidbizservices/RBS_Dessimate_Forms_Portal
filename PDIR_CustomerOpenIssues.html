@@ -92,6 +92,12 @@
   .notesCell .noteLine{ font-size:11px; line-height:1.35; }
   .notesCell .noteLine .noteMeta{ color:var(--label); font-weight:700; }
   .notesCell .noteMore{ font-size:11px; color:var(--label); font-style:italic; }
+  .statusPill{ display:inline-block; font-size:11px; font-weight:700; border-radius:5px; padding:3px 8px; white-space:nowrap; }
+  .statusPill.plan{ color:var(--label); background:#eef0f4; }
+  .statusPill.do{ color:#1c3877; background:#e8ecfa; }
+  .statusPill.check{ color:#8a6d00; background:#fff6cc; }
+  .statusPill.act{ color:#b3540a; background:#ffe8d6; }
+  .statusPill.closed{ color:#187b46; background:#e5f4ec; }
   .rowActions{ display:flex; flex-direction:column; gap:6px; white-space:nowrap; }
   .rowActions button{ font-family:inherit; font-size:12px; font-weight:600; cursor:pointer;
     border-radius:6px; padding:6px 10px; white-space:nowrap; }
@@ -274,6 +280,7 @@
       <thead id="issueTableHead">
         <tr>
           <th data-sort-key="issueNumber">Issue #</th>
+          <th data-sort-key="status">Status</th>
           <th>Part Number(s)</th>
           <th data-sort-key="issueTitle">Issue Title</th>
           <th>Issue Picture</th>
@@ -327,14 +334,14 @@
           </div>
         </div>
         <div class="numberField">
-          <label>Status <span style="font-weight:400;">(PDCA cycle)</span></label>
-          <div class="radioGroup" style="margin-top:9px;">
-            <label><input type="radio" name="f_status" value="plan" checked> Plan</label>
-            <label><input type="radio" name="f_status" value="do"> Do</label>
-            <label><input type="radio" name="f_status" value="check"> Check</label>
-            <label><input type="radio" name="f_status" value="act"> Act</label>
-            <label><input type="radio" name="f_status" value="closed"> Closed</label>
-          </div>
+          <label for="f_status">Status <span style="font-weight:400;">(PDCA cycle)</span></label>
+          <select id="f_status">
+            <option value="plan">Plan</option>
+            <option value="do">Do</option>
+            <option value="check">Check</option>
+            <option value="act">Act</option>
+            <option value="closed">Closed</option>
+          </select>
         </div>
       </div>
 
@@ -765,6 +772,11 @@
     var session = getSession();
     return { uploadedBy: (session && session.username) || '', uploadedAt: new Date().toISOString() };
   }
+  var OPEN_ISSUE_STATUS_LABELS = { plan: 'Plan', do: 'Do', check: 'Check', act: 'Act', closed: 'Closed' };
+  function statusPillHtml(status){
+    var key = ['plan', 'do', 'check', 'act', 'closed'].indexOf(status) !== -1 ? status : 'plan';
+    return '<span class="statusPill ' + key + '">' + OPEN_ISSUE_STATUS_LABELS[key] + '</span>';
+  }
   // List view only - strips the "OI-" prefix so the column just reads
   // 0001, 0002, etc. The stored value (and everywhere else it's shown -
   // the modal, Excel export, delete confirmation) keeps the full
@@ -881,6 +893,7 @@
         : '<span class="noPic">No picture</span>';
       return '<tr>' +
         '<td><button type="button" class="issueNumberLink" data-edit="' + escapeHtml(issue.id) + '" title="' + escapeHtml(issue.issueNumber) + '">' + escapeHtml(displayIssueNumber(issue.issueNumber)) + '</button></td>' +
+        '<td>' + statusPillHtml(issue.status) + '</td>' +
         '<td>' + escapeHtml((issue.partNumbers || []).join(', ')) + '</td>' +
         '<td><div class="cellClamp" title="' + escapeHtml(issue.issueTitle || issue.issueDescription) + '">' + escapeHtml(listTitleText(issue)) + '</div></td>' +
         '<td>' + picHtml + '</td>' +
@@ -1282,8 +1295,7 @@
     document.getElementById('f_issueNumber').value = issue.issueNumber;
     document.getElementById('f_customerOrg').innerHTML = customerOrgOptions(issue.customerOrg || '');
     document.getElementById('f_championResponsible').value = issue.championResponsible || '';
-    var statusInput = document.querySelector('input[name="f_status"][value="' + (issue.status || 'plan') + '"]');
-    if (statusInput) statusInput.checked = true;
+    document.getElementById('f_status').value = issue.status || 'plan';
 
     partNumberRows = (issue.partNumbers || []).slice();
     document.getElementById('f_issueTitle').value = issue.issueTitle || '';
@@ -1315,8 +1327,6 @@
   // end to end - a Customer login never reaches this (see
   // applyRoleUIForModal's blanket disable and the module comment above).
   async function saveIssue(){
-    var statusChecked = document.querySelector('input[name="f_status"]:checked');
-
     var baseFields = {
       customerOrg: document.getElementById('f_customerOrg').value,
       partNumbers: partNumberRows.filter(Boolean),
@@ -1327,7 +1337,7 @@
       permCM: document.getElementById('f_permCM').value.trim(),
       nextAction: document.getElementById('f_nextAction').value.trim(),
       championResponsible: document.getElementById('f_championResponsible').value.trim(),
-      status: statusChecked ? statusChecked.value : 'plan'
+      status: document.getElementById('f_status').value
     };
     if (!baseFields.customerOrg) throw new Error('Select a Customer Organization.');
 
@@ -1469,7 +1479,6 @@
     { header: 'Notes Count', width: 11, key: 'notesCount', numeric: true },
     { header: 'Latest Note', width: 36, key: 'latestNote', wrap: true }
   ];
-  var OPEN_ISSUE_STATUS_LABELS = { plan: 'Plan', do: 'Do', check: 'Check', act: 'Act', closed: 'Closed' };
   function issueToExportRow(issue){
     var comments = Array.isArray(issue.comments) ? issue.comments : [];
     var latest = comments.length ? comments[comments.length - 1] : null;

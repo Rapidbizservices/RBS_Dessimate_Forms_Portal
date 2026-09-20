@@ -1138,11 +1138,13 @@ issue), **Do**, **Check**, **Act**, plus **Closed** - replacing the
 original plain Open/Closed toggle. A record still on file with the old
 "open" value reads as "Plan" (the new default) rather than being guessed
 into one of the 4 active stages; "closed" needed no migration, it's still
-valid as-is. The Status column itself is no longer shown in the list view
-(space reclaimed for a wider Notes/Comments column instead) - a
-stage/status filter for the list is planned but not built yet, so for now
-Status is set and changed from the Add/Edit modal only. The Excel export's
-Status column shows the actual value (Plan/Do/Check/Act/Closed).
+valid as-is. Set from a compact dropdown in the Add/Edit modal (was
+briefly a 5-option radio group, switched to a dropdown for space) and
+shown as a color-coded pill in the list view - gray for Plan, blue for
+Do, amber for Check, orange for Act, green for Closed, same color-coded-
+pill idiom used elsewhere in this app. A stage/status filter for the list
+is planned but not built yet. The Excel export's Status column shows the
+same actual value (Plan/Do/Check/Act/Closed).
 
 **Agentic AI issue summary** is a staff-and-Customer-visible stub button
 per row in the list (not the modal, unlike DMR's Agentic 8D button) -
