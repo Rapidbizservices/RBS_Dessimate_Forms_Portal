@@ -1557,6 +1557,14 @@ function sanitizeOrg(o) {
     // Invoice) reads from here rather than being freehand text, so the
     // choices stay consistent system-wide and are edited in one place.
     paymentTerms: Array.isArray(o.paymentTerms) ? o.paymentTerms.map(function (t) { return (t || '').toString().trim(); }).filter(Boolean) : [],
+    // Rev2.20: a lightweight contact directory per organization (name,
+    // email, phone, active/inactive) - every "Contact" dropdown on a
+    // form (DMR/Customer DMR/CR/SCR today) reads from here instead of
+    // freehand typing. Deliberately not a link to an actual user login -
+    // that would require rolling out portal access to every org's contact,
+    // which is a much longer-term effort; this just gives each form a
+    // pick-and-autofill directory in the meantime.
+    contacts: Array.isArray(o.contacts) ? o.contacts.map(sanitizeOrgContact).filter(Boolean) : [],
     docs: {
       companyPresentation: sanitizeOrgDoc(o.docs && o.docs.companyPresentation),
       nda: sanitizeOrgDoc(o.docs && o.docs.nda),
@@ -1607,6 +1615,24 @@ function sanitizeOrgAddress(a) {
   if (!line1 && !line2 && a.address) line1 = (a.address || '').toString().trim();
   if (!label && !line1 && !line2) return null;
   return { label: label, line1: line1, line2: line2 };
+}
+// One entry in an organization's contact directory (Rev2.20). `status`
+// governs whether it's offered in a form's Contact dropdown - an inactive
+// contact stays on file (and on anything already saved referencing them)
+// but drops out of new selections.
+function sanitizeOrgContact(c) {
+  if (!c) return null;
+  const name = (c.name || '').toString().trim();
+  const email = (c.email || '').toString().trim();
+  const phone = (c.phone || '').toString().trim();
+  if (!name && !email && !phone) return null;
+  return {
+    id: c.id || cryptoRandomId(),
+    name: name,
+    email: email,
+    phone: phone,
+    status: c.status === 'inactive' ? 'inactive' : 'active'
+  };
 }
 function sanitizeOrgDoc(d) {
   if (!d || !d.path) return null;
@@ -1659,6 +1685,7 @@ function validateOrgFields(body, origin) {
   const paymentTerms = Array.isArray(body.paymentTerms)
     ? Array.from(new Set(body.paymentTerms.map(function (t) { return (t || '').toString().trim(); }).filter(Boolean)))
     : [];
+  const contacts = Array.isArray(body.contacts) ? body.contacts.map(sanitizeOrgContact).filter(Boolean) : [];
   return {
     name: name,
     relationship: relationship,
@@ -1668,7 +1695,8 @@ function validateOrgFields(body, origin) {
     addresses: addresses,
     salesEmail: salesEmail,
     purchasingEmail: purchasingEmail,
-    paymentTerms: paymentTerms
+    paymentTerms: paymentTerms,
+    contacts: contacts
   };
 }
 
@@ -1703,7 +1731,7 @@ async function handleCreateOrganization(request, env, origin) {
     address: fields.address, phone: fields.phone, website: fields.website,
     logo: sanitizeOrgDoc(body.logo),
     addresses: fields.addresses, salesEmail: fields.salesEmail, purchasingEmail: fields.purchasingEmail,
-    paymentTerms: fields.paymentTerms,
+    paymentTerms: fields.paymentTerms, contacts: fields.contacts,
     docs: {
       companyPresentation: sanitizeOrgDoc(body.docs && body.docs.companyPresentation),
       nda: sanitizeOrgDoc(body.docs && body.docs.nda),
@@ -1746,6 +1774,7 @@ async function handleUpdateOrganization(request, env, origin, id) {
     target.salesEmail = fields.salesEmail;
     target.purchasingEmail = fields.purchasingEmail;
     target.paymentTerms = fields.paymentTerms;
+    target.contacts = fields.contacts;
     if (body.logo !== undefined) {
       target.logo = sanitizeOrgDoc(body.logo);
     }

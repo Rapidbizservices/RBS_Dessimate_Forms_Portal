@@ -623,6 +623,18 @@ people:
   file. Click **View** to preview a PDF or image right in the page, or
   **Download** to save it. Files are chosen when you fill out the form but
   aren't uploaded until you click **Save**.
+- **Contacts** (Rev2.20) — a lightweight directory of people at that
+  organization: Name, Email, Phone, and a **Status** (Active/Inactive).
+  This is deliberately *not* a login/user record — rolling out portal
+  access to every organization's contact is a much bigger, longer-term
+  effort. Instead, it's a pick-and-autofill source for the **Contact**
+  dropdown that's rolled out to DMR, Customer DMR, CR, and SCR (see each
+  module's own section) - selecting a name there fills in the Name/Email/
+  Phone field(s) already on that form; the form still just stores plain
+  strings, so nothing already saved changes retroactively if a contact is
+  later edited, renamed, or set to Inactive. Inactive contacts stay on file
+  (and on anything already saved referencing them) but drop out of new
+  dropdown selections.
 - **Edit** any organization to update its details or documents; **Delete**
   removes the organization's record only — files already uploaded for it
   stay in the repo (under `org_docs/<id>/`), just no longer linked to
@@ -884,6 +896,12 @@ organization (in either direction — they may be the one requesting the
 change, or the one Dessimate is requesting it of); a Customer login has no
 role here at all.
 
+The **Contact** dropdown (Rev2.20) next to Supplier Contact Name is a
+pick-and-autofill quick-fill sourced from the selected Supplier's own
+contact directory (see "Managing organizations" above) - selecting a name
+fills in Contact Name; the field itself is still plain free text, so it's
+just a convenience, not a hard requirement to pick from the list.
+
 **CR Number** is formatted `CR-###` and auto-assigned like RFQ Number (a
 custom value is accepted too, and bumps the counter past it) — but only
 Team Member+ can set or change it; a Supplier's own Change Request is always
@@ -945,6 +963,12 @@ caption. Both are Dessimate-owned like every other non-Section-7 field, so
 a Supplier can view but never add, remove, or re-caption/re-comment a
 file.
 
+The **Contact** dropdown (Rev2.20) next to the Supplier picker is a
+pick-and-autofill quick-fill sourced from the selected Supplier's own
+contact directory (see "Managing organizations" above) - selecting a name
+fills in Contact Name/Email/Phone; those fields are still plain free text,
+so it's just a convenience, not a hard requirement to pick from the list.
+
 **PDF generation is a save, not a live render.** A **Generate PDF** button
 at the bottom of the form (staff-only, only once the DMR already exists)
 saves the form's current state, renders the drawn-from-scratch layout
@@ -971,6 +995,14 @@ submitted (never trust the client for a fixed identity field, same
 principle as SCR's locked Supplier dropdown), and there's a new **Customer
 Organization** field (staff-only, required) identifying which Customer
 reported it - the record's actual ownership/scoping key.
+
+The **Contact** dropdown (Rev2.20) next to the Customer Organization
+picker is a pick-and-autofill quick-fill sourced from the **Self**
+(Dessimate) organization's own contact directory (see "Managing
+organizations" above), not the Customer's - unlike Dessimate DMR, it's
+fixed rather than tied to a Supplier selection, since the Supplier here is
+always Dessimate. Selecting a name fills in Contact Name/Email/Phone;
+those fields are still plain free text.
 
 **No auto-numbering.** The Customer supplies their own DMR Number from
 their own system, so it's a required, client-supplied, uniqueness-checked
@@ -1053,6 +1085,13 @@ own name in the share list even if others are on it.
 **SCR Number** is formatted `SCR-###` and auto-assigned like CR Number (a
 custom value is accepted too, and bumps the counter past it), Team Member+
 only.
+
+The **Contact** dropdown (Rev2.20) next to the (locked) Supplier field is a
+pick-and-autofill quick-fill sourced from the **Self** (Dessimate)
+organization's own contact directory (see "Managing organizations" above)
+- same fixed-rather-than-selection-driven behavior as Customer DMR's,
+since Supplier here is always Dessimate too. Selecting a name fills in
+Contact Name; the field itself is still plain free text.
 
 **Document generation is Word, not PDF, and template-filled rather than
 drawn from scratch.** The customer's own original form

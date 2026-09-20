@@ -154,6 +154,16 @@
   .termRow .addrRemove{ flex:0 0 auto; font-family:inherit; font-size:12px; font-weight:600; color:#b23b3b;
     background:#fff; border:1px solid #e3b3b3; border-radius:6px; padding:8px 10px; cursor:pointer; }
   .termRow .addrRemove:hover{ background:#fbeaea; }
+  .contactRow{ display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid #eef0f4; flex-wrap:wrap; }
+  .contactRow:last-child{ border-bottom:none; }
+  .contactRow input, .contactRow select{ margin-top:0; }
+  .contactRow .contactName{ flex:1 1 160px; }
+  .contactRow .contactEmail{ flex:1 1 180px; }
+  .contactRow .contactPhone{ flex:1 1 130px; }
+  .contactRow .contactStatus{ flex:0 0 110px; }
+  .contactRow .addrRemove{ flex:0 0 auto; font-family:inherit; font-size:12px; font-weight:600; color:#b23b3b;
+    background:#fff; border:1px solid #e3b3b3; border-radius:6px; padding:8px 10px; cursor:pointer; margin-top:5px; }
+  .contactRow .addrRemove:hover{ background:#fbeaea; }
 
   .genericList{ list-style:none; margin:0 0 10px; padding:0; }
   .genericList li{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:2px 10px;
@@ -312,6 +322,13 @@
         <p class="modalSub" style="margin:-6px 0 10px;">One or more addresses for this organization — picked from a dropdown wherever an address is needed on a PO or Invoice (e.g. Ship To).</p>
         <div id="addressList"></div>
         <button type="button" class="addFileBtn" id="addAddressBtn">+ Add Address</button>
+      </div>
+
+      <div class="modalSection">
+        <h3>Contacts <span class="attachCount" id="contactCount">(0)</span></h3>
+        <p class="modalSub" style="margin:-6px 0 10px;">People at this organization — picked from a dropdown wherever a contact is needed on a form (e.g. DMR, CR, SCR). Set someone to Inactive to drop them from new selections without losing what's already on file.</p>
+        <div id="contactList"></div>
+        <button type="button" class="addFileBtn" id="addContactBtn">+ Add Contact</button>
       </div>
 
       <div class="modalSection">
@@ -820,6 +837,7 @@
   var logoState = { existing: null, pending: null, removed: false };
   var addressState = []; // { label, line1, line2 }
   var termsState = []; // [string, ...]
+  var contactState = []; // { id, name, email, phone, status }
 
   function resetDocState(org){
     namedDocState = {};
@@ -835,6 +853,9 @@
       return { label: a.label || '', line1: a.line1 || '', line2: a.line2 || '' };
     });
     termsState = (org && Array.isArray(org.paymentTerms) ? org.paymentTerms.slice() : []);
+    contactState = (org && Array.isArray(org.contacts) ? org.contacts : []).map(function(c){
+      return { id: c.id, name: c.name || '', email: c.email || '', phone: c.phone || '', status: c.status === 'inactive' ? 'inactive' : 'active' };
+    });
   }
 
   function renderLogoRow(){
@@ -948,6 +969,55 @@
   document.getElementById('addTermBtn').addEventListener('click', function(){
     termsState.push('');
     renderTermsList();
+  });
+
+  function renderContactList(){
+    var listEl = document.getElementById('contactList');
+    document.getElementById('contactCount').textContent = '(' + contactState.length + ')';
+    if (!contactState.length) { listEl.innerHTML = '<div class="emptyNote">No contacts yet.</div>'; return; }
+    listEl.innerHTML = contactState.map(function(c, idx){
+      return '<div class="contactRow">' +
+        '<label class="contactName">Name' +
+          '<input type="text" data-contact-name="' + idx + '" value="' + escapeHtml(c.name) + '" placeholder="Full name">' +
+        '</label>' +
+        '<label class="contactEmail">Email' +
+          '<input type="email" data-contact-email="' + idx + '" value="' + escapeHtml(c.email) + '" placeholder="name@example.com">' +
+        '</label>' +
+        '<label class="contactPhone">Phone' +
+          '<input type="text" data-contact-phone="' + idx + '" value="' + escapeHtml(c.phone) + '" placeholder="(555) 555-5555">' +
+        '</label>' +
+        '<label class="contactStatus">Status' +
+          '<select data-contact-status="' + idx + '">' +
+            '<option value="active"' + (c.status !== 'inactive' ? ' selected' : '') + '>Active</option>' +
+            '<option value="inactive"' + (c.status === 'inactive' ? ' selected' : '') + '>Inactive</option>' +
+          '</select>' +
+        '</label>' +
+        '<button type="button" class="addrRemove" data-contact-remove="' + idx + '">Remove</button>' +
+      '</div>';
+    }).join('');
+    listEl.querySelectorAll('[data-contact-name]').forEach(function(inp){
+      inp.addEventListener('input', function(){ contactState[parseInt(this.getAttribute('data-contact-name'), 10)].name = this.value; });
+    });
+    listEl.querySelectorAll('[data-contact-email]').forEach(function(inp){
+      inp.addEventListener('input', function(){ contactState[parseInt(this.getAttribute('data-contact-email'), 10)].email = this.value; });
+    });
+    listEl.querySelectorAll('[data-contact-phone]').forEach(function(inp){
+      inp.addEventListener('input', function(){ contactState[parseInt(this.getAttribute('data-contact-phone'), 10)].phone = this.value; });
+    });
+    listEl.querySelectorAll('[data-contact-status]').forEach(function(sel){
+      sel.addEventListener('change', function(){ contactState[parseInt(this.getAttribute('data-contact-status'), 10)].status = this.value; });
+    });
+    listEl.querySelectorAll('[data-contact-remove]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        if (!(await confirmDialog('Remove this contact?'))) return;
+        contactState.splice(parseInt(this.getAttribute('data-contact-remove'), 10), 1);
+        renderContactList();
+      });
+    });
+  }
+  document.getElementById('addContactBtn').addEventListener('click', function(){
+    contactState.push({ id: null, name: '', email: '', phone: '', status: 'active' });
+    renderContactList();
   });
 
   function updateSelfSectionVisibility(){
@@ -1068,6 +1138,7 @@
     renderLogoRow();
     renderAddressList();
     renderTermsList();
+    renderContactList();
     updateSelfSectionVisibility();
   }
 
@@ -1090,6 +1161,7 @@
     renderLogoRow();
     renderAddressList();
     renderTermsList();
+    renderContactList();
     document.getElementById('modalTitle').textContent = 'Edit Organization';
     document.getElementById('modalSub').textContent = 'Update this organization\'s details.';
     document.getElementById('f_name').value = o.name || '';
@@ -1122,7 +1194,10 @@
       salesEmail: document.getElementById('f_salesEmail').value.trim(),
       purchasingEmail: document.getElementById('f_purchasingEmail').value.trim(),
       addresses: addressState.filter(function(a){ return a.label.trim() || a.line1.trim() || a.line2.trim(); }),
-      paymentTerms: termsState.map(function(t){ return t.trim(); }).filter(Boolean)
+      paymentTerms: termsState.map(function(t){ return t.trim(); }).filter(Boolean),
+      contacts: contactState
+        .filter(function(c){ return c.name.trim() || c.email.trim() || c.phone.trim(); })
+        .map(function(c){ return { id: c.id, name: c.name.trim(), email: c.email.trim(), phone: c.phone.trim(), status: c.status }; })
     };
     if (!baseFields.name) { errEl.textContent = 'Organization name is required.'; return; }
 

@@ -313,6 +313,12 @@
           </label>
         </div>
         <div class="modalGrid2">
+          <label>Contact <span style="font-weight:400;">(optional — pick a Dessimate contact to fill in below)</span>
+            <select id="f_supplierContactSelect"><option value="">— Select Contact —</option></select>
+          </label>
+          <div></div>
+        </div>
+        <div class="modalGrid2">
           <label>Contact Name
             <input type="text" id="f_supplierContactName">
           </label>
@@ -864,6 +870,30 @@
     }
     return html;
   }
+  // Contact dropdown (Rev2.20) - a pick-and-autofill quick-fill for the
+  // Contact Name/Email/Phone fields below it. Unlike Dessimate DMR, the
+  // Supplier here is always Dessimate itself, so this reads from the Self
+  // org's own contact directory rather than a per-record Supplier
+  // selection - no org-change listener needed, it's populated once
+  // whenever the modal opens. Only active contacts are offered; the
+  // record itself still just stores plain name/email/phone strings.
+  function selfOrg(){ return lastOrgs.find(function(o){ return o.relationship === 'Self'; }) || null; }
+  function contactOptionsForOrg(org){
+    var contacts = (org && Array.isArray(org.contacts) ? org.contacts : []).filter(function(c){ return c.status !== 'inactive'; });
+    return '<option value="">— Select Contact —</option>' + contacts.map(function(c){
+      return '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.name) + (c.email ? ' (' + escapeHtml(c.email) + ')' : '') + '</option>';
+    }).join('');
+  }
+  document.getElementById('f_supplierContactSelect').addEventListener('change', function(){
+    var contactId = this.value;
+    var org = selfOrg();
+    var contact = org && (org.contacts || []).find(function(c){ return c.id === contactId; });
+    if (contact) {
+      document.getElementById('f_supplierContactName').value = contact.name;
+      document.getElementById('f_supplierContactEmail').value = contact.email;
+      document.getElementById('f_supplierContactPhone').value = contact.phone;
+    }
+  });
   function partOptions(currentValue){
     var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
       var sel = (p.partNumber === currentValue) ? ' selected' : '';
@@ -1215,6 +1245,7 @@
     attachmentsState = [];
     renderAttachmentsList();
     document.getElementById('f_customerOrg').innerHTML = customerOrgOptions('');
+    document.getElementById('f_supplierContactSelect').innerHTML = contactOptionsForOrg(selfOrg());
     document.getElementById('f_partNumber').innerHTML = partOptions('');
     document.getElementById('f_dmrNumber').value = '';
     document.getElementById('f_dateIssued').value = new Date().toISOString().slice(0, 10);
@@ -1248,6 +1279,7 @@
     document.getElementById('f_dmrTitle').value = dmr.dmrTitle || '';
     document.getElementById('f_dateIssued').value = dmr.dateIssued || '';
     document.getElementById('f_customerOrg').innerHTML = customerOrgOptions(dmr.customerOrg || '');
+    document.getElementById('f_supplierContactSelect').innerHTML = contactOptionsForOrg(selfOrg());
     document.getElementById('f_supplierContactName').value = dmr.supplierContactName || '';
     document.getElementById('f_supplierContactEmail').value = dmr.supplierContactEmail || '';
     document.getElementById('f_supplierContactPhone').value = dmr.supplierContactPhone || '';

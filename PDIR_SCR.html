@@ -305,6 +305,12 @@
 
       <div class="modalSection" style="margin-top:0;">
         <h3 style="border-top:none; padding-top:0;">A. Supplier Information</h3>
+        <div class="modalGrid2">
+          <label>Contact <span style="font-weight:400;">(optional — pick to fill in below)</span>
+            <select id="f_supplierContactSelect"><option value="">— Select Contact —</option></select>
+          </label>
+          <div></div>
+        </div>
         <div class="modalGrid3">
           <label>Date
             <input type="date" id="f_supplierDate">
@@ -1050,6 +1056,26 @@
   function supplierOrgOptions(){
     return '<option value="Dessimate" selected>Dessimate</option>';
   }
+  // Contact dropdown (Rev2.20) - a pick-and-autofill quick-fill for
+  // Contact Name. Since Supplier here is always Dessimate itself, this
+  // reads from the Self org's own contact directory (Organizations
+  // module) rather than a per-record Supplier selection - populated once
+  // whenever the modal opens, no org-change listener needed. Only active
+  // contacts are offered; the record itself still just stores a plain
+  // name string.
+  function selfOrg(){ return lastOrgs.find(function(o){ return o.relationship === 'Self'; }) || null; }
+  function contactOptionsForOrg(org){
+    var contacts = (org && Array.isArray(org.contacts) ? org.contacts : []).filter(function(c){ return c.status !== 'inactive'; });
+    return '<option value="">— Select Contact —</option>' + contacts.map(function(c){
+      return '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.name) + (c.email ? ' (' + escapeHtml(c.email) + ')' : '') + '</option>';
+    }).join('');
+  }
+  document.getElementById('f_supplierContactSelect').addEventListener('change', function(){
+    var contactId = this.value;
+    var org = selfOrg();
+    var contact = org && (org.contacts || []).find(function(c){ return c.id === contactId; });
+    if (contact) document.getElementById('f_supplierContactName').value = contact.name;
+  });
   function partOptions(currentValue){
     var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
       var sel = (p.partNumber === currentValue) ? ' selected' : '';
@@ -1334,6 +1360,7 @@
     renderAttachmentsList();
     document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions();
     document.getElementById('f_supplierOrg').disabled = true;
+    document.getElementById('f_supplierContactSelect').innerHTML = contactOptionsForOrg(selfOrg());
     document.getElementById('f_partNumber').innerHTML = partOptions('');
     document.getElementById('f_scrNumber').value = '';
     document.getElementById('f_supplierDate').value = new Date().toISOString().slice(0, 10);
@@ -1371,6 +1398,7 @@
     document.getElementById('f_supplierDate').value = scr.supplierDate || '';
     document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions();
     document.getElementById('f_supplierOrg').disabled = true;
+    document.getElementById('f_supplierContactSelect').innerHTML = contactOptionsForOrg(selfOrg());
     document.getElementById('f_supplierContactName').value = scr.supplierContactName || '';
     document.getElementById('f_supplierPhone').value = scr.supplierPhone || '';
     document.getElementById('f_supplierFax').value = scr.supplierFax || '';
