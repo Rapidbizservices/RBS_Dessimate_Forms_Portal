@@ -1133,8 +1133,16 @@ pattern used throughout this app) and the single **Issue Picture** slot
 are both staff-owned - a Customer can view but never add, remove, or
 re-comment a file.
 
-**Status** is a simple Open/Closed toggle, rendered as a color-coded pill
-in the list (yellow for Open, green for Closed) per the brief.
+**Status** (Rev2.26) is a 5-value PDCA cycle - **Plan** (default for a new
+issue), **Do**, **Check**, **Act**, plus **Closed** - replacing the
+original plain Open/Closed toggle. A record still on file with the old
+"open" value reads as "Plan" (the new default) rather than being guessed
+into one of the 4 active stages; "closed" needed no migration, it's still
+valid as-is. The Status column itself is no longer shown in the list view
+(space reclaimed for a wider Notes/Comments column instead) - a
+stage/status filter for the list is planned but not built yet, so for now
+Status is set and changed from the Add/Edit modal only. The Excel export's
+Status column shows the actual value (Plan/Do/Check/Act/Closed).
 
 **Agentic AI issue summary** is a staff-and-Customer-visible stub button
 per row in the list (not the modal, unlike DMR's Agentic 8D button) -

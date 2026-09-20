@@ -88,13 +88,10 @@
   .cellClamp.short{ -webkit-line-clamp:2; max-width:140px; }
   .picThumb{ width:56px; height:56px; object-fit:cover; border-radius:6px; border:1px solid var(--line); cursor:pointer; display:block; }
   .noPic{ color:var(--label); font-style:italic; font-size:11.5px; }
-  .notesCell{ max-width:220px; display:flex; flex-direction:column; gap:4px; }
+  .notesCell{ max-width:340px; display:flex; flex-direction:column; gap:4px; }
   .notesCell .noteLine{ font-size:11px; line-height:1.35; }
   .notesCell .noteLine .noteMeta{ color:var(--label); font-weight:700; }
   .notesCell .noteMore{ font-size:11px; color:var(--label); font-style:italic; }
-  .statusPill{ display:inline-block; font-size:11px; font-weight:700; border-radius:5px; padding:3px 8px; white-space:nowrap; }
-  .statusPill.open{ color:#8a6d00; background:#fff6cc; }
-  .statusPill.closed{ color:#187b46; background:#e5f4ec; }
   .rowActions{ display:flex; flex-direction:column; gap:6px; white-space:nowrap; }
   .rowActions button{ font-family:inherit; font-size:12px; font-weight:600; cursor:pointer;
     border-radius:6px; padding:6px 10px; white-space:nowrap; }
@@ -277,7 +274,6 @@
       <thead id="issueTableHead">
         <tr>
           <th data-sort-key="issueNumber">Issue #</th>
-          <th data-sort-key="status">Status</th>
           <th>Part Number(s)</th>
           <th data-sort-key="issueTitle">Issue Title</th>
           <th>Issue Picture</th>
@@ -331,9 +327,12 @@
           </div>
         </div>
         <div class="numberField">
-          <label>Status</label>
+          <label>Status <span style="font-weight:400;">(PDCA cycle)</span></label>
           <div class="radioGroup" style="margin-top:9px;">
-            <label><input type="radio" name="f_status" value="open" checked> Open</label>
+            <label><input type="radio" name="f_status" value="plan" checked> Plan</label>
+            <label><input type="radio" name="f_status" value="do"> Do</label>
+            <label><input type="radio" name="f_status" value="check"> Check</label>
+            <label><input type="radio" name="f_status" value="act"> Act</label>
             <label><input type="radio" name="f_status" value="closed"> Closed</label>
           </div>
         </div>
@@ -766,9 +765,6 @@
     var session = getSession();
     return { uploadedBy: (session && session.username) || '', uploadedAt: new Date().toISOString() };
   }
-  function statusPillHtml(status){
-    return status === 'closed' ? '<span class="statusPill closed">Closed</span>' : '<span class="statusPill open">Open</span>';
-  }
   // List view only - strips the "OI-" prefix so the column just reads
   // 0001, 0002, etc. The stored value (and everywhere else it's shown -
   // the modal, Excel export, delete confirmation) keeps the full
@@ -885,7 +881,6 @@
         : '<span class="noPic">No picture</span>';
       return '<tr>' +
         '<td><button type="button" class="issueNumberLink" data-edit="' + escapeHtml(issue.id) + '" title="' + escapeHtml(issue.issueNumber) + '">' + escapeHtml(displayIssueNumber(issue.issueNumber)) + '</button></td>' +
-        '<td>' + statusPillHtml(issue.status) + '</td>' +
         '<td>' + escapeHtml((issue.partNumbers || []).join(', ')) + '</td>' +
         '<td><div class="cellClamp" title="' + escapeHtml(issue.issueTitle || issue.issueDescription) + '">' + escapeHtml(listTitleText(issue)) + '</div></td>' +
         '<td>' + picHtml + '</td>' +
@@ -1287,7 +1282,7 @@
     document.getElementById('f_issueNumber').value = issue.issueNumber;
     document.getElementById('f_customerOrg').innerHTML = customerOrgOptions(issue.customerOrg || '');
     document.getElementById('f_championResponsible').value = issue.championResponsible || '';
-    var statusInput = document.querySelector('input[name="f_status"][value="' + (issue.status || 'open') + '"]');
+    var statusInput = document.querySelector('input[name="f_status"][value="' + (issue.status || 'plan') + '"]');
     if (statusInput) statusInput.checked = true;
 
     partNumberRows = (issue.partNumbers || []).slice();
@@ -1332,7 +1327,7 @@
       permCM: document.getElementById('f_permCM').value.trim(),
       nextAction: document.getElementById('f_nextAction').value.trim(),
       championResponsible: document.getElementById('f_championResponsible').value.trim(),
-      status: statusChecked ? statusChecked.value : 'open'
+      status: statusChecked ? statusChecked.value : 'plan'
     };
     if (!baseFields.customerOrg) throw new Error('Select a Customer Organization.');
 
@@ -1474,6 +1469,7 @@
     { header: 'Notes Count', width: 11, key: 'notesCount', numeric: true },
     { header: 'Latest Note', width: 36, key: 'latestNote', wrap: true }
   ];
+  var OPEN_ISSUE_STATUS_LABELS = { plan: 'Plan', do: 'Do', check: 'Check', act: 'Act', closed: 'Closed' };
   function issueToExportRow(issue){
     var comments = Array.isArray(issue.comments) ? issue.comments : [];
     var latest = comments.length ? comments[comments.length - 1] : null;
@@ -1481,7 +1477,7 @@
     var daysSince = (createdDate && !isNaN(createdDate.getTime())) ? Math.floor((Date.now() - createdDate.getTime()) / 86400000) : '';
     return {
       issueNumber: issue.issueNumber || '',
-      status: issue.status === 'closed' ? 'Closed' : 'Open',
+      status: OPEN_ISSUE_STATUS_LABELS[issue.status] || 'Plan',
       customerOrg: issue.customerOrg || '',
       partNumbers: (issue.partNumbers || []).join(', '),
       issueTitle: truncateForExport(issue.issueTitle, 300),

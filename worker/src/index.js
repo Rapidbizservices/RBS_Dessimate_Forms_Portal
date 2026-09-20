@@ -5912,6 +5912,12 @@ async function handleGetCustomerDmrPdf(env, origin, id, accessLevel, organizatio
 const CUSTOMER_OPEN_ISSUES_FILE_PATH = 'data/customer_open_issues.json';
 const CUSTOMER_OPEN_ISSUE_DOC_FOLDER = 'customer_open_issue_docs';
 const OPEN_ISSUE_PART_NUMBERS_MAX = 5;
+// Rev2.26: status is a 5-value PDCA cycle (Plan/Do/Check/Act) plus Closed,
+// replacing the old plain Open/Closed. A list-view filter for this is
+// planned but not built yet - for now this just adds the ability to set
+// one of the 5 values.
+const OPEN_ISSUE_STATUSES = ['plan', 'do', 'check', 'act', 'closed'];
+const OPEN_ISSUE_DEFAULT_STATUS = 'plan';
 
 // Open Issue # is formatted "OI-####" (4 digits), same voluntary/custom-
 // value auto-numbering as CR/SCR/DMR Number.
@@ -6014,7 +6020,10 @@ function sanitizeCustomerOpenIssue(o) {
     permCM: o.permCM || '',
     nextAction: o.nextAction || '',
     championResponsible: o.championResponsible || '',
-    status: o.status === 'closed' ? 'closed' : 'open',
+    // A legacy "open" value (from before the PDCA statuses) isn't in the
+    // new list, so it falls through to the default ("plan") below -
+    // "closed" is unaffected, it's still valid as-is.
+    status: OPEN_ISSUE_STATUSES.indexOf(o.status) !== -1 ? o.status : OPEN_ISSUE_DEFAULT_STATUS,
     attachments: sanitizeOpenIssueAttachments(o.attachments),
     comments: sanitizeOpenIssueComments(o.comments)
   };
@@ -6037,7 +6046,7 @@ function validateCustomerOpenIssueFields(body) {
     permCM: (body.permCM || '').toString().trim(),
     nextAction: (body.nextAction || '').toString().trim(),
     championResponsible: (body.championResponsible || '').toString().trim(),
-    status: body.status === 'closed' ? 'closed' : 'open',
+    status: OPEN_ISSUE_STATUSES.indexOf(body.status) !== -1 ? body.status : OPEN_ISSUE_DEFAULT_STATUS,
     attachments: sanitizeOpenIssueAttachments(body.attachments)
   };
 }
