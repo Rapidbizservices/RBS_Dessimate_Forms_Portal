@@ -113,12 +113,12 @@
       <p>Non-conforming material received from a Supplier &mdash; Dessimate documents the discrepancy, the Supplier responds with root cause and corrective action.</p>
       <div class="tileGo">Open Dessimate DMRs &rarr;</div>
     </a>
-    <div class="tile tileDisabled" id="tileCustomerDmr" style="display:none;">
+    <a class="tile" id="tileCustomerDmr" href="PDIR_CustomerDMR.html" style="display:none;">
       <div class="tileIcon">DMR</div>
       <h2>Customer DMRs</h2>
-      <p>Non-conforming material a Customer reports back to Dessimate. Not built yet.</p>
-      <div class="comingSoonBadge">Coming soon</div>
-    </div>
+      <p>Non-conforming material a Customer reports back to Dessimate &mdash; Dessimate documents the discrepancy and responds, the Customer reviews and closes it out.</p>
+      <div class="tileGo">Open Customer DMRs &rarr;</div>
+    </a>
   </div>
 
   <footer>Dessimate &middot; DSCM &middot; Discrepant Material Reports &middot; <span id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</span></footer>
@@ -244,14 +244,15 @@
   refreshGhStatus();
 
   // Dessimate DMRs is visible to staff + Supplier (a Supplier can respond
-  // to a DMR naming their org - see PDIR_DMR.html). Customer DMRs is a
-  // future module - only staff/Supplier reach this hub at all right now
-  // (see index.html's sidebar levels), so the "Coming soon" tile is shown
-  // to whoever can see the live tile, as a preview of what's next.
+  // to a DMR naming their org - see PDIR_DMR.html). Customer DMRs is
+  // visible to staff + Customer instead (a Customer can respond to a
+  // Customer DMR naming their org - see PDIR_CustomerDMR.html) - the two
+  // tiles are mutually exclusive for a non-staff login, since Dessimate
+  // plays the opposite role (Supplier vs. Customer) in each module.
   function applyTileVisibility(accessLevel){
-    var showDmr = accessLevel === 'team_member' || accessLevel === 'admin' || accessLevel === 'super_admin' || accessLevel === 'supplier';
-    document.getElementById('tileDmr').style.display = showDmr ? '' : 'none';
-    document.getElementById('tileCustomerDmr').style.display = showDmr ? '' : 'none';
+    var isStaff = accessLevel === 'team_member' || accessLevel === 'admin' || accessLevel === 'super_admin';
+    document.getElementById('tileDmr').style.display = (isStaff || accessLevel === 'supplier') ? '' : 'none';
+    document.getElementById('tileCustomerDmr').style.display = (isStaff || accessLevel === 'customer') ? '' : 'none';
     document.getElementById('loadingState').style.display = 'none';
     document.getElementById('tilesWrap').style.display = 'grid';
   }

@@ -918,9 +918,7 @@ checkboxes, Description, Photographic Evidence, Disposition Requested,
 Supplier Response, Dessimate Review/Closure). Reached via its own
 "Discrepant Material Report" sidebar entry -> a chooser hub
 (`PDIR_DMRHub.html`, same two-tile pattern as Change Requests) with a
-"Dessimate DMRs" tile (this module, live) and a "Customer DMRs" tile shown
-as "Coming soon" - a future module for material a *Customer* reports back
-to Dessimate, not built yet.
+"Dessimate DMRs" tile (this module) and a "Customer DMRs" tile (see below).
 
 **Permission split is the same shape as CR (Team Member+ full control, a
 Supplier can touch their own record) but inverted which part belongs to
@@ -961,6 +959,67 @@ that saved attachment (no live regeneration); if none has been generated
 yet, it says so instead of silently doing nothing. This is where the
 save-then-link pattern started; CR and SCR now use the same approach (see
 their own sections).
+
+## Customer DMR
+
+The mirror image of Dessimate DMR above - `PDIR_CustomerDMR.html`, stored
+in `data/customer_dmrs.json`, reached via the same DMR hub's "Customer
+DMRs" tile. Here a *Customer* reports non-conforming material back to
+Dessimate, so **Dessimate plays the Supplier role**: Section 1's Supplier
+Name is hard-coded to `"Dessimate"` server-side regardless of what's
+submitted (never trust the client for a fixed identity field, same
+principle as SCR's locked Supplier dropdown), and there's a new **Customer
+Organization** field (staff-only, required) identifying which Customer
+reported it - the record's actual ownership/scoping key.
+
+**No auto-numbering.** The Customer supplies their own DMR Number from
+their own system, so it's a required, client-supplied, uniqueness-checked
+plain text field (no `DMR-####` counter, no peek-number route) - staff can
+correct a typo any time, a Customer never sees it as editable.
+
+**Permission split is the same shape as Dessimate DMR (Team Member+ full
+control, the non-staff party can touch one carved-out section) but the
+*whole* carve-out moves to Section 8.** Because Dessimate is the supplier
+here, Section 7 "Supplier Response" is staff-owned too (unlike Dessimate
+DMR, where a Supplier owns it) - Team Member+ owns Sections 1-7 end to end,
+and is the only one who can create a Customer DMR at all; a Customer never
+files one, only reviews/closes one naming their organization. Section 8
+("Customer Review / Closure" - `reviewedBy`/`status`) is the one section a
+Customer login can write, and even there Team Member+ retains full access
+too (never exclusive). The backend enforces this the same "never trust the
+client for a privileged field" way as every other module: a Customer's
+save silently keeps only `reviewedBy`/`status` from the request body, no
+matter what else the client sends. A Customer sees only Customer DMRs
+naming their org (in the list and via direct id); a Supplier login has no
+role in this module.
+
+**Section 8's Comments are a multi-entry, append-only thread, not a single
+free-text field** - "capture who wrote what comment when," per the brief.
+Its own dedicated route, `POST /customer-dmrs/<id>/comments`, appends one
+`{authorUsername, text, createdAt}` entry and returns the updated record;
+there is no edit/delete route, and this array is never accepted through
+the generic PUT at all (so neither party can silently rewrite the thread
+by resending a modified array). Both Team Member+ and the owning Customer
+can post to it, once the record already exists. Attachments (staff-only,
+with the same per-file `comment` box as every other module) and
+Photographic Evidence (staff-only, 4 slots) are otherwise identical to
+Dessimate DMR's.
+
+**PDF generation is a save, not a live render**, same save-then-link
+pattern as every other module above. A staff-only **Generate PDF** button
+(edit mode only) saves the form, renders the layout (same pdf-lib approach
+as `buildDmrPdf`, with Section 8 relabeled "CUSTOMER REVIEW / CLOSURE" and
+rendered as a compact, newest-first, truncated one-line-per-entry list
+instead of a paragraph - the full untruncated thread is always visible in
+the app itself, this is just a print snapshot), uploads it into the
+record's own Attachments list at a stable path, saves again, and opens it.
+The list's **View PDF** button just opens that saved attachment.
+
+**Agentic 8D Generation** is a staff-only stub button at the bottom of the
+form (edit mode only) - clicking it just explains the feature is coming
+soon. The idea, per the brief: "In the future we will create an AI agent
+to generate 8D using information provided in this form." No backend route
+exists for it yet.
 
 ## Customer SCRs (SCR)
 

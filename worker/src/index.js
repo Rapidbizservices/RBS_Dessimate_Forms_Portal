@@ -213,6 +213,19 @@
  *                                        (Section 7 "Supplier Response" fields only - everything
  *                                        else in the body is silently ignored).
  *   DELETE /dmrs/<id>                  - team_member or above required.
+ *   GET    /customer-dmrs              - any signed-in user; scoped (team_member or above sees
+ *                                        every Customer DMR; a Customer login sees only ones
+ *                                        naming its own org; a Supplier login sees none).
+ *   POST   /customer-dmrs              - team_member or above required (a Customer never
+ *                                        creates one, only reviews/closes - see module comment).
+ *   GET    /customer-dmrs/<id>/pdf     - same read access as the record itself.
+ *   PUT    /customer-dmrs/<id>         - team_member or above (full edit), OR the owning
+ *                                        Customer (Section 8 "Customer Review/Closure" fields
+ *                                        only - everything else in the body is silently ignored).
+ *   POST   /customer-dmrs/<id>/comments - team_member or above, OR the owning Customer; appends
+ *                                        one authored/timestamped entry to Section 8's comment
+ *                                        thread. No edit/delete route - by design.
+ *   DELETE /customer-dmrs/<id>         - team_member or above required.
  *   GET    /contents/<path...>        - reads one file from R2 (blocked for anything
  *                                        under data/ - see above), or lists a "directory"
  *                                        prefix, in a shape mirroring GitHub's old API.
@@ -789,6 +802,59 @@ export default {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
           return await handleDeleteDmr(env, origin, id);
+        }
+      }
+
+      if (url.pathname === '/customer-dmrs') {
+        if (request.method === 'GET') {
+          // Any signed-in user is "ok" here - scopeCustomerDmrs itself
+          // narrows a Customer to their own org and a Supplier to nothing.
+          const auth = await requireAuthWithScope(request, env);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleListCustomerDmrs(env, origin, auth.accessLevel, auth.organization);
+        }
+        if (request.method === 'POST') {
+          // Staff-only - a Customer never creates a Customer DMR, see the
+          // module comment above.
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleCreateCustomerDmr(request, env, origin, auth.username);
+        }
+      }
+
+      // Section 8 comment thread - append-only, its own route (see the
+      // module comment above). Checked before the generic PUT/DELETE
+      // block below so it doesn't get swallowed by the id-only match.
+      if (/^\/customer-dmrs\/[^/]+\/comments$/.test(url.pathname) && request.method === 'POST') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleAddCustomerDmrComment(request, env, origin, id, auth.accessLevel, auth.username);
+      }
+
+      // PDF export - same read-access rule as the record itself (Team
+      // Member+ always, a Customer only for their own Customer DMR).
+      if (/^\/customer-dmrs\/[^/]+\/pdf$/.test(url.pathname) && request.method === 'GET') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireAuthWithScope(request, env);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleGetCustomerDmrPdf(env, origin, id, auth.accessLevel, auth.organization);
+      }
+
+      if (url.pathname.startsWith('/customer-dmrs/')) {
+        const id = decodeURIComponent(url.pathname.slice('/customer-dmrs/'.length));
+        if (request.method === 'PUT') {
+          // Team Member+ full edit, OR the owning Customer (Section 8
+          // only - handleUpdateCustomerDmr/validateCustomerDmrFields
+          // enforce this).
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleUpdateCustomerDmr(request, env, origin, id, auth.accessLevel, auth.username);
+        }
+        if (request.method === 'DELETE') {
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleDeleteCustomerDmr(env, origin, id);
         }
       }
 
@@ -2272,6 +2338,15 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
     if (scrDocsMatch) {
       const scr = await resolveScrRecord(env, scrDocsMatch[1]);
       return !!scr && Array.isArray(scr.sharedWithCustomers) && scr.sharedWithCustomers.indexOf(organization) !== -1;
+    }
+    // A Customer can read the attachments/photos on their own Customer DMR
+    // (customer_dmr_docs) - direct ownership via customerOrg, same check
+    // scopeCustomerDmrs uses for the list itself (no opt-in share list
+    // needed here, unlike SCR - the record names its Customer directly).
+    const customerDmrDocsMatch = /^customer_dmr_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (customerDmrDocsMatch) {
+      const dmr = await resolveCustomerDmrRecord(env, customerDmrDocsMatch[1]);
+      return !!dmr && dmr.customerOrg === organization;
     }
   }
 
@@ -5060,6 +5135,660 @@ async function handleGetDmrPdf(env, origin, id, accessLevel, organization) {
     return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
   }
   return pdfResponse(pdfBytes, 'DMR ' + clean.dmrNumber + '.pdf', origin);
+}
+
+// ---- Customer DMR (Rev2.19) - the mirror image of the DMR module above:
+// a Customer reports non-conforming material back to Dessimate, so
+// Dessimate is the "Supplier" here (Section 1 is always Dessimate's own
+// identity) and a Customer organization is the one the record is scoped
+// to. Sections 1-7 (including Section 7 "Supplier Response," since
+// Dessimate is the supplier) are Team Member+ only, same asymmetric
+// ownership shape as DMR's Supplier/Section-7 carve-out - just Section 8
+// ("Customer Review/Closure" here, vs. "Dessimate Review/Closure" in DMR)
+// is the one section a Customer login can touch, and even there Team
+// Member+ retains full access too (never exclusive - see
+// validateCustomerDmrFields). No auto-numbering: the Customer supplies
+// their own DMR Number from their own system, so it's a required,
+// uniqueness-checked field instead of a counter-assigned one. The
+// Section 8 comment thread ("capture who wrote what comment when") is
+// managed entirely through its own POST .../comments route, never the
+// generic PUT, so neither party can edit or delete another's past entry
+// by resending a modified array.
+const CUSTOMER_DMRS_FILE_PATH = 'data/customer_dmrs.json';
+const CUSTOMER_DMR_DOC_FOLDER = 'customer_dmr_docs';
+const CUSTOMER_DMR_PHOTOS_MAX = 4;
+
+async function customerDmrNumberTaken(env, dmrNumber, excludeId) {
+  const state = await readJsonArrayFile(env, CUSTOMER_DMRS_FILE_PATH);
+  const target = String(dmrNumber).toLowerCase();
+  return state.items.some(function (o) { return o.id !== excludeId && String(o.dmrNumber).toLowerCase() === target; });
+}
+
+function sanitizeCustomerDmrPhoto(d) {
+  if (!d || !d.path) return null;
+  return {
+    path: d.path,
+    filename: d.filename || '',
+    mimeType: d.mimeType || 'application/octet-stream',
+    size: typeof d.size === 'number' ? d.size : 0,
+    caption: d.caption || '',
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
+  };
+}
+function sanitizeCustomerDmrPhotos(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeCustomerDmrPhoto).filter(Boolean).slice(0, CUSTOMER_DMR_PHOTOS_MAX);
+}
+
+function sanitizeCustomerDmrAttachment(d) {
+  if (!d || !d.path) return null;
+  return {
+    id: d.id || null,
+    path: d.path,
+    filename: d.filename || '',
+    mimeType: d.mimeType || 'application/octet-stream',
+    size: typeof d.size === 'number' ? d.size : 0,
+    comment: d.comment || '',
+    uploadedBy: (d && d.uploadedBy) || '',
+    uploadedAt: (d && d.uploadedAt) || null
+  };
+}
+function sanitizeCustomerDmrAttachments(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeCustomerDmrAttachment).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
+}
+
+// One entry in Section 8's comment thread - append-only, written only by
+// appendCustomerDmrComment below, never by the generic PUT.
+function sanitizeCustomerDmrComment(c) {
+  if (!c) return null;
+  return {
+    id: c.id || cryptoRandomId(),
+    authorUsername: c.authorUsername || '',
+    text: c.text || '',
+    createdAt: c.createdAt || null
+  };
+}
+function sanitizeCustomerDmrComments(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeCustomerDmrComment).filter(Boolean);
+}
+
+function sanitizeCustomerDmr(o) {
+  return {
+    id: o.id,
+    dmrNumber: o.dmrNumber || '',
+    createdAt: o.createdAt || null,
+    createdBy: o.createdBy || '',
+    dmrTitle: o.dmrTitle || '',
+    dateIssued: o.dateIssued || '',
+    // Which Customer organization reported this - staff-set only (never
+    // touched by a Customer's own save), used for scoping/ownership.
+    customerOrg: o.customerOrg || '',
+    // 1. Supplier Information - always Dessimate itself, coerced
+    // server-side regardless of what's submitted (never trust the client
+    // for a fixed identity field, same principle as SCR's locked Supplier
+    // dropdown).
+    supplierOrg: 'Dessimate',
+    supplierContactName: o.supplierContactName || '',
+    supplierContactEmail: o.supplierContactEmail || '',
+    supplierContactPhone: o.supplierContactPhone || '',
+    // 2. Part / Material Information
+    partNumber: o.partNumber || '',
+    partDescription: o.partDescription || '',
+    poNumber: o.poNumber || '',
+    lotDateCodes: o.lotDateCodes || '',
+    quantityReceived: o.quantityReceived || '',
+    quantityDiscrepant: o.quantityDiscrepant || '',
+    dateReceived: o.dateReceived || '',
+    inspectedBy: o.inspectedBy || '',
+    // 3. Discrepancy Type
+    discNotCleaned: !!o.discNotCleaned,
+    discWrongPart: !!o.discWrongPart,
+    discBurrs: !!o.discBurrs,
+    discPackaging: !!o.discPackaging,
+    discDimensional: !!o.discDimensional,
+    discMissingDocs: !!o.discMissingDocs,
+    discSurfaceFinish: !!o.discSurfaceFinish,
+    discQuantity: !!o.discQuantity,
+    discOther: !!o.discOther,
+    discOtherDetail: o.discOtherDetail || '',
+    // 4. Description of Discrepancy
+    descriptionOfDiscrepancy: o.descriptionOfDiscrepancy || '',
+    attachments: sanitizeCustomerDmrAttachments(o.attachments),
+    // 5. Photographic Evidence
+    photos: sanitizeCustomerDmrPhotos(o.photos),
+    // 6. Disposition Requested
+    dispReturnToSupplier: !!o.dispReturnToSupplier,
+    dispRework: !!o.dispRework,
+    dispUseAsIs: !!o.dispUseAsIs,
+    dispScrap: !!o.dispScrap,
+    dispSortInspect: !!o.dispSortInspect,
+    containmentActionRequired: o.containmentActionRequired || '',
+    supplierResponseDueDate: o.supplierResponseDueDate || '',
+    // 7. Supplier Response - Dessimate staff fills this in (Dessimate is
+    // the supplier being responded on behalf of), Team Member+ only.
+    rootCause: o.rootCause || '',
+    correctiveAction: o.correctiveAction || '',
+    supplierSignature: o.supplierSignature || '',
+    supplierResponseDate: o.supplierResponseDate || '',
+    // 8. Customer Review / Closure - the only section a Customer login can
+    // write (reviewedBy/status); Team Member+ can write it too, never
+    // exclusive. reviewComments is append-only - see appendCustomerDmrComment.
+    reviewedBy: o.reviewedBy || '',
+    status: ['open', 'closed_accepted', 'closed_rejected'].indexOf(o.status) !== -1 ? o.status : '',
+    reviewComments: sanitizeCustomerDmrComments(o.reviewComments)
+  };
+}
+
+// Shared by create/update. `isCustomer` keeps ONLY Section 8's
+// reviewedBy/status - everything else is silently stripped even if
+// present, same inverted-strip pattern as DMR's validateDmrFields.
+// reviewComments is never accepted here at all (see the module comment
+// above) - it only ever changes via appendCustomerDmrComment.
+function validateCustomerDmrFields(body, isCustomer) {
+  const section8 = {
+    reviewedBy: (body.reviewedBy || '').toString().trim(),
+    status: ['open', 'closed_accepted', 'closed_rejected'].indexOf(body.status) !== -1 ? body.status : ''
+  };
+  if (isCustomer) return section8;
+  return Object.assign(section8, {
+    dmrTitle: (body.dmrTitle || '').toString().trim(),
+    dateIssued: (body.dateIssued || '').toString().trim(),
+    customerOrg: (body.customerOrg || '').toString().trim(),
+    supplierContactName: (body.supplierContactName || '').toString().trim(),
+    supplierContactEmail: (body.supplierContactEmail || '').toString().trim(),
+    supplierContactPhone: (body.supplierContactPhone || '').toString().trim(),
+    partNumber: (body.partNumber || '').toString().trim(),
+    partDescription: (body.partDescription || '').toString().trim(),
+    poNumber: (body.poNumber || '').toString().trim(),
+    lotDateCodes: (body.lotDateCodes || '').toString().trim(),
+    quantityReceived: (body.quantityReceived || '').toString().trim(),
+    quantityDiscrepant: (body.quantityDiscrepant || '').toString().trim(),
+    dateReceived: (body.dateReceived || '').toString().trim(),
+    inspectedBy: (body.inspectedBy || '').toString().trim(),
+    discNotCleaned: !!body.discNotCleaned,
+    discWrongPart: !!body.discWrongPart,
+    discBurrs: !!body.discBurrs,
+    discPackaging: !!body.discPackaging,
+    discDimensional: !!body.discDimensional,
+    discMissingDocs: !!body.discMissingDocs,
+    discSurfaceFinish: !!body.discSurfaceFinish,
+    discQuantity: !!body.discQuantity,
+    discOther: !!body.discOther,
+    discOtherDetail: (body.discOtherDetail || '').toString().trim(),
+    descriptionOfDiscrepancy: (body.descriptionOfDiscrepancy || '').toString().trim(),
+    attachments: sanitizeCustomerDmrAttachments(body.attachments),
+    photos: sanitizeCustomerDmrPhotos(body.photos),
+    dispReturnToSupplier: !!body.dispReturnToSupplier,
+    dispRework: !!body.dispRework,
+    dispUseAsIs: !!body.dispUseAsIs,
+    dispScrap: !!body.dispScrap,
+    dispSortInspect: !!body.dispSortInspect,
+    containmentActionRequired: (body.containmentActionRequired || '').toString().trim(),
+    supplierResponseDueDate: (body.supplierResponseDueDate || '').toString().trim(),
+    rootCause: (body.rootCause || '').toString().trim(),
+    correctiveAction: (body.correctiveAction || '').toString().trim(),
+    supplierSignature: (body.supplierSignature || '').toString().trim(),
+    supplierResponseDate: (body.supplierResponseDate || '').toString().trim()
+  });
+}
+
+// Team Member+ sees every Customer DMR; a Customer sees only ones naming
+// their own organization. A Supplier login has no role in this module.
+function scopeCustomerDmrs(items, accessLevel, organization) {
+  if (accessLevel === 'customer') {
+    return items.filter(function (o) { return organization && o.customerOrg === organization; });
+  }
+  if (accessLevel === 'supplier') return [];
+  return items;
+}
+
+async function handleListCustomerDmrs(env, origin, accessLevel, organization) {
+  const state = await readJsonArrayFile(env, CUSTOMER_DMRS_FILE_PATH);
+  const items = scopeCustomerDmrs(state.items.map(sanitizeCustomerDmr), accessLevel, organization);
+  return json({ customerDmrs: items }, 200, origin);
+}
+
+// Staff-only - a Customer never creates a Customer DMR, only reviews/closes
+// one (see the module comment above).
+async function handleCreateCustomerDmr(request, env, origin, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const fields = validateCustomerDmrFields(body, false);
+  if (!fields.customerOrg) return json({ message: 'Customer Organization is required.' }, 400, origin);
+
+  const dmrNumber = (body.dmrNumber || '').toString().trim();
+  if (!dmrNumber) return json({ message: 'DMR Number is required.' }, 400, origin);
+  if (await customerDmrNumberTaken(env, dmrNumber, null)) {
+    return json({ message: 'That DMR Number is already in use.' }, 409, origin);
+  }
+
+  const newDmr = Object.assign(
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), createdBy: username || '', dmrNumber: dmrNumber, reviewComments: [] },
+    fields
+  );
+
+  const result = await mutateJsonArrayFile(env, CUSTOMER_DMRS_FILE_PATH, function (items) {
+    items.push(newDmr);
+    return { items: items };
+  });
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeCustomerDmr(newDmr), 201, origin);
+}
+
+async function handleUpdateCustomerDmr(request, env, origin, id, accessLevel, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const isCustomer = accessLevel === 'customer';
+  const fields = validateCustomerDmrFields(body, isCustomer);
+
+  let callerOrg = '';
+  if (isCustomer) {
+    callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Customer organization.' }, 403, origin);
+  }
+
+  let newDmrNumber; // undefined = leave as-is
+  if (body.dmrNumber !== undefined) {
+    if (isCustomer) return json({ message: 'Only Dessimate staff can change the DMR Number.' }, 403, origin);
+    const requested = (body.dmrNumber === null ? '' : String(body.dmrNumber)).trim();
+    if (!requested) return json({ message: 'DMR Number is required.' }, 400, origin);
+    if (await customerDmrNumberTaken(env, requested, id)) {
+      return json({ message: 'That DMR Number is already in use.' }, 409, origin);
+    }
+    newDmrNumber = requested;
+  }
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, CUSTOMER_DMRS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    if (isCustomer && target.customerOrg !== callerOrg) return null; // 404s below rather than 403 - don't reveal existence
+    Object.assign(target, fields); // a Customer's `fields` only ever has reviewedBy/status
+    if (newDmrNumber !== undefined) target.dmrNumber = newDmrNumber;
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeCustomerDmr(saved), 200, origin);
+}
+
+async function handleDeleteCustomerDmr(env, origin, id) {
+  const result = await mutateJsonArrayFile(env, CUSTOMER_DMRS_FILE_PATH, function (items) {
+    const idx = items.findIndex(function (o) { return o.id === id; });
+    if (idx === -1) return null;
+    items.splice(idx, 1);
+    return { items: items };
+  }, { requireFound: true });
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json({ ok: true }, 200, origin);
+}
+
+// Section 8's comment thread - the only way reviewComments ever changes.
+// Team Member+ can comment on any Customer DMR; a Customer can comment
+// only on one naming their own organization. Appends and returns the full
+// updated record; there is no edit/delete route, by design (see the
+// module comment above).
+async function handleAddCustomerDmrComment(request, env, origin, id, accessLevel, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const text = (body.text || '').toString().trim();
+  if (!text) return json({ message: 'Comment text is required.' }, 400, origin);
+
+  const isCustomer = accessLevel === 'customer';
+  let callerOrg = '';
+  if (isCustomer) {
+    callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Customer organization.' }, 403, origin);
+  }
+
+  const comment = { id: cryptoRandomId(), authorUsername: username || '', text: text, createdAt: new Date().toISOString() };
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, CUSTOMER_DMRS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    if (isCustomer && target.customerOrg !== callerOrg) return null;
+    target.reviewComments = Array.isArray(target.reviewComments) ? target.reviewComments : [];
+    target.reviewComments.push(comment);
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeCustomerDmr(saved), 200, origin);
+}
+
+async function resolveCustomerDmrRecord(env, id) {
+  const state = await readJsonArrayFile(env, CUSTOMER_DMRS_FILE_PATH);
+  return state.items.find(function (o) { return o.id === id; }) || null;
+}
+
+// Single-page rendering of the same layout as buildDmrPdf, with Section 1
+// always showing Dessimate's own identity and Section 8 relabeled/rendered
+// as a comment thread instead of one free-text block. See that function
+// for the shared helper definitions (kept in sync deliberately - this repo
+// has no shared-partial mechanism for pdf-lib layouts, same as every other
+// PDF builder here).
+async function buildCustomerDmrPdf(dmr, photoDocs) {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  async function embedImageDoc(doc) {
+    if (!doc || !doc.bytes) return null;
+    try {
+      return (doc.mimeType === 'image/png') ? await pdfDoc.embedPng(doc.bytes) : await pdfDoc.embedJpg(doc.bytes);
+    } catch (e) { return null; }
+  }
+  const photoImages = [];
+  for (let pi = 0; pi < CUSTOMER_DMR_PHOTOS_MAX; pi++) photoImages.push(await embedImageDoc(photoDocs && photoDocs[pi]));
+
+  const pageWidth = 612, pageHeight = 792; // US Letter
+  const margin = 44;
+  const contentW = pageWidth - margin * 2;
+
+  const brandBlue = rgb(0.106, 0.243, 0.706);
+  const ink = rgb(0.1, 0.1, 0.12);
+  const labelGray = rgb(0.42, 0.44, 0.49);
+  const lineGray = rgb(0.85, 0.86, 0.89);
+  const sectionBg = rgb(0.925, 0.941, 0.976);
+
+  const page = pdfDoc.addPage([pageWidth, pageHeight]);
+
+  let logoImg = null;
+  try { logoImg = await pdfDoc.embedJpg(base64ToBytes(DESSIMATE_LOGO_JPG_BASE64)); } catch (e) { logoImg = null; }
+
+  function leftText(str, x, yy, size, opts) {
+    opts = opts || {};
+    page.drawText(str == null ? '' : String(str), { x: x, y: yy, size: size, font: opts.bold ? fontBold : font, color: opts.color || ink });
+  }
+  function rightText(str, rightEdgeX, yy, size, opts) {
+    opts = opts || {};
+    const f = opts.bold ? fontBold : font;
+    const s = str == null ? '' : String(str);
+    page.drawText(s, { x: rightEdgeX - f.widthOfTextAtSize(s, size), y: yy, size: size, font: f, color: opts.color || ink });
+  }
+  function wrapLines(str, maxWidth, size, useFont) {
+    const f = useFont || font;
+    const out = [];
+    (str || '').split(/\r?\n/).forEach(function (raw) {
+      const words = raw.split(/\s+/).filter(Boolean);
+      if (!words.length) { out.push(''); return; }
+      let cur = '';
+      words.forEach(function (w) {
+        const attempt = cur ? cur + ' ' + w : w;
+        if (cur && f.widthOfTextAtSize(attempt, size) > maxWidth) { out.push(cur); cur = w; }
+        else cur = attempt;
+      });
+      if (cur) out.push(cur);
+    });
+    return out;
+  }
+  function fmtDateMDY(s) {
+    const str = (s || '').toString().trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    return m ? (m[2] + '/' + m[3] + '/' + m[1]) : str;
+  }
+  function checkbox(x, yy, checked, label, opts) {
+    opts = opts || {};
+    const size = 8.5;
+    page.drawRectangle({ x: x, y: yy, width: size, height: size, borderColor: ink, borderWidth: 1, color: checked ? ink : rgb(1, 1, 1) });
+    leftText(label, x + size + 4, yy + 0.5, opts.size || 9, { bold: opts.bold });
+  }
+  function sectionHeader(label, x, yy, w) {
+    page.drawRectangle({ x: x, y: yy - 14, width: w, height: 17, color: sectionBg });
+    leftText(label, x + 6, yy - 10, 9.5, { bold: true, color: brandBlue });
+  }
+
+  // ---- Header ---------------------------------------------------------------
+  let hy = pageHeight - 40;
+  if (logoImg) {
+    const dims = logoImg.scaleToFit(108, 60);
+    page.drawImage(logoImg, { x: margin, y: hy - dims.height, width: dims.width, height: dims.height });
+  } else {
+    leftText('Dessimate', margin, hy - 14, 16, { bold: true, color: brandBlue });
+  }
+  rightText('DISCREPANT MATERIAL REPORT (DMR)', pageWidth - margin, hy - 16, 15, { bold: true, color: brandBlue });
+  rightText('DMR #: ' + (dmr.dmrNumber || ''), pageWidth - margin, hy - 34, 10.5, { bold: true });
+  rightText('Date Issued: ' + fmtDateMDY(dmr.dateIssued), pageWidth - margin, hy - 48, 10);
+
+  let y = hy - 78;
+
+  if (dmr.dmrTitle) {
+    const titleLines = wrapLines(dmr.dmrTitle, contentW, 13, fontBold).slice(0, 2);
+    titleLines.forEach(function (line) { leftText(line, margin, y, 13, { bold: true, color: ink }); y -= 16; });
+    y -= 8;
+  }
+
+  // ---- 1. Supplier Information -----------------------------------------------
+  const colW = contentW / 2 - 6;
+  const col2x = margin + contentW / 2 + 6;
+  sectionHeader('1. SUPPLIER INFORMATION', margin, y, colW);
+  sectionHeader('CUSTOMER', col2x, y, colW);
+  y -= 20;
+  leftText('Supplier Name:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText('Dessimate', margin + 90, y, 9.5);
+  leftText('Customer Org:', col2x, y, 8.5, { bold: true, color: labelGray });
+  leftText(dmr.customerOrg || '—', col2x + 90, y, 9.5);
+  y -= 16;
+  leftText('Contact:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText(dmr.supplierContactName || '—', margin + 90, y, 9.5);
+  y -= 16;
+  leftText('Contact Email:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText(dmr.supplierContactEmail || '—', margin + 90, y, 9.5);
+  leftText('Contact Phone:', col2x, y, 8.5, { bold: true, color: labelGray });
+  leftText(dmr.supplierContactPhone || '—', col2x + 90, y, 9.5);
+  y -= 16;
+
+  // ---- 2. Part / Material Information --------------------------------------
+  sectionHeader('2. PART / MATERIAL INFORMATION', margin, y, contentW);
+  y -= 20;
+  function fieldPair(labelA, valueA, labelB, valueB) {
+    leftText(labelA, margin, y, 8.5, { bold: true, color: labelGray });
+    leftText(valueA || '—', margin + 92, y, 9.5);
+    leftText(labelB, col2x, y, 8.5, { bold: true, color: labelGray });
+    leftText(valueB || '—', col2x + 92, y, 9.5);
+    y -= 16;
+  }
+  fieldPair('Part Number:', dmr.partNumber, 'Part Description:', dmr.partDescription);
+  fieldPair('Purchase Order #:', dmr.poNumber, 'Lot / Date Code(s):', dmr.lotDateCodes);
+  fieldPair('Quantity Received:', dmr.quantityReceived, 'Quantity Discrepant:', dmr.quantityDiscrepant);
+  fieldPair('Date Received:', fmtDateMDY(dmr.dateReceived), 'Inspected By:', dmr.inspectedBy);
+  y -= 6;
+
+  // ---- 3. Discrepancy Type -----------------------------------------------------
+  sectionHeader('3. DISCREPANCY TYPE (check all that apply)', margin, y, contentW);
+  y -= 20;
+  const discColW = contentW / 4;
+  const discTypes = [
+    ['Not Cleaned / Contamination', dmr.discNotCleaned], ['Wrong Part / Mismatch', dmr.discWrongPart],
+    ['Burrs / Sharp Edges', dmr.discBurrs], ['Packaging Damage', dmr.discPackaging],
+    ['Dimensional Out of Spec', dmr.discDimensional], ['Missing / Incorrect Documentation', dmr.discMissingDocs],
+    ['Surface Finish / Scratches', dmr.discSurfaceFinish], ['Quantity Shortage / Overage', dmr.discQuantity]
+  ];
+  for (let i = 0; i < discTypes.length; i += 2) {
+    checkbox(margin, y, discTypes[i][1], discTypes[i][0], { size: 8 });
+    if (discTypes[i + 1]) checkbox(margin + discColW * 2, y, discTypes[i + 1][1], discTypes[i + 1][0], { size: 8 });
+    y -= 15;
+  }
+  checkbox(margin, y, dmr.discOther, 'Other: ' + (dmr.discOther && dmr.discOtherDetail ? dmr.discOtherDetail : ''), { size: 8 });
+  y -= 16;
+
+  // ---- 4. Description of Discrepancy -------------------------------------------
+  sectionHeader('4. DESCRIPTION OF DISCREPANCY', margin, y, contentW);
+  y -= 18;
+  const descLines = wrapLines(dmr.descriptionOfDiscrepancy, contentW - 12, 9.5);
+  const descShown = (descLines.length ? descLines : ['']).slice(0, 3);
+  descShown.forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
+  y -= 4;
+  if (dmr.attachments && dmr.attachments.length) {
+    const attLine = 'Attachments: ' + dmr.attachments.map(function (a) { return a.filename; }).join(', ');
+    wrapLines(attLine, contentW, 8).slice(0, 2).forEach(function (l) { leftText(l, margin, y, 8, { color: labelGray }); y -= 11; });
+  }
+  if (dmr.photos && dmr.photos.length) {
+    leftText('Photographic evidence: ' + dmr.photos.length + ' photo' + (dmr.photos.length === 1 ? '' : 's') + ' attached (see page 2).', margin, y, 8, { color: labelGray });
+    y -= 16;
+  } else {
+    y -= 4;
+  }
+
+  // ---- 6. Disposition Requested -------------------------------------------------
+  sectionHeader('6. DISPOSITION REQUESTED', margin, y, contentW);
+  y -= 20;
+  checkbox(margin, y, dmr.dispReturnToSupplier, 'Return to Supplier', { size: 8.5 });
+  checkbox(margin + 150, y, dmr.dispRework, 'Rework at Supplier', { size: 8.5 });
+  checkbox(margin + 300, y, dmr.dispScrap, 'Scrap', { size: 8.5 });
+  y -= 15;
+  checkbox(margin, y, dmr.dispUseAsIs, 'Use As-Is (Dessimate Approval Required)', { size: 8.5 });
+  checkbox(margin + 300, y, dmr.dispSortInspect, 'Sort & 100% Inspect at Dessimate', { size: 8.5 });
+  y -= 18;
+  leftText('Containment Action Required:', margin, y, 8.5, { bold: true, color: labelGray });
+  y -= 12;
+  wrapLines(dmr.containmentActionRequired, contentW - 6, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
+  leftText('Supplier Response Due:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText(fmtDateMDY(dmr.supplierResponseDueDate) || '—', margin + 135, y, 9.5);
+  y -= 16;
+
+  // ---- 7. Supplier Response ------------------------------------------------------
+  sectionHeader('7. SUPPLIER RESPONSE (Dessimate)', margin, y, contentW);
+  y -= 18;
+  leftText('Root Cause:', margin, y, 8.5, { bold: true, color: labelGray });
+  y -= 11;
+  wrapLines(dmr.rootCause, contentW - 12, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
+  y -= 4;
+  leftText('Corrective / Containment Action:', margin, y, 8.5, { bold: true, color: labelGray });
+  y -= 11;
+  wrapLines(dmr.correctiveAction, contentW - 12, 9.5).slice(0, 2).forEach(function (l) { leftText(l, margin + 6, y, 9.5); y -= 12; });
+  y -= 6;
+  leftText('Supplier Signature / Print Name:', margin, y, 8, { bold: true, color: labelGray });
+  page.drawLine({ start: { x: margin, y: y - 14 }, end: { x: margin + 260, y: y - 14 }, thickness: 0.75, color: lineGray });
+  leftText(dmr.supplierSignature || '', margin, y - 12, 9.5);
+  leftText('Date:', margin + 300, y, 8, { bold: true, color: labelGray });
+  page.drawLine({ start: { x: margin + 300, y: y - 14 }, end: { x: margin + 420, y: y - 14 }, thickness: 0.75, color: lineGray });
+  leftText(fmtDateMDY(dmr.supplierResponseDate) || '', margin + 300, y - 12, 9.5);
+  y -= 24;
+
+  // ---- 8. Customer Review / Closure ----------------------------------------------
+  sectionHeader('8. CUSTOMER REVIEW / CLOSURE', margin, y, contentW);
+  y -= 20;
+  leftText('Reviewed By:', margin, y, 8.5, { bold: true, color: labelGray });
+  leftText(dmr.reviewedBy || '—', margin + 80, y, 9.5);
+  checkbox(col2x, y - 1, dmr.status === 'open', 'Open', { size: 8.5 });
+  checkbox(col2x + 60, y - 1, dmr.status === 'closed_accepted', 'Closed - Accepted', { size: 8.5 });
+  checkbox(col2x + 190, y - 1, dmr.status === 'closed_rejected', 'Closed - Rejected', { size: 8.5 });
+  y -= 18;
+  leftText('Comments:', margin, y, 8.5, { bold: true, color: labelGray });
+  y -= 12;
+  const comments = Array.isArray(dmr.reviewComments) ? dmr.reviewComments : [];
+  const footerFloor = 40; // stay clear of the footer line drawn at y=22
+  if (!comments.length) {
+    leftText('No comments yet.', margin + 6, y, 8.5, { color: labelGray });
+    y -= 12;
+  } else {
+    // One truncated line per entry (newest first) so the thread stays a
+    // compact snapshot - the full untruncated thread is always visible in
+    // the app itself. Stops (with a "+N more" note) before running into
+    // the footer rather than overflowing off the page.
+    const ordered = comments.slice().reverse();
+    const commentLineHeight = 11;
+    function truncateToWidth(str, maxWidth) {
+      if (font.widthOfTextAtSize(str, 8) <= maxWidth) return str;
+      let s = str;
+      while (s.length > 0 && font.widthOfTextAtSize(s + '…', 8) > maxWidth) s = s.slice(0, -1);
+      return s + '…';
+    }
+    let shown = 0;
+    for (let ci = 0; ci < ordered.length; ci++) {
+      if (y - commentLineHeight < footerFloor) break;
+      const c = ordered[ci];
+      const prefix = fmtDateMDY((c.createdAt || '').slice(0, 10)) + '  ' + (c.authorUsername || 'Unknown') + ':  ';
+      const prefixWidth = fontBold.widthOfTextAtSize(prefix, 8);
+      const body = truncateToWidth((c.text || '').replace(/\s+/g, ' ').trim(), Math.max(20, contentW - 12 - prefixWidth));
+      leftText(prefix, margin + 6, y, 8, { bold: true, color: labelGray });
+      leftText(body, margin + 6 + prefixWidth, y, 8);
+      y -= commentLineHeight;
+      shown++;
+    }
+    const remaining = ordered.length - shown;
+    if (remaining > 0 && y - commentLineHeight >= footerFloor) {
+      leftText('+' + remaining + ' more comment' + (remaining === 1 ? '' : 's') + ' — see full thread in the system.', margin + 6, y, 8, { color: labelGray });
+      y -= commentLineHeight;
+    }
+  }
+
+  // ---- Footer -----------------------------------------------------------------
+  leftText('Dessimate – Discrepant Material Report (Customer) – Form QF-DMR-02, Rev. A', margin, 22, 7.5, { color: labelGray });
+
+  // ---- Page 2: Photographic Evidence (only when at least one photo exists) -----
+  const photos = Array.isArray(dmr.photos) ? dmr.photos : [];
+  if (photos.length) {
+    const page2 = pdfDoc.addPage([pageWidth, pageHeight]);
+    function leftText2(str, x, yy, size, opts) {
+      opts = opts || {};
+      page2.drawText(str == null ? '' : String(str), { x: x, y: yy, size: size, font: opts.bold ? fontBold : font, color: opts.color || ink });
+    }
+    page2.drawRectangle({ x: margin, y: pageHeight - 40 - 16, width: contentW, height: 16, color: sectionBg });
+    leftText2('5. PHOTOGRAPHIC EVIDENCE — DMR ' + (dmr.dmrNumber || ''), margin + 6, pageHeight - 40 - 12, 9.5, { bold: true, color: brandBlue });
+    const gridTop = pageHeight - 40 - 34;
+    const gap = 16;
+    const boxW = (contentW - gap) / 2;
+    const boxH = 300;
+    for (let i = 0; i < 4; i++) {
+      const col = i % 2, row = Math.floor(i / 2);
+      const bx = margin + col * (boxW + gap);
+      const by = gridTop - boxH - row * (boxH + 34) - row * gap;
+      page2.drawRectangle({ x: bx, y: by, width: boxW, height: boxH, borderColor: lineGray, borderWidth: 1 });
+      const photo = photos[i];
+      const img = photoImages && photoImages[i];
+      leftText2('Photo ' + (i + 1), bx + 6, by + boxH - 14, 8.5, { bold: true, color: labelGray });
+      if (img) {
+        const pad = 8, maxW = boxW - pad * 2, maxH = boxH - 26;
+        const dims = img.scaleToFit(maxW, maxH);
+        page2.drawImage(img, { x: bx + (boxW - dims.width) / 2, y: by + 18 + (maxH - dims.height) / 2, width: dims.width, height: dims.height });
+      } else {
+        leftText2('No photo attached.', bx + 6, by + boxH / 2, 9, { color: labelGray });
+      }
+      if (photo && photo.caption) {
+        leftText2(photo.caption, bx + 6, by - 12, 8, { color: labelGray });
+      }
+    }
+  }
+
+  return pdfDoc.save();
+}
+
+async function handleGetCustomerDmrPdf(env, origin, id, accessLevel, organization) {
+  const raw = await resolveCustomerDmrRecord(env, id);
+  if (!raw) return json({ message: 'Not found.' }, 404, origin);
+  let clean = sanitizeCustomerDmr(raw);
+  const scoped = scopeCustomerDmrs([clean], accessLevel, organization);
+  if (!scoped.length) return json({ message: 'Not found.' }, 404, origin);
+  clean = scoped[0];
+
+  async function loadImageDoc(doc) {
+    if (!doc || !doc.path) return null;
+    try {
+      const bytes = await readGithubFileBytes(env, doc.path);
+      return bytes ? { bytes: bytes, mimeType: doc.mimeType } : null;
+    } catch (e) { return null; }
+  }
+
+  let pdfBytes;
+  try {
+    const photoDocs = [];
+    for (let i = 0; i < clean.photos.length; i++) photoDocs.push(await loadImageDoc(clean.photos[i]));
+    pdfBytes = await buildCustomerDmrPdf(clean, photoDocs);
+  } catch (e) {
+    return json({ message: 'Could not generate PDF: ' + (e && e.message ? e.message : e) }, 500, origin);
+  }
+  return pdfResponse(pdfBytes, 'Customer DMR ' + clean.dmrNumber + '.pdf', origin);
 }
 
 // ---- Supplier Invoices (what a Supplier bills Dessimate against a
