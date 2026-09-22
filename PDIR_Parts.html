@@ -124,6 +124,11 @@
 
   .modalSection{ margin:18px 0 4px; }
   .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
+  .collapsibleHeader{ display:flex; align-items:center; justify-content:space-between; cursor:pointer;
+    user-select:none; }
+  .collapsibleHeader:hover{ color:var(--brand); }
+  .collapsibleHeader .collapseCaret{ font-size:10px; color:var(--label); }
+  .collapsibleHint{ font-size:12px; color:var(--label); margin:-6px 0 10px; }
 
   .checkList{ max-height:150px; overflow-y:auto; border:1px solid var(--line); border-radius:6px;
     padding:9px 10px; margin-top:5px; }
@@ -330,15 +335,18 @@
       </label>
 
       <div class="modalSection">
-        <h3>Customer &amp; Suppliers</h3>
-        <label>Customer
-          <select id="f_customer">
-            <option value="">— Select Customer —</option>
-          </select>
-        </label>
-        <label>Suppliers (one part can have more than one)
-          <div class="checkList" id="f_suppliers_list"></div>
-        </label>
+        <h3 class="collapsibleHeader" id="customerSuppliersToggle">Customer &amp; Suppliers <span class="collapseCaret" id="customerSuppliersCaret">&#9656;</span></h3>
+        <p class="collapsibleHint" id="customerSuppliersHint">Collapsed by default (screen-share friendly) — click to show.</p>
+        <div id="customerSuppliersBody" style="display:none;">
+          <label>Customer
+            <select id="f_customer">
+              <option value="">— Select Customer —</option>
+            </select>
+          </label>
+          <label>Suppliers (one part can have more than one)
+            <div class="checkList" id="f_suppliers_list"></div>
+          </label>
+        </div>
       </div>
 
       <div class="modalSection">
@@ -1091,11 +1099,29 @@
     populateSuppliersChecklist([]);
   }
 
+  // Collapsed by default every time the modal opens (not just once, or a
+  // persisted "remember it was open last time" would defeat the point) -
+  // this section names the Customer and every Supplier on the part, which
+  // the client doesn't want visible by default when screen-sharing in a
+  // meeting.
+  function setCustomerSuppliersCollapsed(collapsed){
+    document.getElementById('customerSuppliersBody').style.display = collapsed ? 'none' : 'block';
+    document.getElementById('customerSuppliersCaret').innerHTML = collapsed ? '&#9656;' : '&#9662;';
+    document.getElementById('customerSuppliersHint').textContent = collapsed
+      ? 'Collapsed by default (screen-share friendly) — click to show.'
+      : 'Click to hide again.';
+  }
+  document.getElementById('customerSuppliersToggle').addEventListener('click', function(){
+    var isOpen = document.getElementById('customerSuppliersBody').style.display !== 'none';
+    setCustomerSuppliersCollapsed(isOpen);
+  });
+
   function openAddModal(){
     editingId = null;
     resetForm();
     document.getElementById('modalTitle').textContent = 'Add Part';
     document.getElementById('modalSub').textContent = 'Fill in what you know — only Part Number is required.';
+    setCustomerSuppliersCollapsed(true);
     document.getElementById('partModalOverlay').classList.add('open');
   }
   function openEditModal(id){
@@ -1122,6 +1148,7 @@
     document.getElementById('f_notes').value = p.notes || '';
     populateCustomerSelect(p.customer || '');
     populateSuppliersChecklist(p.suppliers || []);
+    setCustomerSuppliersCollapsed(true);
     document.getElementById('partModalOverlay').classList.add('open');
   }
   function closeModal(){ document.getElementById('partModalOverlay').classList.remove('open'); }
@@ -1193,10 +1220,26 @@
   });
   // -----------------------------------------------------------------------------
 
+  // Rev2.30: a "?partNumber=..." query string (used by the Open Issues
+  // list's per-part links, so users can jump straight to a part's
+  // drawings/3D CAD) auto-opens that part's Edit modal once parts have
+  // loaded. Silently does nothing if the part number isn't found (e.g. a
+  // stale link to a part since renamed/removed) rather than erroring.
+  function openPartFromQueryString(){
+    var params = new URLSearchParams(window.location.search);
+    var wantedPartNumber = params.get('partNumber');
+    if (!wantedPartNumber) return;
+    var part = lastParts.find(function(p){ return p.partNumber === wantedPartNumber; });
+    if (!part) return;
+    openEditModal(part.id);
+    history.replaceState(null, '', window.location.pathname);
+  }
+
   requireAuthThen(async function(){
     await resolveAccessLevel();
     await loadOrgs();
     await loadParts();
+    openPartFromQueryString();
   });
 })();
 </script>
