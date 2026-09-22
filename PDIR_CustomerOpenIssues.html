@@ -1038,17 +1038,20 @@
       var picHtml = (issue.issuePicture && issue.issuePicture.path)
         ? '<img class="picThumb" src="" data-pic-thumb="' + escapeHtml(issue.id) + '" alt="Issue picture">'
         : '<span class="noPic">No picture</span>';
-      // Rev2.30: each Part Number links straight to that part's Edit
-      // screen in the Parts module (new tab, so the issue list stays put)
-      // for quick access to its drawings/3D CAD - see
-      // openPartFromQueryString in PDIR_Parts.html for the receiving end.
-      var partNumbersHtml = (issue.partNumbers || []).map(function(pn){
-        return '<a class="partNumberLink" href="PDIR_Parts.html?partNumber=' + encodeURIComponent(pn) + '" target="_blank" rel="noopener" title="Open ' + escapeHtml(pn) + ' in Parts">' + escapeHtml(pn) + '</a>';
-      }).join(', ') || '—';
+      // Rev2.30 briefly linked each Part Number here to that part's Edit
+      // screen in the Parts module for quick access to its drawings/3D
+      // CAD. Rev2.32 suppresses that per the client - with only a handful
+      // of part numbers in play, it read as confusing (mixing up opening
+      // an issue vs. opening a part) rather than helpful. Plain text again
+      // for now; the receiving end (openPartFromQueryString in
+      // PDIR_Parts.html, reading a "?partNumber=" query string) is left
+      // in place, unused, so this can be turned back on later just by
+      // restoring the <a href="PDIR_Parts.html?partNumber=..."> markup
+      // below.
       return '<tr>' +
         '<td><button type="button" class="issueNumberLink" data-edit="' + escapeHtml(issue.id) + '" title="' + escapeHtml(issue.issueNumber) + '">' + escapeHtml(displayIssueNumber(issue.issueNumber)) + '</button></td>' +
         '<td>' + statusPillHtml(issue.status) + '</td>' +
-        '<td>' + partNumbersHtml + '</td>' +
+        '<td>' + escapeHtml((issue.partNumbers || []).join(', ')) + '</td>' +
         '<td><div class="cellClamp" title="' + escapeHtml(issue.issueTitle || issue.issueDescription) + '">' + escapeHtml(listTitleText(issue)) + '</div></td>' +
         '<td>' + picHtml + '</td>' +
         '<td><div class="cellClamp short" title="' + escapeHtml(issue.rootCause) + '">' + escapeHtml(issue.rootCause) + '</div></td>' +
