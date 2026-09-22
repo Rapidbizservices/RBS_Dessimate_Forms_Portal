@@ -119,6 +119,11 @@
   .notesCell .noteLine .noteMeta{ color:var(--label); font-weight:700; }
   .notesCell .noteMore{ font-size:11px; color:var(--label); font-style:italic; }
   .statusPill{ display:inline-block; font-size:11px; font-weight:700; border-radius:5px; padding:3px 8px; white-space:nowrap; }
+  .statusPill.open{ color:#1c3877; background:#e8ecfa; }
+  /* Plan/Do/Check/Act suppressed (Rev2.31 - see OPEN_ISSUE_STATUS_LABELS)
+     but kept styleable in case a still-stored legacy record ever renders
+     with its own status key directly rather than through statusPillHtml's
+     open/closed normalization. */
   .statusPill.plan{ color:var(--label); background:#eef0f4; }
   .statusPill.do{ color:#1c3877; background:#e8ecfa; }
   .statusPill.check{ color:#8a6d00; background:#fff6cc; }
@@ -380,12 +385,9 @@
           </div>
         </div>
         <div class="numberField">
-          <label for="f_status">Status <span style="font-weight:400;">(PDCA cycle)</span></label>
+          <label for="f_status">Status</label>
           <select id="f_status">
-            <option value="plan">Plan</option>
-            <option value="do">Do</option>
-            <option value="check">Check</option>
-            <option value="act">Act</option>
+            <option value="open">Open</option>
             <option value="closed">Closed</option>
           </select>
         </div>
@@ -819,9 +821,15 @@
     var session = getSession();
     return { uploadedBy: (session && session.username) || '', uploadedAt: new Date().toISOString() };
   }
-  var OPEN_ISSUE_STATUS_LABELS = { plan: 'Plan', do: 'Do', check: 'Check', act: 'Act', closed: 'Closed' };
+  // Rev2.31: back to just Open/Closed for now (Plan/Do/Check/Act
+  // suppressed per the client - "we will come back to this when needed").
+  // The backend still accepts/keeps those older values on any record that
+  // already has one (nothing is migrated), so any status other than
+  // 'closed' - including a legacy plan/do/check/act - normalizes to
+  // "Open" here rather than erroring or showing a stale PDCA label.
+  var OPEN_ISSUE_STATUS_LABELS = { open: 'Open', closed: 'Closed' };
   function statusPillHtml(status){
-    var key = ['plan', 'do', 'check', 'act', 'closed'].indexOf(status) !== -1 ? status : 'plan';
+    var key = status === 'closed' ? 'closed' : 'open';
     return '<span class="statusPill ' + key + '">' + OPEN_ISSUE_STATUS_LABELS[key] + '</span>';
   }
   // List view only - strips the "OI-" prefix so the column just reads
@@ -1435,7 +1443,10 @@
     document.getElementById('f_issueNumber').value = issue.issueNumber;
     document.getElementById('f_customerOrg').innerHTML = customerOrgOptions(issue.customerOrg || '');
     document.getElementById('f_championResponsible').value = issue.championResponsible || '';
-    document.getElementById('f_status').value = issue.status || 'plan';
+    // A legacy plan/do/check/act status (from before Rev2.31) has no
+    // matching <option> in the now-suppressed dropdown - falls back to
+    // Open, same normalization statusPillHtml uses for the list view.
+    document.getElementById('f_status').value = issue.status === 'closed' ? 'closed' : 'open';
 
     partNumberRows = (issue.partNumbers || []).slice();
     document.getElementById('f_issueTitle').value = issue.issueTitle || '';
@@ -1626,7 +1637,7 @@
     var daysSince = (createdDate && !isNaN(createdDate.getTime())) ? Math.floor((Date.now() - createdDate.getTime()) / 86400000) : '';
     return {
       issueNumber: issue.issueNumber || '',
-      status: OPEN_ISSUE_STATUS_LABELS[issue.status] || 'Plan',
+      status: issue.status === 'closed' ? 'Closed' : 'Open',
       customerOrg: issue.customerOrg || '',
       partNumbers: (issue.partNumbers || []).join(', '),
       issueTitle: truncateForExport(issue.issueTitle, 300),

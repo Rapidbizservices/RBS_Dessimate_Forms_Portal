@@ -1137,25 +1137,23 @@ pattern used throughout this app) and the single **Issue Picture** slot
 are both staff-owned - a Customer can view but never add, remove, or
 re-comment a file.
 
-**Status** (Rev2.26) is a 5-value PDCA cycle - **Plan** (default for a new
-issue), **Do**, **Check**, **Act**, plus **Closed** - replacing the
-original plain Open/Closed toggle. A record still on file with the old
-"open" value reads as "Plan" (the new default) rather than being guessed
-into one of the 4 active stages; "closed" needed no migration, it's still
-valid as-is. Set from a compact dropdown in the Add/Edit modal (was
-briefly a 5-option radio group, switched to a dropdown for space) and
-shown as a color-coded pill in the list view - gray for Plan, blue for
-Do, amber for Check, orange for Act, green for Closed, same color-coded-
-pill idiom used elsewhere in this app. A stage/status filter for the list
-is planned but not built yet. The Excel export's Status column shows the
-same actual value (Plan/Do/Check/Act/Closed).
+**Status** (Rev2.31) is a plain **Open**/**Closed** toggle again - **Open**
+is the default for a new issue. Rev2.26 had briefly expanded this to a
+5-value PDCA cycle (Plan/Do/Check/Act/Closed); the client asked to
+suppress that back down to just two ("we will come back to this when
+needed"). Nothing was migrated or deleted server-side to do this -
+`OPEN_ISSUE_STATUSES` still lists `plan`/`do`/`check`/`act` as valid
+alongside `open`/`closed`, so a record already carrying one of those from
+the Rev2.26 window still passes validation and keeps working; only the
+frontend stopped offering them as a new pick, normalizing any of them
+(and the dropdown, and the Excel export's Status column) to plain "Open"
+for display. Set from a 2-option dropdown in the Add/Edit modal, shown as
+a color-coded pill in the list view - blue for Open, green for Closed.
 
-**Agentic AI issue summary** is a staff-and-Customer-visible stub button
-per row in the list (not the modal, unlike DMR's Agentic 8D button) -
-clicking it just explains the feature is coming soon. The idea, per the
-brief: an AI agent will summarize the issue in text and audio, answer a
-user's follow-up query, and read its summary aloud. No backend route
-exists for it yet.
+The Agentic AI issue summary stub button that used to sit in its own list
+column (a "coming soon" placeholder, never a real feature) was removed
+entirely in Rev2.30 to give that space to the Notes/Comments column
+instead.
 
 No PDF generation - not requested for this module.
 

@@ -6434,12 +6434,17 @@ async function handleGetCustomerDmrPdf(env, origin, id, accessLevel, organizatio
 const CUSTOMER_OPEN_ISSUES_FILE_PATH = 'data/customer_open_issues.json';
 const CUSTOMER_OPEN_ISSUE_DOC_FOLDER = 'customer_open_issue_docs';
 const OPEN_ISSUE_PART_NUMBERS_MAX = 5;
-// Rev2.26: status is a 5-value PDCA cycle (Plan/Do/Check/Act) plus Closed,
-// replacing the old plain Open/Closed. A list-view filter for this is
-// planned but not built yet - for now this just adds the ability to set
-// one of the 5 values.
-const OPEN_ISSUE_STATUSES = ['plan', 'do', 'check', 'act', 'closed'];
-const OPEN_ISSUE_DEFAULT_STATUS = 'plan';
+// Rev2.26 replaced the original plain Open/Closed with a 5-value PDCA
+// cycle (Plan/Do/Check/Act) plus Closed. Rev2.31 suppresses that back down
+// to just Open/Closed per the client ("we will come back to this when
+// needed") - 'open' is added as the new default/only non-closed choice,
+// but plan/do/check/act stay valid here (not deleted) so a record already
+// carrying one of those from before Rev2.31 still passes validation and
+// keeps working; only the frontend stops offering them as a new pick
+// (see OPEN_ISSUE_STATUS_LABELS in PDIR_CustomerOpenIssues.html, which
+// normalizes any of them to "Open" for display).
+const OPEN_ISSUE_STATUSES = ['open', 'plan', 'do', 'check', 'act', 'closed'];
+const OPEN_ISSUE_DEFAULT_STATUS = 'open';
 
 // Open Issue # is formatted "OI-####" (4 digits), same voluntary/custom-
 // value auto-numbering as CR/SCR/DMR Number.
