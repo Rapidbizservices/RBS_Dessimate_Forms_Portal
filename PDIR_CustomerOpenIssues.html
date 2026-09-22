@@ -94,7 +94,7 @@
   .cellClamp.short{ -webkit-line-clamp:2; max-width:140px; }
   .picThumb{ width:56px; height:56px; object-fit:cover; border-radius:6px; border:1px solid var(--line); cursor:pointer; display:block; }
   .noPic{ color:var(--label); font-style:italic; font-size:11.5px; }
-  .notesCell{ max-width:340px; display:flex; flex-direction:column; gap:4px; }
+  .notesCell{ max-width:520px; display:flex; flex-direction:column; gap:4px; }
   .notesCell .noteLine{ font-size:11px; line-height:1.35; }
   .notesCell .noteLine .noteMeta{ color:var(--label); font-weight:700; }
   .notesCell .noteMore{ font-size:11px; color:var(--label); font-style:italic; }
@@ -107,8 +107,6 @@
   .rowActions{ display:flex; flex-direction:column; gap:6px; white-space:nowrap; }
   .rowActions button{ font-family:inherit; font-size:12px; font-weight:600; cursor:pointer;
     border-radius:6px; padding:6px 10px; white-space:nowrap; }
-  .aiBtn{ color:#6d3fd1; background:#fff; border:1px solid #6d3fd1; }
-  .aiBtn:hover{ background:#f1ecfb; }
   .deleteBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
   .deleteBtn:hover{ background:#fbeaea; border-color:#b23b3b; }
 
@@ -310,7 +308,6 @@
           <th>Next Action</th>
           <th>Champion/Responsible</th>
           <th>Notes/Comments</th>
-          <th>Agentic AI Summary</th>
           <th></th>
         </tr>
       </thead>
@@ -962,7 +959,6 @@
         '<td><div class="cellClamp short" title="' + escapeHtml(issue.nextAction) + '">' + escapeHtml(issue.nextAction) + '</div></td>' +
         '<td>' + escapeHtml(issue.championResponsible) + '</td>' +
         '<td>' + notesCellHtml(issue.comments) + '</td>' +
-        '<td><button type="button" class="aiBtn" data-ai-summary="' + escapeHtml(issue.id) + '">AI Summary</button></td>' +
         '<td>' + (canManageAll() ? '<div class="rowActions"><button type="button" class="deleteBtn" data-delete="' + escapeHtml(issue.id) + '">Delete</button></div>' : '') + '</td>' +
         '</tr>';
     }).join('');
@@ -989,11 +985,6 @@
     });
     bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
       btn.addEventListener('click', function(){ deleteIssue(this.getAttribute('data-delete')); });
-    });
-    bodyEl.querySelectorAll('[data-ai-summary]').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        alert('Agentic AI issue summary is coming soon. In the future, an AI agent will summarize this issue in text and audio, answer follow-up questions, and read its summary aloud.');
-      });
     });
   }
 
