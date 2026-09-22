@@ -249,7 +249,7 @@
           <th data-sort-key="customerPartNumber">Customer Part #</th>
           <th data-sort-key="revision">Rev</th>
           <th data-sort-key="status">Status</th>
-          <th data-sort-key="customer">Customer</th>
+          <th data-sort-key="customer" id="customerColHead">Customer</th>
           <th>Suppliers</th>
           <th>Attachments</th>
           <th></th>
@@ -432,6 +432,21 @@
       throw new Error('Your session has expired — please log in again.');
     }
     return res;
+  }
+
+  // A Supplier login sees every Part already scoped to just their own org
+  // server-side (scopeParts), but the Customer name on those Parts is still
+  // competitively sensitive info a Supplier shouldn't see about a part they
+  // make - matches how a Supplier never sees Customer-side detail elsewhere
+  // in this app. The column is hidden client-side only for that role.
+  var currentAccessLevel = null;
+  async function resolveAccessLevel(){
+    var session = getSession();
+    if (!session) { currentAccessLevel = null; return; }
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+      if (res.ok) { var data = await res.json(); currentAccessLevel = data.accessLevel || 'team_member'; }
+    } catch (e) { console.error('Could not resolve access level', e); }
   }
   function workerContentsPath(fullPath){
     return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
@@ -932,17 +947,22 @@
     var sorted = window.SortableTable.sortItems(defaultOrder, partSortState, function(p, key){ return p[key]; });
     window.SortableTable.updateSortIndicators(document.getElementById('partTableHead'), partSortState);
 
+    var isSupplierUser = currentAccessLevel === 'supplier';
+    var customerColHead = document.getElementById('customerColHead');
+    if (customerColHead) customerColHead.style.display = isSupplierUser ? 'none' : '';
+
     bodyEl.innerHTML = sorted.map(function(p){
       var suppliersText = (p.suppliers || []).length ? escapeHtml(p.suppliers.join(', ')) : '—';
       var attCount = (p.attachments || []).length;
       var docHtml = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '—';
+      var customerCell = isSupplierUser ? '' : '<td>' + escapeHtml(p.customer || '—') + '</td>';
       return '<tr>' +
         '<td class="partNumber">' + escapeHtml(p.partNumber) + '</td>' +
         '<td>' + escapeHtml(p.name) + '</td>' +
         '<td>' + escapeHtml(p.customerPartNumber) + '</td>' +
         '<td>' + escapeHtml(p.revision) + '</td>' +
         '<td><span class="statusBadge ' + escapeHtml(p.status) + '">' + escapeHtml(p.status) + '</span></td>' +
-        '<td>' + escapeHtml(p.customer || '—') + '</td>' +
+        customerCell +
         '<td class="supplierList">' + suppliersText + '</td>' +
         '<td class="docCell">' + docHtml + '</td>' +
         '<td><div class="rowActions">' +
@@ -1174,6 +1194,7 @@
   // -----------------------------------------------------------------------------
 
   requireAuthThen(async function(){
+    await resolveAccessLevel();
     await loadOrgs();
     await loadParts();
   });
