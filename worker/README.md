@@ -499,6 +499,10 @@ linked here for a fast overview if you're updating an existing deployment.
   just at list-time, so a draft attachment's path is unreachable even if a
   Customer somehow already had it.
 
+  > **Update (Rev2.27):** the Customer-facing side described above has
+  > since moved to its own, completely separate Customer RFQ module - see
+  > "RFQ" and "Customer RFQ" further down.
+
 ## The dashboard (`index.html`)
 
 `index.html` is a persistent left sidebar with a content pane next to it —
@@ -1251,6 +1255,65 @@ attachment instead of rebuilding it on every click; if none has been
 generated yet, it says so instead of silently doing nothing. Attachments
 here also carry a short `comment` field, staff-only like the rest of this
 module.
+
+## RFQ
+
+Dessimate's sourcing side - `RFQ.html`, stored in `data/rfqs.json`. Dessimate
+shares a package of parts/drawings with one or more Suppliers
+(`sharedWithSuppliers: string[]`, a Team Member+ managed checklist), and
+each named Supplier submits its own price/tooling-cost quote per line
+through a narrow `PUT /rfqs/<id>/quote` endpoint (never the generic record
+PUT), so a Supplier's write can only ever touch its own `supplierQuotes`
+entry. **RFQ Number** is voluntary/optional and stays editable indefinitely
+after creation (unlike Dessimate PO Number), auto-assigned from its own
+counter when left blank. Reached via its own "RFQ" sidebar entry -> a
+chooser hub (`RFQHub.html`, same two-tile pattern as the DMR/Change
+Request hubs) with a "Dessimate RFQ" tile (this module, staff + Supplier)
+and a "Customer RFQ" tile (see below, staff + Customer).
+
+**Rev2.27 split this module in two.** Originally (Rev2.9) a single RFQ
+record also carried a Customer-facing half (`sharedWithCustomers`/
+`dessimateQuote`) - "no Supplier data even via a workaround" required a lot
+of per-request stripping in `scopeRfqs` to keep the two sides apart on the
+same record. That Customer-facing half has since moved to its own,
+completely independent Customer RFQ module/store (own number series, own
+data file) - this module is Supplier-only now, and a `customer`-level login
+has no role here at all (`scopeRfqs` returns `[]` for it). Every RFQ that
+existed before the split was one-time cloned into the new Customer RFQ
+store (`POST /rfqs/clone-to-customer-rfqs`, Super Admin only, idempotent -
+see `handleCloneRfqsToCustomerRfqs`); after that clone the two stores
+evolve completely independently, so this module and Customer RFQ no longer
+share any data structure at runtime even though they started as one.
+
+## Customer RFQ
+
+Dessimate's quoting-to-Customer side - `CustomerRFQ.html`, stored in
+`data/customer_rfqs.json`, reached via the RFQ hub's "Customer RFQ" tile.
+Structurally almost identical to RFQ above (RFQ Number/Date, Notes, part
+lines with EAU + per-part attachments, `dessimateAttachments`), but there
+is no Supplier role in this module at all - Dessimate shares the package
+directly with one or more Customers (`sharedWithCustomers: string[]`, same
+Team Member+ managed checklist pattern), and Dessimate itself (Admin/Super
+Admin only) quotes back to the Customer through a "Dessimate Quote" panel
+(`{lines:[{lineId,price,toolingCost}], attachments, notes, submitted,
+submittedAt, submittedBy}`) via its own `PUT
+/customer-rfqs/<id>/dessimate-quote` endpoint, kept out of the general
+record PUT the same "never trust the client for a privileged field"
+pattern used everywhere else in this app. `submitted` is the one-way (until
+re-submitted) gate `scopeCustomerRfqs` checks before a Customer login can
+see any of it - Admin/Super Admin can save a draft any number of times with
+`submit: false`, and only `submit: true` (the "Submit to Customer" button,
+separate from "Save Draft") stamps `submittedAt`/`submittedBy` and flips
+visibility, matching "only after the team hits Submit should the customer
+see the response." **RFQ Number** auto-assigns from its own separate
+9500-series counter (9500, 9501, 9502, ...) when left blank, entirely
+independent of the original RFQ module's counter, and stays editable
+indefinitely after creation, same as RFQ. Attachments live under their own
+`customer_rfq_docs/`/`customer_rfq_dessimate_quote_docs/` R2 folders -
+`isContentsPathAllowedForExternal` gates both to `customer`-level access
+only, checked fresh from storage on every file request (never
+list-time-only), same defense-in-depth already used for the original RFQ
+module's equivalent branches.
 
 ## About the GitHub repo's visibility
 

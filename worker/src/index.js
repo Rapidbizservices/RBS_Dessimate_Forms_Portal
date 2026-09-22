@@ -159,9 +159,8 @@
  *   GET    /rfqs                       - auth required (any signed-in user); full RFQ list, scoped
  *                                        (a Supplier login sees only RFQs shared with its own
  *                                        organization, and only its own submitted quote on each; a
- *                                        Customer login sees only RFQs shared with its own
- *                                        organization, never any Supplier data, and the Dessimate
- *                                        Quote only once it's been submitted).
+ *                                        Customer login has no role in this module at all - Rev2.27
+ *                                        split the Customer-facing half out to /customer-rfqs).
  *   POST   /rfqs                       - team_member or above required; create an RFQ.
  *   GET    /rfqs/peek-number           - team_member or above required; preview of the next
  *                                        auto-assigned RFQ Number (does not consume it).
@@ -172,10 +171,28 @@
  *   PUT    /rfqs/<id>/quote            - Supplier only, and only if that RFQ has been shared with
  *                                        their organization; submits/updates their own price/
  *                                        tooling-cost quote and quote attachments.
- *   PUT    /rfqs/<id>/dessimate-quote  - admin or above required; submits/updates the "Dessimate
- *                                        Quote" back to the Customer (price/tooling cost per line,
- *                                        attachments, notes) - invisible to that Customer login
- *                                        until called with submit:true.
+ *   POST   /rfqs/clone-to-customer-rfqs
+ *                                       - super_admin only; one-time snapshot clone of every RFQ
+ *                                        into the Customer RFQ store (new 9500-series numbers,
+ *                                        Supplier data dropped, attachment bytes physically copied
+ *                                        to new R2 paths). Idempotent - already-cloned RFQs are
+ *                                        skipped on a re-run.
+ *   GET    /customer-rfqs              - auth required (any signed-in user); full Customer RFQ list,
+ *                                        scoped (a Customer login sees only RFQs shared with its own
+ *                                        organization, and the Dessimate Quote only once it's been
+ *                                        submitted; there is no Supplier role in this module).
+ *   POST   /customer-rfqs              - team_member or above required; create a Customer RFQ.
+ *   GET    /customer-rfqs/peek-number  - team_member or above required; preview of the next
+ *                                        auto-assigned Customer RFQ Number (9500-series, separate
+ *                                        counter from /rfqs - does not consume it).
+ *   PUT    /customer-rfqs/<id>         - team_member or above required; update one (RFQ Number
+ *                                        stays editable indefinitely, same as /rfqs/<id>).
+ *   DELETE /customer-rfqs/<id>         - team_member or above required; hard delete (attachments
+ *                                        left in place, same as the other modules).
+ *   PUT    /customer-rfqs/<id>/dessimate-quote
+ *                                       - admin or above required; submits/updates the "Dessimate
+ *                                        Quote" back to the Customer - invisible to that Customer
+ *                                        login until called with submit:true.
  *   GET    /change-requests            - any signed-in user; scoped by role (team_member or above
  *                                        sees every CR; a Supplier login sees only CRs where it's
  *                                        the named supplierOrg, in either direction).
@@ -669,16 +686,15 @@ export default {
         return await handleSubmitRfqQuote(request, env, origin, id, organization, auth.username);
       }
 
-      // The "Dessimate Quote" back to the Customer - Admin/Super Admin only
-      // (stricter than the Team Member+ that manages the rest of an RFQ
-      // record - see handleUpdateRfqDessimateQuote). Checked before the
-      // generic '/rfqs/<id>' block, same ordering as the Supplier quote
-      // route just above.
-      if (/^\/rfqs\/[^/]+\/dessimate-quote$/.test(url.pathname) && request.method === 'PUT') {
-        const id = decodeURIComponent(url.pathname.split('/')[2]);
-        const auth = await requireRole(request, env, ['super_admin', 'admin']);
+      // One-time snapshot clone of every RFQ into the new Customer RFQ
+      // store (see handleCloneRfqsToCustomerRfqs) - Super Admin only, since
+      // it's a one-shot data-migration operation, not routine record
+      // management. Checked before the generic '/rfqs/' block below, same
+      // ordering as every other specific-before-prefix route in this file.
+      if (url.pathname === '/rfqs/clone-to-customer-rfqs' && request.method === 'POST') {
+        const auth = await requireRole(request, env, ['super_admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleUpdateRfqDessimateQuote(request, env, origin, id, auth.username);
+        return await handleCloneRfqsToCustomerRfqs(env, origin);
       }
 
       if (url.pathname.startsWith('/rfqs/')) {
@@ -687,6 +703,43 @@ export default {
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         if (request.method === 'PUT') return await handleUpdateRfq(request, env, origin, id);
         if (request.method === 'DELETE') return await handleDeleteRfq(env, origin, id);
+      }
+
+      if (url.pathname === '/customer-rfqs') {
+        if (request.method === 'GET') {
+          const auth = await requireAuthWithScope(request, env);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleListCustomerRfqs(env, origin, auth.accessLevel, auth.organization);
+        }
+        if (request.method === 'POST') {
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          return await handleCreateCustomerRfq(request, env, origin);
+        }
+      }
+
+      if (url.pathname === '/customer-rfqs/peek-number' && request.method === 'GET') {
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handlePeekCustomerRfqNumber(env, origin);
+      }
+
+      // The Dessimate Quote back to the Customer - Admin/Super Admin only,
+      // same bar as the original RFQ module. Checked before the generic
+      // '/customer-rfqs/<id>' block below.
+      if (/^\/customer-rfqs\/[^/]+\/dessimate-quote$/.test(url.pathname) && request.method === 'PUT') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireRole(request, env, ['super_admin', 'admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleUpdateCustomerRfqQuote(request, env, origin, id, auth.username);
+      }
+
+      if (url.pathname.startsWith('/customer-rfqs/')) {
+        const id = decodeURIComponent(url.pathname.slice('/customer-rfqs/'.length));
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        if (request.method === 'PUT') return await handleUpdateCustomerRfq(request, env, origin, id);
+        if (request.method === 'DELETE') return await handleDeleteCustomerRfq(env, origin, id);
       }
 
       if (url.pathname === '/change-requests') {
@@ -2342,31 +2395,17 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
     return visibleParts.some(function (p) { return (p.partNumber || '').toLowerCase() === partNumber.toLowerCase(); });
   }
 
-  // RFQ module - a Supplier can read the Dessimate-side attachments (rfq_docs)
-  // and its own previously-submitted quote files (rfq_quote_docs) for any
-  // RFQ currently shared with its organization, plus the one shared
-  // quote-format template. A Customer can read the same Dessimate-side
-  // attachments (drawings/3D - the Rev2.9 brief explicitly allows this
-  // pre-quote: "customer users should only see the RFQ number, part
-  // numbers... drawings, 3D") for any RFQ shared with its organization, and
-  // the Dessimate Quote's own attachments (rfq_dessimate_quote_docs) only
-  // once that quote has actually been submitted, never a draft. A Supplier
-  // never reaches rfq_dessimate_quote_docs (or rfq_quote_template's
-  // Customer-facing counterpart, which doesn't exist) and a Customer never
-  // reaches rfq_quote_docs/rfq_quote_template at all - the two sides stay
-  // completely partitioned at the file-access layer too, matching "no
-  // Supplier data even via a workaround".
-  if (accessLevel === 'supplier' || accessLevel === 'customer') {
+  // RFQ module - Rev2.27: Supplier-only now (the Customer-facing half moved
+  // to its own Customer RFQ module/store below). A Supplier can read the
+  // Dessimate-side attachments (rfq_docs) and its own previously-submitted
+  // quote files (rfq_quote_docs) for any RFQ currently shared with its
+  // organization, plus the one shared quote-format template.
+  if (accessLevel === 'supplier') {
     const rfqDocsMatch = /^rfq_docs\/([^/]+)\/.+$/.exec(decoded);
     if (rfqDocsMatch) {
       const rfq = await resolveRfqRecord(env, rfqDocsMatch[1]);
-      if (!rfq) return false;
-      return accessLevel === 'supplier'
-        ? rfq.sharedWithSuppliers.indexOf(organization) !== -1
-        : rfq.sharedWithCustomers.indexOf(organization) !== -1;
+      return !!rfq && rfq.sharedWithSuppliers.indexOf(organization) !== -1;
     }
-  }
-  if (accessLevel === 'supplier') {
     if (/^rfq_quote_template\/.+$/.test(decoded)) return true;
     const rfqQuoteDocsMatch = /^rfq_quote_docs\/([^/]+)\/([^/]+)\/.+$/.exec(decoded);
     if (rfqQuoteDocsMatch) {
@@ -2407,9 +2446,18 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
     }
   }
   if (accessLevel === 'customer') {
-    const dessimateQuoteDocsMatch = /^rfq_dessimate_quote_docs\/([^/]+)\/.+$/.exec(decoded);
-    if (dessimateQuoteDocsMatch) {
-      const rfq = await resolveRfqRecord(env, dessimateQuoteDocsMatch[1]);
+    // Customer RFQ module (Rev2.27) - separate store from the Supplier-only
+    // RFQ module above; this module has no Supplier role at all, so both the
+    // Dessimate-side attachments and the Dessimate Quote's own attachments
+    // are gated on Customer access only.
+    const customerRfqDocsMatch = /^customer_rfq_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (customerRfqDocsMatch) {
+      const rfq = await resolveCustomerRfqRecord(env, customerRfqDocsMatch[1]);
+      return !!rfq && rfq.sharedWithCustomers.indexOf(organization) !== -1;
+    }
+    const customerRfqQuoteDocsMatch = /^customer_rfq_dessimate_quote_docs\/([^/]+)\/.+$/.exec(decoded);
+    if (customerRfqQuoteDocsMatch) {
+      const rfq = await resolveCustomerRfqRecord(env, customerRfqQuoteDocsMatch[1]);
       return !!rfq && rfq.sharedWithCustomers.indexOf(organization) !== -1 && !!rfq.dessimateQuote.submitted;
     }
     // A Customer can read the attachments/original PO on their own Customer
@@ -2671,7 +2719,8 @@ const DEFAULT_COUNTERS = {
   nextCrNumber: 1, // Change Request module - formatted "CR-###" (see reserveCrNumber)
   nextScrNumber: 1, // Customer SCR module - formatted "SCR-###" (see reserveScrNumber)
   nextDmrNumber: 1, // Discrepant Material Report module - formatted "DMR-####" (see reserveDmrNumber)
-  nextOpenIssueNumber: 1 // Customer Open Issues List module - formatted "OI-####" (see reserveOpenIssueNumber)
+  nextOpenIssueNumber: 1, // Customer Open Issues List module - formatted "OI-####" (see reserveOpenIssueNumber)
+  nextCustomerRfqNumber: 9500 // Customer RFQ module - its own series, separate from nextRfqNumber (see reserveCustomerRfqNumber)
 };
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -3471,27 +3520,6 @@ function sanitizeRfqSupplierQuote(q) {
     submittedBy: (q && q.submittedBy) || ''
   };
 }
-// The "Dessimate Quote" back to the Customer - price/tooling cost per line
-// (same {lineId,price,toolingCost} shape as a Supplier's own quote lines,
-// reusing sanitizeRfqSupplierQuoteLine), attachments, and a notes field
-// meant for the Customer (separate from the RFQ's own internal `notes`,
-// which a Customer never sees at all). `submitted` is the gate: Rev2.9
-// brief - "only after the team hits Submit should the Customer see the
-// response" - stays false while Admin/Super Admin are still drafting it
-// (handleUpdateRfqDessimateQuote can save repeatedly without submitting),
-// flips true (and stamps submittedAt/submittedBy) only when that endpoint
-// is called with `submit: true`.
-function sanitizeRfqDessimateQuote(q) {
-  if (!q || typeof q !== 'object') return { lines: [], attachments: [], notes: '', submitted: false, submittedAt: null, submittedBy: '' };
-  return {
-    lines: Array.isArray(q.lines) ? q.lines.map(sanitizeRfqSupplierQuoteLine).filter(function (l) { return l.lineId; }) : [],
-    attachments: sanitizeOrgDocList(q.attachments),
-    notes: q.notes || '',
-    submitted: !!q.submitted,
-    submittedAt: q.submittedAt || null,
-    submittedBy: q.submittedBy || ''
-  };
-}
 function sanitizeRfq(o) {
   const lines = (Array.isArray(o.lines) ? o.lines : []).map(sanitizeRfqLine).map(function (l, idx) {
     l.lineNo = idx + 1;
@@ -3499,9 +3527,6 @@ function sanitizeRfq(o) {
   });
   const sharedWithSuppliers = Array.isArray(o.sharedWithSuppliers)
     ? Array.from(new Set(o.sharedWithSuppliers.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
-    : [];
-  const sharedWithCustomers = Array.isArray(o.sharedWithCustomers)
-    ? Array.from(new Set(o.sharedWithCustomers.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
     : [];
   const supplierQuotesIn = (o.supplierQuotes && typeof o.supplierQuotes === 'object' && !Array.isArray(o.supplierQuotes)) ? o.supplierQuotes : {};
   const supplierQuotes = {};
@@ -3515,8 +3540,6 @@ function sanitizeRfq(o) {
     dessimateAttachments: sanitizeOrgDocList(o.dessimateAttachments),
     sharedWithSuppliers: sharedWithSuppliers,
     supplierQuotes: supplierQuotes,
-    sharedWithCustomers: sharedWithCustomers,
-    dessimateQuote: sanitizeRfqDessimateQuote(o.dessimateQuote),
     createdAt: o.createdAt || null
   };
 }
@@ -3528,40 +3551,21 @@ function sanitizeRfq(o) {
 // of competitively sensitive detail this system already keeps siloed
 // elsewhere (e.g. a Supplier never sees a Dessimate PO's Customer PO ref).
 // sharedWithSuppliers itself is also trimmed to just the caller's own org -
-// no business seeing who else was invited to bid. Neither a Supplier nor a
-// Customer ever sees the other side's data on the same RFQ - `delete` (not
-// just an empty value) removes sharedWithCustomers/dessimateQuote from a
-// Supplier's copy and sharedWithSuppliers/supplierQuotes from a Customer's,
-// so the fields aren't even present in the JSON response, not just empty
-// (Rev2.9 brief: "should not have access... even if they find a
-// workaround"). A Customer additionally never sees the RFQ's own internal
-// `notes` (blanked out - that's for the Dessimate team, not the customer),
-// and only sees `dessimateQuote` once it's actually been submitted - before
-// that they see a "no quote yet" shape, same structure either way so the
-// frontend doesn't need a separate branch to render it.
+// no business seeing who else was invited to bid.
+// Rev2.27: a Customer login has no role in this module at all any more -
+// the Customer-facing half (sharedWithCustomers/dessimateQuote) moved to
+// its own Customer RFQ module/store (see scopeCustomerRfqs below). This
+// module's data never had a Supplier-facing field to hide from a Customer
+// to begin with, so there's nothing left to scope for that role but an
+// empty list.
 function scopeRfqs(rfqs, accessLevel, organization) {
-  if (accessLevel === 'customer') {
-    const visible = rfqs.filter(function (o) { return organization && o.sharedWithCustomers.indexOf(organization) !== -1; });
-    return visible.map(function (o) {
-      const copy = Object.assign({}, o);
-      copy.sharedWithCustomers = [organization];
-      copy.notes = '';
-      copy.dessimateQuote = (o.dessimateQuote && o.dessimateQuote.submitted)
-        ? o.dessimateQuote
-        : { lines: [], attachments: [], notes: '', submitted: false, submittedAt: null, submittedBy: '' };
-      delete copy.sharedWithSuppliers;
-      delete copy.supplierQuotes;
-      return copy;
-    });
-  }
+  if (accessLevel === 'customer') return [];
   if (accessLevel === 'supplier') {
     const visible = rfqs.filter(function (o) { return organization && o.sharedWithSuppliers.indexOf(organization) !== -1; });
     return visible.map(function (o) {
       const copy = Object.assign({}, o);
       copy.sharedWithSuppliers = [organization];
       copy.supplierQuotes = (o.supplierQuotes && o.supplierQuotes[organization]) ? { [organization]: o.supplierQuotes[organization] } : {};
-      delete copy.sharedWithCustomers;
-      delete copy.dessimateQuote;
       return copy;
     });
   }
@@ -3594,22 +3598,11 @@ function validateRfqFields(body) {
   const sharedWithSuppliers = Array.isArray(body.sharedWithSuppliers)
     ? Array.from(new Set(body.sharedWithSuppliers.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
     : [];
-  // Rev2.9: who this RFQ is visible to on the Customer side - same
-  // Team Member+ managed checklist as sharedWithSuppliers, just a separate
-  // list (a Customer and a Supplier are never the same organization, but
-  // keeping the fields distinct also makes scopeRfqs' role-based stripping
-  // straightforward). dessimateQuote itself is deliberately NOT read here -
-  // it needs its own Admin+-only endpoint (handleUpdateRfqDessimateQuote),
-  // same "never in fields" reasoning as rfqNumber/supplierQuotes above.
-  const sharedWithCustomers = Array.isArray(body.sharedWithCustomers)
-    ? Array.from(new Set(body.sharedWithCustomers.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
-    : [];
   return {
     rfqDate: (body.rfqDate || '').toString().trim(),
     notes: (body.notes || '').toString().trim(),
     lines: lines,
-    sharedWithSuppliers: sharedWithSuppliers,
-    sharedWithCustomers: sharedWithCustomers
+    sharedWithSuppliers: sharedWithSuppliers
   };
 }
 
@@ -3695,11 +3688,11 @@ async function handleDeleteRfq(env, origin, id) {
   return json({ ok: true }, 200, origin);
 }
 
-// Used by isContentsPathAllowedForExternal to gate a Supplier/Customer's raw
+// Used by isContentsPathAllowedForExternal to gate a Supplier's raw
 // /contents/ file access to an RFQ's attachments - returns the sanitized
-// record (guaranteeing sharedWithSuppliers/sharedWithCustomers/
-// dessimateQuote are always well-formed arrays/objects, never missing) or
-// null if the RFQ doesn't exist (treated as "not allowed" by the caller).
+// record (guaranteeing sharedWithSuppliers is always a well-formed array,
+// never missing) or null if the RFQ doesn't exist (treated as "not allowed"
+// by the caller).
 async function resolveRfqRecord(env, rfqId) {
   const state = await readJsonArrayFile(env, RFQS_FILE_PATH);
   const rfq = state.items.find(function (o) { return o.id === rfqId; });
@@ -3775,21 +3768,242 @@ async function handleSubmitRfqQuote(request, env, origin, id, organization, user
   return json(sanitizeRfqSupplierQuote(quote), 200, origin);
 }
 
-// Rev2.9: the "Dessimate Quote" back to the Customer - Admin/Super Admin
-// only (the product brief names them specifically, a stricter bar than the
-// Team Member+ that manages the rest of an RFQ record). Unlike
-// handleSubmitRfqQuote, Admin already has unrestricted /contents/ write
-// access, so attachments arrive as already-uploaded {path,filename,
-// mimeType,size} pointers (the normal ghPutFile-then-PUT pattern every
-// other module uses) rather than base64 bytes written here server-side.
-// Body: { lines: [{lineId,price,toolingCost}], attachments: [...], notes,
-// submit: boolean }. `submit: true` is the one-way-until-re-submitted gate
-// scopeRfqs checks before a Customer login can see any of this - omitting
-// it (or passing false) just saves a draft, invisible to the Customer,
-// which Admin can keep revising before finally submitting. lineId
-// validation mirrors handleSubmitRfqQuote (drops any line no longer on the
-// RFQ) so a stale client can't quote against a removed part.
-async function handleUpdateRfqDessimateQuote(request, env, origin, id, username) {
+// ---- Customer RFQ (Rev2.27) - split out of the RFQ module above. The
+// original RFQ record bundled two directions into one: Dessimate sourcing
+// quotes FROM Suppliers (sharedWithSuppliers/supplierQuotes) and Dessimate
+// quoting BACK TO a Customer (sharedWithCustomers/dessimateQuote). This
+// module is the Customer-facing half only, now a fully separate record
+// type/data store/number series - there is no Supplier role here at all,
+// so there's nothing to strip per-request the way scopeRfqs above has to;
+// the shape itself just never has a Supplier-facing field to begin with.
+// Existing RFQs were one-time cloned in here (see
+// handleCloneRfqsToCustomerRfqs) when this module was introduced; after
+// that clone the two stores are completely independent - editing one
+// never touches the other.
+const CUSTOMER_RFQS_FILE_PATH = 'data/customer_rfqs.json';
+const CUSTOMER_RFQ_DOC_FOLDER = 'customer_rfq_docs';
+
+// Same voluntary/custom-number pattern as reserveRfqNumber, its own
+// separate 9500-series counter.
+async function reserveCustomerRfqNumber(env, clientRfqNumber) {
+  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+    let rfqNumber;
+    if (clientRfqNumber) {
+      rfqNumber = /^\d+$/.test(clientRfqNumber) ? Number(clientRfqNumber) : clientRfqNumber;
+      if (typeof rfqNumber === 'number' && rfqNumber >= obj.nextCustomerRfqNumber) obj.nextCustomerRfqNumber = rfqNumber + 1;
+    } else {
+      rfqNumber = obj.nextCustomerRfqNumber;
+      obj.nextCustomerRfqNumber = rfqNumber + 1;
+    }
+    return { obj: obj, meta: { rfqNumber: rfqNumber } };
+  });
+  if (!result.ok) throw new Error(result.message);
+  return result.meta.rfqNumber;
+}
+async function handlePeekCustomerRfqNumber(env, origin) {
+  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
+  return json({ rfqNumber: state.obj.nextCustomerRfqNumber }, 200, origin);
+}
+async function customerRfqNumberTaken(env, rfqNumber, excludeId) {
+  const state = await readJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH);
+  const target = String(rfqNumber).toLowerCase();
+  return state.items.some(function (o) { return o.id !== excludeId && String(o.rfqNumber).toLowerCase() === target; });
+}
+
+// Same lineId-as-stable-join-key reasoning as sanitizeRfqLine - the
+// Dessimate Quote's own lines reference lineId, not display position.
+function sanitizeCustomerRfqLine(l) {
+  return {
+    lineId: (l && l.lineId) || '',
+    lineNo: 0, // overwritten by index in sanitizeCustomerRfq
+    partNumber: (l && l.partNumber) || '',
+    partName: (l && l.partName) || '',
+    eau: (l && l.eau) || '',
+    attachments: sanitizeOrgDocList(l && l.attachments)
+  };
+}
+function sanitizeCustomerRfqQuoteLine(l) {
+  return {
+    lineId: (l && l.lineId) ? String(l.lineId) : '',
+    price: Number(l && l.price) || 0,
+    toolingCost: Number(l && l.toolingCost) || 0
+  };
+}
+// The Dessimate Quote back to the Customer - same shape/semantics as
+// sanitizeRfqDessimateQuote (submitted is the one-way-until-re-submitted
+// gate scopeCustomerRfqs checks).
+function sanitizeCustomerRfqQuote(q) {
+  if (!q || typeof q !== 'object') return { lines: [], attachments: [], notes: '', submitted: false, submittedAt: null, submittedBy: '' };
+  return {
+    lines: Array.isArray(q.lines) ? q.lines.map(sanitizeCustomerRfqQuoteLine).filter(function (l) { return l.lineId; }) : [],
+    attachments: sanitizeOrgDocList(q.attachments),
+    notes: q.notes || '',
+    submitted: !!q.submitted,
+    submittedAt: q.submittedAt || null,
+    submittedBy: q.submittedBy || ''
+  };
+}
+function sanitizeCustomerRfq(o) {
+  const lines = (Array.isArray(o.lines) ? o.lines : []).map(sanitizeCustomerRfqLine).map(function (l, idx) {
+    l.lineNo = idx + 1;
+    return l;
+  });
+  const sharedWithCustomers = Array.isArray(o.sharedWithCustomers)
+    ? Array.from(new Set(o.sharedWithCustomers.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
+    : [];
+  return {
+    id: o.id,
+    rfqNumber: o.rfqNumber,
+    rfqDate: o.rfqDate || '',
+    notes: o.notes || '',
+    lines: lines,
+    dessimateAttachments: sanitizeOrgDocList(o.dessimateAttachments),
+    sharedWithCustomers: sharedWithCustomers,
+    dessimateQuote: sanitizeCustomerRfqQuote(o.dessimateQuote),
+    createdAt: o.createdAt || null
+  };
+}
+
+// A Customer login sees only RFQs it's actually been shared with, never
+// the RFQ's own internal `notes` (staff-only), and only `dessimateQuote`
+// once it's actually been submitted - before that a "no quote yet" shape,
+// same structure either way so the frontend doesn't need a separate
+// branch. A Supplier login has no role in this module at all.
+function scopeCustomerRfqs(rfqs, accessLevel, organization) {
+  if (accessLevel === 'customer') {
+    const visible = rfqs.filter(function (o) { return organization && o.sharedWithCustomers.indexOf(organization) !== -1; });
+    return visible.map(function (o) {
+      const copy = Object.assign({}, o);
+      copy.sharedWithCustomers = [organization];
+      copy.notes = '';
+      copy.dessimateQuote = (o.dessimateQuote && o.dessimateQuote.submitted)
+        ? o.dessimateQuote
+        : { lines: [], attachments: [], notes: '', submitted: false, submittedAt: null, submittedBy: '' };
+      return copy;
+    });
+  }
+  if (accessLevel === 'supplier') return [];
+  return rfqs;
+}
+
+async function handleListCustomerRfqs(env, origin, accessLevel, organization) {
+  const state = await readJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH);
+  const rfqs = scopeCustomerRfqs(state.items.map(sanitizeCustomerRfq), accessLevel, organization);
+  return json({ customerRfqs: rfqs }, 200, origin);
+}
+
+function validateCustomerRfqFields(body) {
+  const linesIn = Array.isArray(body.lines) ? body.lines : [];
+  const lines = linesIn
+    .map(function (l) {
+      return {
+        lineId: (l && l.lineId ? String(l.lineId).trim() : '') || cryptoRandomId(),
+        partNumber: ((l && l.partNumber) || '').toString().trim(),
+        partName: ((l && l.partName) || '').toString().trim(),
+        eau: ((l && l.eau) || '').toString().trim(),
+        attachments: sanitizeOrgDocList(l && l.attachments)
+      };
+    })
+    .filter(function (l) { return l.partNumber || l.partName; });
+  const sharedWithCustomers = Array.isArray(body.sharedWithCustomers)
+    ? Array.from(new Set(body.sharedWithCustomers.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
+    : [];
+  return {
+    rfqDate: (body.rfqDate || '').toString().trim(),
+    notes: (body.notes || '').toString().trim(),
+    lines: lines,
+    sharedWithCustomers: sharedWithCustomers
+  };
+}
+
+async function handleCreateCustomerRfq(request, env, origin) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const fields = validateCustomerRfqFields(body);
+
+  const clientRfqNumber = (body.rfqNumber !== undefined && body.rfqNumber !== null) ? String(body.rfqNumber).trim() : '';
+  if (clientRfqNumber && await customerRfqNumberTaken(env, clientRfqNumber, null)) {
+    return json({ message: 'That RFQ Number is already in use.' }, 409, origin);
+  }
+  const rfqNumber = await reserveCustomerRfqNumber(env, clientRfqNumber);
+  const newRfq = Object.assign(
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments) },
+    fields
+  );
+
+  const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
+    items.push(newRfq);
+    return { items: items };
+  });
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeCustomerRfq(newRfq), 201, origin);
+}
+
+async function handleUpdateCustomerRfq(request, env, origin, id) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const fields = validateCustomerRfqFields(body);
+
+  let newRfqNumber; // undefined = leave as-is
+  if (body.rfqNumber !== undefined) {
+    const requested = (body.rfqNumber === null ? '' : String(body.rfqNumber)).trim();
+    if (!requested) return json({ message: 'RFQ Number is required.' }, 400, origin);
+    if (await customerRfqNumberTaken(env, requested, id)) {
+      return json({ message: 'That RFQ Number is already in use.' }, 409, origin);
+    }
+    newRfqNumber = /^\d+$/.test(requested) ? Number(requested) : requested;
+  }
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    Object.assign(target, fields); // dessimateQuote is never in `fields` - a team_member's edit never touches it
+    if (newRfqNumber !== undefined) target.rfqNumber = newRfqNumber;
+    if (body.dessimateAttachments !== undefined) target.dessimateAttachments = sanitizeOrgDocList(body.dessimateAttachments);
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  if (typeof newRfqNumber === 'number') {
+    await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+      if (newRfqNumber >= obj.nextCustomerRfqNumber) obj.nextCustomerRfqNumber = newRfqNumber + 1;
+      return { obj: obj };
+    });
+  }
+  return json(sanitizeCustomerRfq(saved), 200, origin);
+}
+
+// Hard delete, same precedent as the original RFQ module (see its own
+// module comment for why).
+async function handleDeleteCustomerRfq(env, origin, id) {
+  const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
+    const idx = items.findIndex(function (o) { return o.id === id; });
+    if (idx === -1) return null;
+    items.splice(idx, 1);
+    return { items: items };
+  }, { requireFound: true });
+  if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json({ ok: true }, 200, origin);
+}
+
+// Used by isContentsPathAllowedForExternal to gate a Customer's raw
+// /contents/ file access to a Customer RFQ's attachments.
+async function resolveCustomerRfqRecord(env, rfqId) {
+  const state = await readJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH);
+  const rfq = state.items.find(function (o) { return o.id === rfqId; });
+  return rfq ? sanitizeCustomerRfq(rfq) : null;
+}
+
+// The Dessimate Quote back to the Customer - Admin/Super Admin only, same
+// bar as the original RFQ module's handleUpdateRfqDessimateQuote (see its
+// own comment for the full reasoning, unchanged here). Body:
+// { lines: [{lineId,price,toolingCost}], attachments: [...], notes,
+// submit: boolean }.
+async function handleUpdateCustomerRfqQuote(request, env, origin, id, username) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const linesIn = Array.isArray(body.lines) ? body.lines : [];
@@ -3798,7 +4012,7 @@ async function handleUpdateRfqDessimateQuote(request, env, origin, id, username)
   const submitNow = !!body.submit;
 
   let saved = null;
-  const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
+  const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
     const validLineIds = new Set((Array.isArray(target.lines) ? target.lines : []).map(function (l) { return l.lineId; }));
@@ -3819,7 +4033,123 @@ async function handleUpdateRfqDessimateQuote(request, env, origin, id, username)
   }, { requireFound: true });
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
-  return json(sanitizeRfqDessimateQuote(saved.dessimateQuote), 200, origin);
+  return json(sanitizeCustomerRfqQuote(saved.dessimateQuote), 200, origin);
+}
+
+// One-time snapshot clone of every existing RFQ into the new Customer RFQ
+// store, for the RFQ-module split (Rev2.27) - after this runs the two
+// stores are completely independent (per the confirmed brief: "one-time
+// snapshot, fully independent after"), so this is meant to be triggered
+// once by a Super Admin, not run on a schedule. Renumbers every cloned
+// record into the new 9500-series (the brief: "create a separate number
+// series... will be 9500, 9501, 9502 etc" applies to clones too, not just
+// new Customer RFQs going forward) rather than carrying over the old RFQ
+// Number. Strips everything Supplier-side (sharedWithSuppliers,
+// supplierQuotes) since they don't exist in sanitizeCustomerRfq's shape to
+// begin with - only lines/dessimateAttachments/sharedWithCustomers/
+// dessimateQuote/notes/rfqDate/createdAt survive the clone.
+// Idempotent per source record: each cloned record is stamped with a
+// (deliberately unsanitized, never returned by sanitizeCustomerRfq)
+// `sourceRfqId`, and a source RFQ already represented by one is skipped on
+// a re-run - so accidentally calling this twice does not double-clone.
+// Attachment bytes are physically copied in R2 (env.FILES.get -> .put) to
+// new paths under customer_rfq_docs/<newId>/... and
+// customer_rfq_dessimate_quote_docs/<newId>/..., not just re-pointed at the
+// old rfq_docs/<oldId>/... paths - the new store's own access-control
+// branches in isContentsPathAllowedForExternal only ever allow
+// customer_rfq_docs/customer_rfq_dessimate_quote_docs, so a re-pointed path
+// would silently 403 for a Customer viewer.
+async function cloneOrgDocToCustomerRfq(env, doc, oldPrefix, newPrefix) {
+  if (!doc || !doc.path || doc.path.indexOf(oldPrefix) !== 0) return doc;
+  const newPath = newPrefix + doc.path.slice(oldPrefix.length);
+  const obj = await env.FILES.get(doc.path);
+  if (obj) {
+    const bytes = await obj.arrayBuffer();
+    await env.FILES.put(newPath, bytes);
+  }
+  return Object.assign({}, doc, { path: newPath });
+}
+
+async function handleCloneRfqsToCustomerRfqs(env, origin) {
+  const rfqState = await readJsonArrayFile(env, RFQS_FILE_PATH);
+  const customerState = await readJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH);
+  const alreadyCloned = new Set(customerState.items.map(function (o) { return o.sourceRfqId; }).filter(Boolean));
+
+  const sources = rfqState.items
+    .filter(function (o) { return !alreadyCloned.has(o.id); })
+    .slice()
+    .sort(function (a, b) { return String(a.createdAt || '').localeCompare(String(b.createdAt || '')); });
+
+  const cloned = [];
+  for (let i = 0; i < sources.length; i++) {
+    // Read straight off the raw stored record, not through sanitizeRfq -
+    // sharedWithCustomers/dessimateQuote were stripped from that function's
+    // output when the Dessimate RFQ module was trimmed down to Supplier-only
+    // (Rev2.27), but they're still sitting in the raw JSON on disk for any
+    // RFQ that had them before that cutover, which is exactly what this
+    // clone needs to read. sanitizeCustomerRfqQuote below reuses the
+    // Customer RFQ module's own sanitizer since the shape is identical.
+    const raw = sources[i];
+    const rawLines = Array.isArray(raw.lines) ? raw.lines : [];
+    const dessimateQuoteIn = sanitizeCustomerRfqQuote(raw.dessimateQuote);
+    const sharedWithCustomersIn = Array.isArray(raw.sharedWithCustomers)
+      ? Array.from(new Set(raw.sharedWithCustomers.map(function (v) { return (v || '').toString().trim(); }).filter(Boolean)))
+      : [];
+
+    const newId = cryptoRandomId();
+    const oldDocPrefix = RFQ_DOC_FOLDER + '/' + raw.id;
+    const newDocPrefix = CUSTOMER_RFQ_DOC_FOLDER + '/' + newId;
+    const oldQuoteDocPrefix = 'rfq_dessimate_quote_docs/' + raw.id;
+    const newQuoteDocPrefix = 'customer_rfq_dessimate_quote_docs/' + newId;
+
+    const dessimateAttachmentsIn = sanitizeOrgDocList(raw.dessimateAttachments);
+    const dessimateAttachments = [];
+    for (let j = 0; j < dessimateAttachmentsIn.length; j++) {
+      dessimateAttachments.push(await cloneOrgDocToCustomerRfq(env, dessimateAttachmentsIn[j], oldDocPrefix, newDocPrefix));
+    }
+    const lines = [];
+    for (let j = 0; j < rawLines.length; j++) {
+      const l = sanitizeRfqLine(rawLines[j]);
+      const lineAttachments = [];
+      for (let k = 0; k < l.attachments.length; k++) {
+        lineAttachments.push(await cloneOrgDocToCustomerRfq(env, l.attachments[k], oldDocPrefix, newDocPrefix));
+      }
+      lines.push({ lineId: l.lineId, partNumber: l.partNumber, partName: l.partName, eau: l.eau, attachments: lineAttachments });
+    }
+    const quoteAttachments = [];
+    for (let j = 0; j < dessimateQuoteIn.attachments.length; j++) {
+      quoteAttachments.push(await cloneOrgDocToCustomerRfq(env, dessimateQuoteIn.attachments[j], oldQuoteDocPrefix, newQuoteDocPrefix));
+    }
+
+    const rfqNumber = await reserveCustomerRfqNumber(env, '');
+    cloned.push({
+      id: newId,
+      sourceRfqId: raw.id,
+      rfqNumber: rfqNumber,
+      rfqDate: raw.rfqDate || '',
+      notes: raw.notes || '',
+      lines: lines,
+      dessimateAttachments: dessimateAttachments,
+      sharedWithCustomers: sharedWithCustomersIn,
+      dessimateQuote: {
+        lines: dessimateQuoteIn.lines,
+        attachments: quoteAttachments,
+        notes: dessimateQuoteIn.notes,
+        submitted: dessimateQuoteIn.submitted,
+        submittedAt: dessimateQuoteIn.submittedAt,
+        submittedBy: dessimateQuoteIn.submittedBy
+      },
+      createdAt: raw.createdAt || null
+    });
+  }
+
+  if (cloned.length > 0) {
+    const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
+      return { items: items.concat(cloned) };
+    });
+    if (!result.ok) return json({ message: result.message }, 500, origin);
+  }
+  return json({ ok: true, clonedCount: cloned.length, skippedCount: rfqState.items.length - cloned.length }, 200, origin);
 }
 
 // ---- Change Requests (Rev2.16) - "CR" module: a change either a Supplier
