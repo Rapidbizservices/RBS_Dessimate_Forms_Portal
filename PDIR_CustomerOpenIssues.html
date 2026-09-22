@@ -86,12 +86,14 @@
   .partFilterToggle .caret{ font-size:10px; color:var(--label); flex:0 0 auto; }
   .partFilterPanel{ position:absolute; top:calc(100% + 6px); right:0; z-index:50; background:#fff;
     border:1px solid var(--line); border-radius:8px; box-shadow:0 10px 30px rgba(20,22,28,.15);
-    padding:10px; width:260px; }
+    padding:10px; width:300px; }
   .partFilterList{ max-height:220px; overflow-y:auto; }
-  .partFilterList label{ display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:400;
+  .partFilterList label{ display:flex; align-items:flex-start; gap:8px; font-size:12.5px; font-weight:400;
     color:var(--ink); padding:5px 4px; cursor:pointer; border-radius:4px; }
   .partFilterList label:hover{ background:#f4f5f8; }
-  .partFilterList input[type=checkbox]{ width:auto; margin:0; }
+  .partFilterList input[type=checkbox]{ width:auto; margin:3px 0 0; flex:0 0 auto; }
+  .partFilterLabelText{ min-width:0; overflow-wrap:anywhere; }
+  .partFilterHint{ display:block; color:var(--label); font-weight:400; font-size:11px; }
   .partFilterEmpty{ font-size:12px; color:var(--label); font-style:italic; padding:6px 4px; }
   .partFilterPanelBtns{ display:flex; justify-content:flex-end; margin-top:8px; padding-top:8px;
     border-top:1px solid var(--line); }
@@ -904,6 +906,15 @@
     else if (selectedPartFilters.length === 1) labelEl.textContent = selectedPartFilters[0];
     else labelEl.textContent = selectedPartFilters.length + ' parts selected';
   }
+  // First 2-3 words of a part's Description (from the Parts master, same
+  // lastParts used by the Add/Edit form's own Part Number picker) - just a
+  // quick hint next to a bare part number in the filter checklist, not the
+  // full name (which can run long and would crowd out the checkboxes).
+  function partNameHint(partNumber){
+    var part = lastParts.find(function(p){ return p.partNumber === partNumber; });
+    if (!part || !part.name) return '';
+    return part.name.trim().split(/\s+/).slice(0, 3).join(' ');
+  }
   function populatePartFilterOptions(){
     var listEl = document.getElementById('partFilterList');
     var parts = {};
@@ -918,7 +929,9 @@
     } else {
       listEl.innerHTML = sortedParts.map(function(p){
         var checked = selectedPartFilters.indexOf(p) !== -1 ? ' checked' : '';
-        return '<label><input type="checkbox" value="' + escapeHtml(p) + '"' + checked + '> ' + escapeHtml(p) + '</label>';
+        var hint = partNameHint(p);
+        var labelText = escapeHtml(p) + (hint ? ' <span class="partFilterHint">' + escapeHtml(hint) + '</span>' : '');
+        return '<label><input type="checkbox" value="' + escapeHtml(p) + '"' + checked + '><span class="partFilterLabelText">' + labelText + '</span></label>';
       }).join('');
       listEl.querySelectorAll('input[type=checkbox]').forEach(function(cb){
         cb.addEventListener('change', function(){
