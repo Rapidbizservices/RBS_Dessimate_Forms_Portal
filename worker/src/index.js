@@ -173,7 +173,7 @@
  *                                        tooling-cost quote and quote attachments.
  *   POST   /rfqs/clone-to-customer-rfqs
  *                                       - super_admin only; one-time snapshot clone of every RFQ
- *                                        into the Customer RFQ store (new 9500-series numbers,
+ *                                        into the Customer RFQ store (new 8000-series numbers,
  *                                        Supplier data dropped, attachment bytes physically copied
  *                                        to new R2 paths). Idempotent - already-cloned RFQs are
  *                                        skipped on a re-run.
@@ -183,8 +183,18 @@
  *                                        submitted; there is no Supplier role in this module).
  *   POST   /customer-rfqs              - team_member or above required; create a Customer RFQ.
  *   GET    /customer-rfqs/peek-number  - team_member or above required; preview of the next
- *                                        auto-assigned Customer RFQ Number (9500-series, separate
+ *                                        auto-assigned Customer RFQ Number (8000-series, separate
  *                                        counter from /rfqs - does not consume it).
+ *   POST   /customer-rfqs/renumber-to-8000-series
+ *                                       - super_admin only; one-time admin fix (Rev2.28) - the
+ *                                        series was originally 9500 (too close to the Dessimate
+ *                                        RFQ module's own 9000-series and confusingly similar),
+ *                                        changed to 8000 before real customer-facing use. Re-
+ *                                        assigns every existing Customer RFQ's number sequentially
+ *                                        starting at 8000 (stable order - sorted by current
+ *                                        rfqNumber) and resets the counter to the next number
+ *                                        after the last one assigned. Safe to re-run (always
+ *                                        produces the same 8000..8000+N-1 sequence).
  *   PUT    /customer-rfqs/<id>         - team_member or above required; update one (RFQ Number
  *                                        stays editable indefinitely, same as /rfqs/<id>).
  *   DELETE /customer-rfqs/<id>         - team_member or above required; hard delete (attachments
@@ -722,6 +732,15 @@ export default {
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         return await handlePeekCustomerRfqNumber(env, origin);
+      }
+
+      // One-time admin fix (Rev2.28) - see handleRenumberCustomerRfqsTo8000Series.
+      // Super Admin only, same bar as the clone endpoint above (a one-shot
+      // data-migration operation, not routine record management).
+      if (url.pathname === '/customer-rfqs/renumber-to-8000-series' && request.method === 'POST') {
+        const auth = await requireRole(request, env, ['super_admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleRenumberCustomerRfqsTo8000Series(env, origin);
       }
 
       // The Dessimate Quote back to the Customer - Admin/Super Admin only,
@@ -2720,7 +2739,7 @@ const DEFAULT_COUNTERS = {
   nextScrNumber: 1, // Customer SCR module - formatted "SCR-###" (see reserveScrNumber)
   nextDmrNumber: 1, // Discrepant Material Report module - formatted "DMR-####" (see reserveDmrNumber)
   nextOpenIssueNumber: 1, // Customer Open Issues List module - formatted "OI-####" (see reserveOpenIssueNumber)
-  nextCustomerRfqNumber: 9500 // Customer RFQ module - its own series, separate from nextRfqNumber (see reserveCustomerRfqNumber)
+  nextCustomerRfqNumber: 8000 // Customer RFQ module - its own series, separate from nextRfqNumber (see reserveCustomerRfqNumber). Was 9500 (Rev2.27); changed to 8000 (Rev2.28) - too close to the Dessimate RFQ module's own 9000-series, confusing side by side.
 };
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -3784,7 +3803,7 @@ const CUSTOMER_RFQS_FILE_PATH = 'data/customer_rfqs.json';
 const CUSTOMER_RFQ_DOC_FOLDER = 'customer_rfq_docs';
 
 // Same voluntary/custom-number pattern as reserveRfqNumber, its own
-// separate 9500-series counter.
+// separate 8000-series counter.
 async function reserveCustomerRfqNumber(env, clientRfqNumber) {
   const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
     let rfqNumber;
@@ -4041,10 +4060,12 @@ async function handleUpdateCustomerRfqQuote(request, env, origin, id, username) 
 // stores are completely independent (per the confirmed brief: "one-time
 // snapshot, fully independent after"), so this is meant to be triggered
 // once by a Super Admin, not run on a schedule. Renumbers every cloned
-// record into the new 9500-series (the brief: "create a separate number
-// series... will be 9500, 9501, 9502 etc" applies to clones too, not just
-// new Customer RFQs going forward) rather than carrying over the old RFQ
-// Number. Strips everything Supplier-side (sharedWithSuppliers,
+// record into the new 8000-series (the brief: "create a separate number
+// series" applies to clones too, not just new Customer RFQs going forward)
+// rather than carrying over the old RFQ Number - originally 9500 (Rev2.27),
+// moved to 8000 (Rev2.28) since it read as confusingly close to the
+// Dessimate RFQ module's own 9000-series. Strips everything Supplier-side
+// (sharedWithSuppliers,
 // supplierQuotes) since they don't exist in sanitizeCustomerRfq's shape to
 // begin with - only lines/dessimateAttachments/sharedWithCustomers/
 // dessimateQuote/notes/rfqDate/createdAt survive the clone.
@@ -4150,6 +4171,43 @@ async function handleCloneRfqsToCustomerRfqs(env, origin) {
     if (!result.ok) return json({ message: result.message }, 500, origin);
   }
   return json({ ok: true, clonedCount: cloned.length, skippedCount: rfqState.items.length - cloned.length }, 200, origin);
+}
+
+// One-time admin fix (Rev2.28): the Customer RFQ number series originally
+// launched at 9500 (Rev2.27), which read as confusingly close to the
+// Dessimate RFQ module's own 9000-series side by side. Re-assigns every
+// existing Customer RFQ's number sequentially starting at 8000, in a
+// stable order (sorted by current rfqNumber, so relative ordering is
+// preserved), and resets nextCustomerRfqNumber to the next number after
+// the last one assigned - so a fresh Customer RFQ created right after this
+// runs continues the same unbroken 8000-series sequence. Safe to re-run:
+// unlike the clone above (which skips already-cloned records to avoid
+// duplicates), this always re-derives the same 8000..8000+N-1 assignment
+// from current records, so calling it again just re-confirms the same
+// numbers.
+async function handleRenumberCustomerRfqsTo8000Series(env, origin) {
+  const state = await readJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH);
+  const ordered = state.items.slice().sort(function (a, b) {
+    const an = typeof a.rfqNumber === 'number' ? a.rfqNumber : Number.MAX_SAFE_INTEGER;
+    const bn = typeof b.rfqNumber === 'number' ? b.rfqNumber : Number.MAX_SAFE_INTEGER;
+    if (an !== bn) return an - bn;
+    return String(a.rfqNumber).localeCompare(String(b.rfqNumber));
+  });
+  const idToNewNumber = {};
+  ordered.forEach(function (o, idx) { idToNewNumber[o.id] = 8000 + idx; });
+
+  const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
+    items.forEach(function (o) { if (idToNewNumber[o.id] !== undefined) o.rfqNumber = idToNewNumber[o.id]; });
+    return { items: items };
+  });
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+
+  const nextNumber = 8000 + ordered.length;
+  await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+    obj.nextCustomerRfqNumber = nextNumber;
+    return { obj: obj };
+  });
+  return json({ ok: true, renumberedCount: ordered.length, nextNumber: nextNumber }, 200, origin);
 }
 
 // ---- Change Requests (Rev2.16) - "CR" module: a change either a Supplier

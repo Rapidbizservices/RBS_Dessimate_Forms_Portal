@@ -300,11 +300,11 @@
 <div class="modalOverlay" id="rfqModalOverlay">
   <div class="modalCard">
     <h2 id="modalTitle">Add Customer RFQ</h2>
-    <p class="modalSub" id="modalSub">RFQ Number is optional — leave blank to assign the next 9500-series number automatically, or type your own. It can be changed any time, even after saving.</p>
+    <p class="modalSub" id="modalSub">RFQ Number is optional — leave blank to assign the next 8000-series number automatically, or type your own. It can be changed any time, even after saving.</p>
     <form id="rfqForm">
       <div class="numberBanner">
         <div class="numberField">
-          <label for="f_rfqNumber">RFQ Number <span style="font-weight:400;">(optional — leave blank to auto-assign the next 9500-series number)</span></label>
+          <label for="f_rfqNumber">RFQ Number <span style="font-weight:400;">(optional — leave blank to auto-assign the next 8000-series number)</span></label>
           <div class="numberFieldRow">
             <input type="text" id="f_rfqNumber" placeholder="assigned on Save">
             <button type="button" id="useSystemRfqBtn">Use System Number</button>
@@ -1626,7 +1626,7 @@
     editingId = null;
     resetForm();
     document.getElementById('modalTitle').textContent = 'Add Customer RFQ';
-    document.getElementById('modalSub').textContent = 'RFQ Number is optional — leave blank to assign the next 9500-series number automatically, or type your own. It can be changed any time, even after saving.';
+    document.getElementById('modalSub').textContent = 'RFQ Number is optional — leave blank to assign the next 8000-series number automatically, or type your own. It can be changed any time, even after saving.';
     document.getElementById('rfqModalOverlay').classList.add('open');
   }
   function openEditModal(id){

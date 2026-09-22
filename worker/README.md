@@ -1306,9 +1306,13 @@ see any of it - Admin/Super Admin can save a draft any number of times with
 separate from "Save Draft") stamps `submittedAt`/`submittedBy` and flips
 visibility, matching "only after the team hits Submit should the customer
 see the response." **RFQ Number** auto-assigns from its own separate
-9500-series counter (9500, 9501, 9502, ...) when left blank, entirely
-independent of the original RFQ module's counter, and stays editable
-indefinitely after creation, same as RFQ. Attachments live under their own
+8000-series counter (8000, 8001, 8002, ...) when left blank, entirely
+independent of the original RFQ module's own 9000-series counter, and
+stays editable indefinitely after creation, same as RFQ. (Originally
+launched as a 9500-series in Rev2.27 - moved to 8000 in Rev2.28, since it
+read as confusingly close to RFQ's 9000-series side by side; a one-time
+`POST /customer-rfqs/renumber-to-8000-series`, Super Admin only, renumbered
+every Customer RFQ that existed at that point.) Attachments live under their own
 `customer_rfq_docs/`/`customer_rfq_dessimate_quote_docs/` R2 folders -
 `isContentsPathAllowedForExternal` gates both to `customer`-level access
 only, checked fresh from storage on every file request (never
