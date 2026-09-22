@@ -71,8 +71,14 @@
     border-radius:6px; padding:8px 10px; margin:0 0 16px; line-height:1.45; }
   .authAttempts{ font-size:12px; color:var(--label); min-height:14px; margin-top:4px; }
 
-  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
   .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
+  .toolbarFilter{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--label); }
+  .toolbarFilter select{ font-family:inherit; font-size:12.5px; padding:7px 10px; border:1px solid var(--line);
+    border-radius:6px; background:#fff; color:var(--ink); min-width:200px; }
+  .toolbarFilter .clearFilterLink{ font-family:inherit; font-size:12px; font-weight:600; color:var(--brand);
+    background:none; border:none; padding:0; cursor:pointer; text-decoration:none; white-space:nowrap; }
+  .toolbarFilter .clearFilterLink:hover{ text-decoration:underline; }
 
   .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; overflow-x:auto; }
   table.issueTable{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:1400px; }
@@ -279,6 +285,11 @@
 
   <div class="toolbar">
     <h2 id="toolbarTitle">Customer Open Issues</h2>
+    <div class="toolbarFilter">
+      <label for="partFilterSelect">Filter by Part:</label>
+      <select id="partFilterSelect"><option value="">All Parts</option></select>
+      <button type="button" class="clearFilterLink" id="clearPartFilterBtn" style="display:none;">Clear</button>
+    </div>
   </div>
 
   <div class="panel">
@@ -845,6 +856,38 @@
   var issueSortState = { key: null, dir: 1 };
   window.SortableTable.makeSortableHeaders(document.getElementById('issueTableHead'), issueSortState, renderTable);
 
+  // ---- Filter by Part Number - persists across navigation (localStorage,
+  // not just this page's own state) so switching to a different module and
+  // back keeps the same filter applied. Available to every role that can
+  // reach this page (staff and a matching Customer login alike) - it only
+  // narrows which of the already-scoped/visible issues are shown, so there
+  // is nothing role-specific about it.
+  var PART_FILTER_STORAGE_KEY = 'dscm_openIssues_partFilter';
+  var selectedPartFilter = '';
+  try { selectedPartFilter = localStorage.getItem(PART_FILTER_STORAGE_KEY) || ''; } catch (e) {}
+
+  function populatePartFilterOptions(){
+    var selectEl = document.getElementById('partFilterSelect');
+    var parts = {};
+    lastIssues.forEach(function(issue){ (issue.partNumbers || []).forEach(function(p){ if (p) parts[p] = true; }); });
+    if (selectedPartFilter) parts[selectedPartFilter] = true;
+    var sortedParts = Object.keys(parts).sort(function(a, b){ return a.localeCompare(b, undefined, { numeric: true }); });
+    selectEl.innerHTML = '<option value="">All Parts</option>' + sortedParts.map(function(p){
+      return '<option value="' + escapeHtml(p) + '"' + (p === selectedPartFilter ? ' selected' : '') + '>' + escapeHtml(p) + '</option>';
+    }).join('');
+    document.getElementById('clearPartFilterBtn').style.display = selectedPartFilter ? 'inline' : 'none';
+  }
+  document.getElementById('partFilterSelect').addEventListener('change', function(){
+    selectedPartFilter = this.value;
+    try { localStorage.setItem(PART_FILTER_STORAGE_KEY, selectedPartFilter); } catch (e) {}
+    renderTable();
+  });
+  document.getElementById('clearPartFilterBtn').addEventListener('click', function(){
+    selectedPartFilter = '';
+    try { localStorage.setItem(PART_FILTER_STORAGE_KEY, ''); } catch (e) {}
+    renderTable();
+  });
+
   async function loadIssues(){
     var loadingEl = document.getElementById('loadingState');
     var errorEl = document.getElementById('errorState');
@@ -886,14 +929,20 @@
     var tableEl = document.getElementById('issueTable');
     var bodyEl = document.getElementById('issueTableBody');
     var emptyEl = document.getElementById('emptyState');
-    if (!lastIssues.length) {
+    populatePartFilterOptions();
+    var filteredIssues = selectedPartFilter
+      ? lastIssues.filter(function(issue){ return (issue.partNumbers || []).indexOf(selectedPartFilter) !== -1; })
+      : lastIssues;
+    if (!filteredIssues.length) {
       emptyEl.style.display = 'block'; tableEl.style.display = 'none';
-      emptyEl.textContent = isCustomerUser() ? 'No open issues name your organization yet.' : 'No open issues yet. Click Add an Open Issue above to add the first one.';
+      emptyEl.textContent = selectedPartFilter
+        ? 'No open issues for part ' + selectedPartFilter + '.'
+        : (isCustomerUser() ? 'No open issues name your organization yet.' : 'No open issues yet. Click Add an Open Issue above to add the first one.');
       return;
     }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var defaultOrder = lastIssues.slice().sort(function(a, b){ return String(a.issueNumber || '').localeCompare(String(b.issueNumber || ''), undefined, { numeric: true }); });
+    var defaultOrder = filteredIssues.slice().sort(function(a, b){ return String(a.issueNumber || '').localeCompare(String(b.issueNumber || ''), undefined, { numeric: true }); });
     var sorted = window.SortableTable.sortItems(defaultOrder, issueSortState, function(issue, key){ return issue[key]; });
     window.SortableTable.updateSortIndicators(document.getElementById('issueTableHead'), issueSortState);
 
