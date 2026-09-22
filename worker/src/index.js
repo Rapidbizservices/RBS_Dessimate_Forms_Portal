@@ -171,6 +171,13 @@
  *   PUT    /rfqs/<id>/quote            - Supplier only, and only if that RFQ has been shared with
  *                                        their organization; submits/updates their own price/
  *                                        tooling-cost quote and quote attachments.
+ *   POST   /rfqs/<id>/comments         - team_member or above, OR a Supplier on an RFQ shared with
+ *                                        their organization; appends a note to the Notes/Comments
+ *                                        thread (Rev2.29 - superseded the old single `notes` field).
+ *   PUT    /rfqs/<id>/comments/<commentId>
+ *                                       - team_member or above (any comment), OR the comment's own
+ *                                        Supplier author (their own comment only, on an RFQ shared
+ *                                        with their organization); edits its text in place.
  *   POST   /rfqs/clone-to-customer-rfqs
  *                                       - super_admin only; one-time snapshot clone of every RFQ
  *                                        into the Customer RFQ store (new 8000-series numbers,
@@ -694,6 +701,25 @@ export default {
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         const organization = await resolveUserOrganization(env, auth.username);
         return await handleSubmitRfqQuote(request, env, origin, id, organization, auth.username);
+      }
+
+      // Notes/Comments thread (Rev2.29) - its own routes, same pattern as
+      // Customer Open Issues' comment thread. Checked before the generic
+      // '/rfqs/' block below so they don't get swallowed by the id-only
+      // match.
+      if (/^\/rfqs\/[^/]+\/comments$/.test(url.pathname) && request.method === 'POST') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleAddRfqComment(request, env, origin, id, auth.accessLevel, auth.username);
+      }
+      if (/^\/rfqs\/[^/]+\/comments\/[^/]+$/.test(url.pathname) && request.method === 'PUT') {
+        const parts = url.pathname.split('/');
+        const id = decodeURIComponent(parts[2]);
+        const commentId = decodeURIComponent(parts[4]);
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleEditRfqComment(request, env, origin, id, commentId, auth.accessLevel, auth.username);
       }
 
       // One-time snapshot clone of every RFQ into the new Customer RFQ
@@ -3539,6 +3565,27 @@ function sanitizeRfqSupplierQuote(q) {
     submittedBy: (q && q.submittedBy) || ''
   };
 }
+// Notes/Comments thread (Rev2.29) - same shape/semantics as
+// sanitizeOpenIssueComment: entries are appended by handleAddRfqComment and
+// may later be edited (text only) by handleEditRfqComment, never by the
+// generic PUT (see validateRfqFields, which no longer reads a `notes`
+// field at all) - so nobody can silently rewrite the whole thread by
+// resending a modified array. editedAt is set only once a comment has
+// actually been edited, so the UI can show a "(edited)" marker.
+function sanitizeRfqComment(c) {
+  if (!c) return null;
+  return {
+    id: c.id || cryptoRandomId(),
+    authorUsername: c.authorUsername || '',
+    text: c.text || '',
+    createdAt: c.createdAt || null,
+    editedAt: c.editedAt || null
+  };
+}
+function sanitizeRfqComments(list) {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.map(sanitizeRfqComment).filter(Boolean);
+}
 function sanitizeRfq(o) {
   const lines = (Array.isArray(o.lines) ? o.lines : []).map(sanitizeRfqLine).map(function (l, idx) {
     l.lineNo = idx + 1;
@@ -3554,11 +3601,19 @@ function sanitizeRfq(o) {
     id: o.id,
     rfqNumber: o.rfqNumber,
     rfqDate: o.rfqDate || '',
+    // Rev2.29: the old single free-text `notes` field is frozen/read-only
+    // now (validateRfqFields no longer accepts it) - superseded by the
+    // `comments` thread below, which both Dessimate staff and a Supplier
+    // can post to, each entry stamped with who/when. Kept here only so
+    // whatever was already written before this change isn't lost; the
+    // frontend renders it as an unattributed legacy entry pinned above the
+    // real thread.
     notes: o.notes || '',
     lines: lines,
     dessimateAttachments: sanitizeOrgDocList(o.dessimateAttachments),
     sharedWithSuppliers: sharedWithSuppliers,
     supplierQuotes: supplierQuotes,
+    comments: sanitizeRfqComments(o.comments),
     createdAt: o.createdAt || null
   };
 }
@@ -3619,7 +3674,6 @@ function validateRfqFields(body) {
     : [];
   return {
     rfqDate: (body.rfqDate || '').toString().trim(),
-    notes: (body.notes || '').toString().trim(),
     lines: lines,
     sharedWithSuppliers: sharedWithSuppliers
   };
@@ -3785,6 +3839,86 @@ async function handleSubmitRfqQuote(request, env, origin, id, organization, user
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   return json(sanitizeRfqSupplierQuote(quote), 200, origin);
+}
+
+// Notes/Comments thread (Rev2.29) - appends a new entry (editing an
+// existing one is handleEditRfqComment below; there is still no delete
+// route), same pattern as Customer Open Issues' comment thread. Team
+// Member+ can comment on any RFQ; a Supplier can comment only on one
+// shared with their own organization. Returns the full updated record (the
+// frontend reads `.comments` off it).
+async function handleAddRfqComment(request, env, origin, id, accessLevel, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const text = (body.text || '').toString().trim();
+  if (!text) return json({ message: 'Comment text is required.' }, 400, origin);
+
+  const isSupplier = accessLevel === 'supplier';
+  let callerOrg = '';
+  if (isSupplier) {
+    callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Supplier organization.' }, 403, origin);
+  }
+
+  const comment = { id: cryptoRandomId(), authorUsername: username || '', text: text, createdAt: new Date().toISOString() };
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    if (isSupplier && (!Array.isArray(target.sharedWithSuppliers) || target.sharedWithSuppliers.indexOf(callerOrg) === -1)) return null;
+    target.comments = Array.isArray(target.comments) ? target.comments : [];
+    target.comments.push(comment);
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeRfq(saved), 200, origin);
+}
+
+// Edits one existing comment's text in place. Team Member+ can edit any
+// comment on any RFQ; a Supplier can edit only their OWN comment (matched
+// by authorUsername), and only on an RFQ shared with their own
+// organization - never someone else's note, even on an RFQ they can see.
+// Stamps editedAt so the UI can show a "(edited)" marker; there is still no
+// delete route.
+async function handleEditRfqComment(request, env, origin, id, commentId, accessLevel, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const text = (body.text || '').toString().trim();
+  if (!text) return json({ message: 'Comment text is required.' }, 400, origin);
+
+  const isStaff = accessLevel === 'team_member' || accessLevel === 'admin' || accessLevel === 'super_admin';
+  const isSupplier = accessLevel === 'supplier';
+  let callerOrg = '';
+  if (isSupplier) {
+    callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Supplier organization.' }, 403, origin);
+  }
+
+  let saved = null;
+  let forbidden = false;
+  const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    if (isSupplier && (!Array.isArray(target.sharedWithSuppliers) || target.sharedWithSuppliers.indexOf(callerOrg) === -1)) return null;
+    const comments = Array.isArray(target.comments) ? target.comments : [];
+    const comment = comments.find(function (c) { return c.id === commentId; });
+    if (!comment) return null;
+    if (!isStaff && comment.authorUsername !== username) { forbidden = true; return null; }
+    comment.text = text;
+    comment.editedAt = new Date().toISOString();
+    target.comments = comments;
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (forbidden) return json({ message: 'You can only edit your own comments.' }, 403, origin);
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeRfq(saved), 200, origin);
 }
 
 // ---- Customer RFQ (Rev2.27) - split out of the RFQ module above. The

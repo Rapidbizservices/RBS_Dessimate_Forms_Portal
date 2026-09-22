@@ -1285,6 +1285,22 @@ see `handleCloneRfqsToCustomerRfqs`); after that clone the two stores
 evolve completely independently, so this module and Customer RFQ no longer
 share any data structure at runtime even though they started as one.
 
+**Notes/Comments thread (Rev2.29)** - moved to the bottom of the Add/Edit
+modal (below Attachments/Quotes Received), and both Dessimate staff and a
+Supplier can now post to it - a departure from the single Team-Member-only
+free-text `notes` field this replaced. Each entry is stamped with who wrote
+it and when (`{id, authorUsername, text, createdAt, editedAt}`, same shape
+as Customer Open Issues' comment thread), and can be edited afterward:
+Team Member+ can edit any entry, a Supplier only their own (and only on an
+RFQ shared with their organization) - via `POST /rfqs/<id>/comments` and
+`PUT /rfqs/<id>/comments/<commentId>`, kept out of the generic record PUT
+entirely (`validateRfqFields` no longer reads a `notes` field at all) so
+nobody can silently rewrite the whole thread by resending a modified array.
+Whatever was already written under the old single-field system before this
+change is preserved and still shown (read-only, unattributed, pinned above
+the live thread as an "Earlier note") - `sanitizeRfq` still returns the
+legacy `notes` value for that purpose, it's just frozen from here on.
+
 ## Customer RFQ
 
 Dessimate's quoting-to-Customer side - `CustomerRFQ.html`, stored in
