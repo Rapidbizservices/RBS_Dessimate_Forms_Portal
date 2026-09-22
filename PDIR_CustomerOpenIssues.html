@@ -196,6 +196,14 @@
   .addLineBtn:hover{ background:#eef1fa; }
   .addLineBtn:disabled{ opacity:.5; cursor:default; }
 
+  .checkList{ max-height:140px; overflow-y:auto; border:1px solid var(--line); border-radius:6px;
+    padding:9px 10px; margin-top:5px; }
+  .checkList label{ display:flex; align-items:center; gap:8px; font-size:13px; font-weight:400;
+    color:var(--ink); margin:0 0 7px; cursor:pointer; }
+  .checkList label:last-child{ margin-bottom:0; }
+  .checkList input[type=checkbox]{ width:auto; margin:0; }
+  .checkList .emptyNote{ color:var(--label); font-style:italic; font-size:12.5px; }
+
   .docCell{ font-size:12px; color:var(--label); }
   .attachCount{ font-weight:400; font-size:12.5px; color:var(--label); }
   .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
@@ -401,8 +409,8 @@
         <label>Customer Organization
           <select id="f_customerOrg" required></select>
         </label>
-        <label>Champion / Responsible
-          <input type="text" id="f_championResponsible">
+        <label>Champion / Responsible <span style="font-weight:400;">(select any number)</span>
+          <div class="checkList" id="f_championResponsible_list"></div>
         </label>
       </div>
 
@@ -861,7 +869,81 @@
       var partData = partRes.ok ? await partRes.json() : { parts: [] };
       lastParts = Array.isArray(partData.parts) ? partData.parts : [];
     } catch (e) { console.error('Could not load parts', e); lastParts = []; }
+    await loadDessimateUsers();
   }
+
+  // ---- Champion / Responsible picker (Rev2.33) --------------------------------
+  // Multi-select of usernames: always includes every Dessimate Team member
+  // (GET /users - public, no auth needed, same list the Dessimate PO
+  // Approver dropdown draws from) plus, once a Customer Organization is
+  // chosen on the issue, that org's own contacts (GET /org-contacts,
+  // staff-only - widened in Rev2.33 to cover Customer orgs, not just
+  // Supplier). A Customer login only ever views (never edits) an issue and
+  // can't call /org-contacts itself, so for that role the checklist just
+  // shows whichever usernames are already on the record, checked and
+  // disabled - no live directory fetch needed, and nothing for
+  // applyRoleUIForModal's blanket disable sweep to fight with.
+  var lastDessimateUsers = []; // [{username, name}]
+  var lastChampionOrgContacts = []; // [{username, name}] for the currently-selected Customer Organization
+  async function loadDessimateUsers(){
+    try {
+      var res = await apiFetch('users');
+      var data = res.ok ? await res.json() : { people: [] };
+      lastDessimateUsers = Array.isArray(data.people) ? data.people : [];
+    } catch (e) { console.error('Could not load Dessimate users', e); lastDessimateUsers = []; }
+  }
+  async function loadChampionOrgContacts(org){
+    lastChampionOrgContacts = [];
+    if (!org || !canManageAll()) return;
+    try {
+      var res = await apiFetch('org-contacts?organization=' + encodeURIComponent(org));
+      var data = res.ok ? await res.json() : { contacts: [] };
+      lastChampionOrgContacts = Array.isArray(data.contacts) ? data.contacts : [];
+    } catch (e) { console.error('Could not load organization contacts', e); lastChampionOrgContacts = []; }
+  }
+  function championDisplayName(username){
+    var found = lastDessimateUsers.concat(lastChampionOrgContacts).find(function(p){ return p.username === username; });
+    return (found && found.name) ? found.name : username;
+  }
+  function renderChampionChecklist(currentValues){
+    var listEl = document.getElementById('f_championResponsible_list');
+    var values = Array.isArray(currentValues) ? currentValues : [];
+    if (!canManageAll()) {
+      listEl.innerHTML = values.length
+        ? values.map(function(u){ return '<label><input type="checkbox" checked disabled> ' + escapeHtml(championDisplayName(u)) + '</label>'; }).join('')
+        : '<div class="emptyNote">None set.</div>';
+      return;
+    }
+    var seen = {};
+    var options = [];
+    lastDessimateUsers.forEach(function(p){ if (p.username && !seen[p.username]) { seen[p.username] = true; options.push(p); } });
+    lastChampionOrgContacts.forEach(function(p){ if (p.username && !seen[p.username]) { seen[p.username] = true; options.push(p); } });
+    // A previously-picked username that's no longer resolvable (deactivated
+    // account, or the Customer Organization changed since) stays checkable
+    // and checked rather than silently dropping off the record on Save.
+    values.forEach(function(u){ if (u && !seen[u]) { seen[u] = true; options.push({ username: u, name: u }); } });
+    if (!options.length) {
+      listEl.innerHTML = '<div class="emptyNote">No Dessimate users or Customer Organization contacts yet.</div>';
+      return;
+    }
+    options.sort(function(a, b){ return (a.name || a.username).localeCompare(b.name || b.username); });
+    listEl.innerHTML = options.map(function(p){
+      var checked = values.indexOf(p.username) !== -1 ? ' checked' : '';
+      return '<label><input type="checkbox" value="' + escapeHtml(p.username) + '"' + checked + '> ' + escapeHtml(p.name || p.username) + '</label>';
+    }).join('');
+  }
+  function getSelectedChampions(){
+    return Array.prototype.slice.call(document.querySelectorAll('#f_championResponsible_list input[type=checkbox]:checked'))
+      .map(function(el){ return el.value; })
+      .filter(Boolean);
+  }
+  document.getElementById('f_customerOrg').addEventListener('change', async function(){
+    if (!canManageAll()) return;
+    var keepChecked = getSelectedChampions();
+    await loadChampionOrgContacts(this.value);
+    renderChampionChecklist(keepChecked);
+  });
+  // -----------------------------------------------------------------------------
   function customerOrgOptions(currentValue){
     var matching = lastOrgs.filter(function(o){ return o.relationship === 'Customer'; });
     var html = '<option value="">— Select Customer —</option>' + matching.map(function(o){
@@ -1058,7 +1140,7 @@
         '<td><div class="cellClamp short" title="' + escapeHtml(issue.interimCM) + '">' + escapeHtml(issue.interimCM) + '</div></td>' +
         '<td><div class="cellClamp short" title="' + escapeHtml(issue.permCM) + '">' + escapeHtml(issue.permCM) + '</div></td>' +
         '<td><div class="cellClamp short" title="' + escapeHtml(issue.nextAction) + '">' + escapeHtml(issue.nextAction) + '</div></td>' +
-        '<td>' + escapeHtml(issue.championResponsible) + '</td>' +
+        '<td>' + escapeHtml((issue.championResponsible || []).join(', ')) + '</td>' +
         '<td>' + notesCellHtml(issue.comments) + '</td>' +
         '<td>' + (canManageAll() ? '<div class="rowActions"><button type="button" class="deleteBtn" data-delete="' + escapeHtml(issue.id) + '">Delete</button></div>' : '') + '</td>' +
         '</tr>';
@@ -1422,6 +1504,8 @@
     picState = null;
     reviewCommentsState = [];
     editingCommentId = null;
+    lastChampionOrgContacts = [];
+    renderChampionChecklist([]);
     setNumberFieldEditable(true);
     applyRoleUIForModal();
   }
@@ -1433,7 +1517,7 @@
     document.getElementById('modalSub').textContent = 'Issue Number is optional — leave blank to assign automatically, or type your own.';
     document.getElementById('issueModalOverlay').classList.add('open');
   }
-  function openEditModal(id){
+  async function openEditModal(id){
     var issue = lastIssues.find(function(x){ return x.id === id; });
     if (!issue) return;
     editingId = id;
@@ -1445,7 +1529,8 @@
     document.getElementById('modalSub').textContent = canManageAll() ? 'Issue Number can be corrected any time.' : 'You can view this issue and add notes below.';
     document.getElementById('f_issueNumber').value = issue.issueNumber;
     document.getElementById('f_customerOrg').innerHTML = customerOrgOptions(issue.customerOrg || '');
-    document.getElementById('f_championResponsible').value = issue.championResponsible || '';
+    await loadChampionOrgContacts(issue.customerOrg || '');
+    renderChampionChecklist(issue.championResponsible || []);
     // A legacy plan/do/check/act status (from before Rev2.31) has no
     // matching <option> in the now-suppressed dropdown - falls back to
     // Open, same normalization statusPillHtml uses for the list view.
@@ -1490,7 +1575,7 @@
       interimCM: document.getElementById('f_interimCM').value.trim(),
       permCM: document.getElementById('f_permCM').value.trim(),
       nextAction: document.getElementById('f_nextAction').value.trim(),
-      championResponsible: document.getElementById('f_championResponsible').value.trim(),
+      championResponsible: getSelectedChampions(),
       status: document.getElementById('f_status').value
     };
     if (!baseFields.customerOrg) throw new Error('Select a Customer Organization.');
@@ -1649,7 +1734,7 @@
       interimCM: truncateForExport(issue.interimCM, 300),
       permCM: truncateForExport(issue.permCM, 300),
       nextAction: truncateForExport(issue.nextAction, 300),
-      championResponsible: issue.championResponsible || '',
+      championResponsible: (issue.championResponsible || []).join(', '),
       daysSinceCreated: daysSince,
       dateCreated: fmtDateMDY((issue.createdAt || '').slice(0, 10)),
       createdBy: issue.createdBy || '',

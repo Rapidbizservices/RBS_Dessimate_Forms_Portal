@@ -1111,6 +1111,20 @@ Description there instead of a blank cell). Issue Description itself is
 unchanged and still only shown in the modal and the Excel export, which
 carries both fields as separate columns.
 
+**Champion/Responsible** (Rev2.33) is a multi-select checklist of
+usernames rather than a single free-text field - the Add/Edit modal always
+offers every Dessimate Team member, plus, once a Customer Organization is
+picked on the issue, that org's own contacts too (`GET /org-contacts`,
+originally Supplier-only, widened to cover any organization). A username
+already on a record that no longer resolves (a deactivated account, or the
+Customer Organization changed since) stays checked and pickable rather
+than silently dropping off on the next Save. A legacy single-string value
+from before this change still reads back fine as a one-item list -
+`sanitizeOpenIssueChampions` accepts either shape. A Customer login only
+ever views this field (never edits it, per the module's staff-only-record
+rule above), so for that role the checklist just shows whichever names are
+already on the record, with no directory lookup needed.
+
 **Issue Number** is formatted `OI-####` (4 digits) and auto-assigned like
 CR/SCR/DMR Number, Team Member+ only (a custom value is accepted too, and
 bumps the counter past it).
