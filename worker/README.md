@@ -1111,19 +1111,26 @@ Description there instead of a blank cell). Issue Description itself is
 unchanged and still only shown in the modal and the Excel export, which
 carries both fields as separate columns.
 
-**Champion/Responsible** (Rev2.33) is a multi-select checklist of
-usernames rather than a single free-text field - the Add/Edit modal always
-offers every Dessimate Team member, plus, once a Customer Organization is
-picked on the issue, that org's own contacts too (`GET /org-contacts`,
-originally Supplier-only, widened to cover any organization). A username
-already on a record that no longer resolves (a deactivated account, or the
+**Champion/Responsible** (Rev2.33, revised Rev2.34) is a multi-select of
+plain names rather than a single free-text field, presented as a
+closed-by-default dropdown (a button showing exactly the names picked,
+opening a small popover checklist) instead of an always-open box - the
+Add/Edit modal always offers every contact on the "Self" organization
+(Dessimate), plus, once a Customer Organization is picked on the issue,
+that org's own contacts too, grouped under each org's name in the
+popover. The names come from the Organization Contacts directory
+(`sanitizeOrg`'s `contacts` field - the same lightweight name/email/phone
+list the DMR/CR/SCR Contact dropdowns already draw from, not a login
+account), read entirely off `/organizations`, which every role already
+loads - no extra endpoint or staff-only fetch needed. A name already on a
+record that no longer resolves (a contact deactivated/renamed, or the
 Customer Organization changed since) stays checked and pickable rather
 than silently dropping off on the next Save. A legacy single-string value
-from before this change still reads back fine as a one-item list -
+from before Rev2.33 still reads back fine as a one-item list -
 `sanitizeOpenIssueChampions` accepts either shape. A Customer login only
 ever views this field (never edits it, per the module's staff-only-record
-rule above), so for that role the checklist just shows whichever names are
-already on the record, with no directory lookup needed.
+rule above) - the closed dropdown button is disabled for that role, but
+its label still shows the names already on the record.
 
 **Issue Number** is formatted `OI-####` (4 digits) and auto-assigned like
 CR/SCR/DMR Number, Team Member+ only (a custom value is accepted too, and

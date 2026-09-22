@@ -1410,19 +1410,19 @@ async function handleListUsers(env, origin) {
   return json({ usernames: names, people: people }, 200, origin);
 }
 
-// Rev2.1: contacts for one named organization (username + name only, no
-// other PII) - originally Supplier-only, backing the PDIR Sign-Off's
-// "Prepared By" dropdown (filtered by whichever Supplier the shipment is
-// for). Rev2.33 dropped the relationship==='Supplier' restriction so this
-// also covers a Customer org's own contacts - used by Customer Open
-// Issues' Champion/Responsible picker, which needs a given issue's own
-// Customer Organization's people, not a Supplier's.
+// Rev2.1: Supplier-side contacts for one named organization (username + name
+// only, no other PII) - backs the PDIR Sign-Off's "Prepared By" dropdown,
+// which needs to be filtered by whichever Supplier the shipment is for.
+// (Rev2.33 briefly widened this to any organization for Customer Open
+// Issues' Champion/Responsible picker, then that picker was redirected to
+// the Organization Contacts directory instead - see sanitizeOrg's
+// `contacts` field - so this is back to Supplier-only, its only caller.)
 async function handleListOrgContacts(env, origin, organization) {
   const org = (organization || '').toString().trim();
   if (!org) return json({ contacts: [] }, 200, origin);
   const fileState = await readUsersFile(env);
   const contacts = fileState.users
-    .filter(function (u) { return u.username && u.active !== false && (u.organization || '') === org; })
+    .filter(function (u) { return u.username && u.relationship === 'Supplier' && u.active !== false && (u.organization || '') === org; })
     .map(function (u) { return { username: u.username, name: u.name || '' }; })
     .sort(function (a, b) { return (a.name || a.username).localeCompare(b.name || b.username); });
   return json({ contacts: contacts }, 200, origin);
@@ -6438,11 +6438,13 @@ async function handleGetCustomerDmrPdf(env, origin, id, accessLevel, organizatio
 const CUSTOMER_OPEN_ISSUES_FILE_PATH = 'data/customer_open_issues.json';
 const CUSTOMER_OPEN_ISSUE_DOC_FOLDER = 'customer_open_issue_docs';
 const OPEN_ISSUE_PART_NUMBERS_MAX = 5;
-// Rev2.33: Champion/Responsible became a multi-select of usernames (Dessimate
-// Team member + the issue's own Customer Organization's contacts, via the
-// Add/Edit modal's picker - see handleListOrgContacts, widened to cover
-// Customer orgs too, not just Supplier) - was a single free-text string.
-// Backward compatible with the old shape: a legacy string value (from
+// Rev2.33: Champion/Responsible became a multi-select of plain names
+// (the Add/Edit modal's dropdown picker draws them from the Organization
+// Contacts directory - sanitizeOrg's `contacts` - for the "Self" org
+// (Dessimate) plus whichever Customer Organization is picked on the
+// issue, entirely client-side off data /organizations already returns) -
+// was a single free-text string. Backward compatible with the old shape:
+// a legacy string value (from
 // before this change) reads as a one-item array rather than being dropped.
 const OPEN_ISSUE_CHAMPIONS_MAX = 10;
 function sanitizeOpenIssueChampions(v) {
