@@ -1387,12 +1387,22 @@ module's equivalent branches.
 The portal can be "installed" from Chrome or Edge - it shows up as a real
 desktop/taskbar icon with its own window (no address bar, no tabs), while
 still being the exact same hosted site and Worker backend. There's
-nothing to migrate and no separate build: open any page, click the
-install icon in the address bar (or the browser's "Install app" / "Apps
-→ Install this site as an app" menu item), and it's added like a native
-app. It still needs internet the same as visiting the site normally, and
-it updates itself automatically the next time it's opened - there's no
-"old installed version" to fall behind.
+nothing to migrate and no separate build. It still needs internet the
+same as visiting the site normally, and it updates itself automatically
+the next time it's opened - there's no "old installed version" to fall
+behind.
+
+**Install Desktop App button** - rather than rely on staff finding the
+browser's own (easy-to-miss) install icon in the address bar, `index.html`
+shows a one-click **Install Desktop App** button right at the top of the
+sidebar, below the logo. It only appears when the browser actually fires
+its `beforeinstallprompt` event (i.e., Chrome/Edge have confirmed the site
+meets the install criteria), so it never shows up as a dead button on a
+browser that can't install it (Firefox, Safari) or once the app is already
+installed - clicking it just replays that captured event, which opens the
+browser's own native "Install DSCM?" confirmation. This button lives
+outside `#sideNav` so `renderNav()` rebuilding the module list on every
+login never wipes it out.
 
 Three small additions make this work, all at the repo root (served
 alongside the HTML pages, no server-side involvement):

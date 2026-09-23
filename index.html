@@ -56,6 +56,16 @@
   .sideBrand .name{ font-size:14.5px; font-weight:800; color:#fff; letter-spacing:.01em; line-height:1.2; }
   .sideBrand .tag{ font-size:10.5px; color:var(--side-text-dim); margin-top:2px; letter-spacing:.02em; }
 
+  .installAppBtn{
+    display:flex; align-items:center; gap:9px; width:calc(100% - 24px); margin:2px 12px 10px;
+    font-family:inherit; font-size:13px; font-weight:700; color:#fff;
+    background:var(--brand); border:1px solid rgba(255,255,255,.18); border-radius:8px;
+    padding:10px 12px; cursor:pointer; text-align:left;
+  }
+  .installAppBtn:hover{ background:var(--brand-dark); }
+  .installAppBtn:disabled{ opacity:.65; cursor:wait; }
+  .installAppIcon{ font-size:15px; line-height:1; flex:0 0 auto; }
+
   .sideNav{ flex:1 1 auto; padding:6px 12px 12px; }
   .sideGroup{ margin-top:16px; }
   .sideGroup:first-child{ margin-top:2px; }
@@ -146,6 +156,11 @@
         <div class="tag">Dessimate Supply Chain</div>
       </div>
     </div>
+
+    <button type="button" class="installAppBtn" id="installAppBtn" style="display:none;">
+      <span class="installAppIcon">&#11123;</span>
+      <span>Install Desktop App</span>
+    </button>
 
     <div class="sideNav" id="sideNav">
       <!-- populated by renderNav() once /me resolves the signed-in person's access level -->
@@ -592,6 +607,48 @@
   }
   document.getElementById('hamburgerBtn').addEventListener('click', openSidebar);
   document.getElementById('sideScrim').addEventListener('click', closeSidebar);
+  // -------------------------------------------------------------------------
+
+  // ---- Install as desktop app ------------------------------------------
+  // Chrome/Edge fire `beforeinstallprompt` only when the manifest + service
+  // worker criteria are met; we hold onto that event and replay it when
+  // someone clicks the button, instead of relying on people finding the
+  // browser's own (easy to miss) install icon. Browsers that never fire
+  // this event (Firefox, Safari) simply never show the button - there's
+  // nothing useful it could do there.
+  (function () {
+    var installBtn = document.getElementById('installAppBtn');
+    var deferredPrompt = null;
+
+    function isRunningInstalled() {
+      return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    }
+
+    if (isRunningInstalled()) return;
+
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      deferredPrompt = e;
+      installBtn.style.display = 'flex';
+    });
+
+    window.addEventListener('appinstalled', function () {
+      deferredPrompt = null;
+      installBtn.style.display = 'none';
+    });
+
+    installBtn.addEventListener('click', async function () {
+      if (!deferredPrompt) return;
+      installBtn.disabled = true;
+      try {
+        deferredPrompt.prompt();
+        await deferredPrompt.userChoice;
+      } catch (e) { /* ignore - user dismissed or prompt already used */ }
+      deferredPrompt = null;
+      installBtn.style.display = 'none';
+      installBtn.disabled = false;
+    });
+  })();
   // -------------------------------------------------------------------------
 
   requireAuthThen(resolveAccessAndRenderNav);
