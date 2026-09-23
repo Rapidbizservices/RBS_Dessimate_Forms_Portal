@@ -1134,7 +1134,13 @@ its label still shows the names already on the record.
 
 **Issue Number** is formatted `OI-####` (4 digits) and auto-assigned like
 CR/SCR/DMR Number, Team Member+ only (a custom value is accepted too, and
-bumps the counter past it).
+bumps the counter past it). The `OI-` prefix is stored/generated
+server-side exactly as before, but Rev2.35 hides it everywhere it's
+shown in the UI (list, modal title, the Issue Number field itself,
+delete confirmation, Excel export) - `displayIssueNumber` strips it for
+display, and `withOIPrefix` re-adds it right before a create/update
+request goes out, so what the client actually sends still matches the
+`OI-####` shape the backend/counter logic expects.
 
 **Notes/Comments is a multi-entry thread**, same base shape as Customer
 DMR's Section 8 but editable (Rev2.24) - unlike Customer DMR, entries here
@@ -1178,29 +1184,46 @@ instead.
 
 No PDF generation - not requested for this module.
 
-**Download Excel** (Rev2.23) - a "Download Excel" button in the header
-(visible to staff and a Customer login alike, since both can view this
-list) exports whatever rows are currently loaded - i.e. already scoped
-server-side to what that login can see - as a formatted `.xlsx` file, no
-backend round-trip needed. Built from scratch as raw SpreadsheetML,
-zipped client-side with JSZip (the same CDN-lazy-loaded library SCR.html
-already uses for its docx generation) rather than a full xlsx-writing
-library: the common free/community one (SheetJS) doesn't actually write
-cell styling - fills, fonts, borders - into `.xlsx` output, that's a
-paid-tier feature there, and real styling is the point of a "professional"
-export. The sheet has a merged title band, a "Generated <date> - N
-issues" subtitle, a bold white-on-brand-blue header row, a frozen top
-(title+subtitle+header stay visible while scrolling), an AutoFilter on
-the header (sort/filter directly in Excel), sized columns, wrapped text
-for long fields, and the Status column color-coded to match the app
-(yellow fill for Open, green for Closed). Columns go beyond the list
-view with a few computed, review-friendly fields: **Days Since Created**
-(ticket age), **Date Created** / **Created By**, **Attachments** /
-**Notes Count** (activity counts), **Has Picture**, and **Latest Note**
-(most recent comment) - so a reviewer can triage from the spreadsheet
-alone without opening every record. Long text fields are truncated (with
-an ellipsis) past a few hundred characters to keep rows readable; the
-full text is always still on the record itself.
+**Download Excel** (Rev2.23, revised Rev2.35) - a "Download Excel" button
+in the header (visible to staff and a Customer login alike, since both
+can view this list) exports whatever rows are currently loaded - i.e.
+already scoped server-side to what that login can see - as a formatted
+`.xlsx` file, no backend round-trip needed. Built from scratch as raw
+SpreadsheetML, zipped client-side with JSZip (the same CDN-lazy-loaded
+library SCR.html already uses for its docx generation) rather than a
+full xlsx-writing library: the common free/community one (SheetJS)
+doesn't actually write cell styling - fills, fonts, borders - into
+`.xlsx` output, that's a paid-tier feature there, and real styling is
+the point of a "professional" export. Each sheet has a merged title
+band, a "Generated <date> - N issues" subtitle, a bold
+white-on-brand-blue header row, a frozen top (title+subtitle+header stay
+visible while scrolling), an AutoFilter on the header (sort/filter
+directly in Excel), sized columns, wrapped text for long fields, and the
+Status column color-coded to match the app (yellow fill for Open, green
+for Closed).
+
+**One tab per Part Number (Rev2.35)** - rather than a single combined
+sheet, the workbook now has one tab per distinct part number across the
+exported issues (an issue tagged with more than one part appears on each
+of that part's tabs), plus a catch-all "No Part Number" tab for anything
+untagged, so reviewing "everything for this part" never means
+scrolling/filtering a mixed list. Sheet names are sanitized for Excel's
+naming rules (31 chars, no `\ / ? * [ ] :`) with a numbered suffix on
+collision.
+
+Columns go beyond the list view with a couple of computed,
+review-friendly fields: **Attachments** / **Notes Count** (activity
+counts) and **Latest Note** (most recent comment) - so a reviewer can
+triage from the spreadsheet alone without opening every record. Days
+Since Created, Date Created, and Created By were dropped from the export
+in Rev2.35 (not wanted in the download). **Has Picture** (also Rev2.35)
+draws the actual Issue Picture thumbnail into the cell as a real
+embedded image (hand-rolled OOXML drawing/media parts - `xdr:pic` anchored
+to that row/column, referencing an `xl/media/` file fetched via the same
+`ghGetFileBytes` the in-page doc viewer uses) rather than a Yes/No label;
+it still just reads "No" when an issue has no picture. Long text fields
+are truncated (with an ellipsis) past a few hundred characters to keep
+rows readable; the full text is always still on the record itself.
 
 ## Customer SCRs (SCR)
 
