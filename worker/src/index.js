@@ -49,6 +49,24 @@
  * moment it's edited and saved once from the Users admin page, or pulled in
  * with the page's "Import" action. There's no cutover step required.
  *
+ * MULTI-FACTOR AUTHENTICATION (MFA)
+ * Optional, per-role-enforceable two-factor sign-in - see worker/README.md's
+ * "Multi-factor authentication (MFA)" section for the full user-facing
+ * explanation. Backend shape, in one paragraph: each user's `mfa` field
+ * (encrypted TOTP secret, hashed backup codes, email-fallback preference)
+ * lives inline on their USERS_FILE_PATH record; MFA_SETTINGS_FILE_PATH holds
+ * the 4 per-role toggles (super_admin is hardcoded true, never a key there);
+ * MFA_AUDIT_LOG_FILE_PATH is an append-only trail of every setting change
+ * and reset; MFA_VERIFY_LOCKOUTS_FILE_PATH and MFA_EMAIL_OTP_FILE_PATH mirror
+ * LOGIN_LOCKOUTS_FILE_PATH's shape for, respectively, wrong-code lockout and
+ * email-code send-rate limiting; MFA_SESSION_INVALIDATIONS_FILE_PATH lets
+ * requireAuth revoke an already-issued session early (an MFA reset, or a
+ * role's requirement newly turning on) despite sessions otherwise being
+ * stateless signed tokens - see issueSession's `iat` and isSessionInvalidated.
+ * A short-lived "pending" token (signed with MFA_SECRET, not SESSION_SECRET)
+ * carries a login from "password OK" to "2nd factor OK"; a similarly-scoped
+ * "step-up" token gates the per-role toggle and the admin MFA reset route.
+ *
  * ORGANIZATION DIRECTORY (Suppliers / Customers - address, docs, etc.)
  * A second directory file, ORGANIZATIONS_FILE_PATH below, holds Supplier and
  * Customer companies (not people - that's the user directory above). Its
@@ -433,6 +451,18 @@ export default {
         return await handleLogin(request, env, origin);
       }
 
+      // ---- MFA: 2nd-factor login step (public - no session yet, gated by a
+      // short-lived pendingToken minted by handleLogin instead) ------------
+      if (url.pathname === '/login/mfa/verify' && request.method === 'POST') {
+        return await handleLoginMfaVerify(request, env, origin);
+      }
+      if (url.pathname === '/login/mfa/email/send' && request.method === 'POST') {
+        return await handleLoginMfaEmailSend(request, env, origin);
+      }
+      if (url.pathname === '/login/mfa/enroll' && request.method === 'POST') {
+        return await handleLoginMfaEnroll(request, env, origin);
+      }
+
       if (url.pathname === '/users' && request.method === 'GET') {
         return await handleListUsers(env, origin);
       }
@@ -473,6 +503,38 @@ export default {
         return await handleChangeOwnPassword(request, env, origin, auth.username);
       }
 
+      // ---- MFA: self-service enrollment ----------------------------------
+      // Same "not while impersonating" guard as /me/password above - an
+      // impersonated session shouldn't be able to quietly change the real
+      // person's MFA either.
+      if (url.pathname.indexOf('/me/mfa') === 0) {
+        const auth = await requireAuth(request, env);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        if (auth.impersonatedBy) return json({ message: "Can't change MFA settings while impersonating another user." }, 403, origin);
+
+        if (url.pathname === '/me/mfa' && request.method === 'GET') {
+          return await handleGetMyMfa(env, origin, auth.username);
+        }
+        if (url.pathname === '/me/mfa/totp/enroll' && request.method === 'POST') {
+          return await handleMfaTotpEnroll(env, origin, auth.username);
+        }
+        if (url.pathname === '/me/mfa/totp/confirm' && request.method === 'POST') {
+          return await handleMfaTotpConfirm(request, env, origin, auth.username);
+        }
+        if (url.pathname === '/me/mfa/totp/disable' && request.method === 'POST') {
+          return await handleMfaTotpDisable(request, env, origin, auth.username);
+        }
+        if (url.pathname === '/me/mfa/backup-codes/regenerate' && request.method === 'POST') {
+          return await handleMfaBackupCodesRegenerate(request, env, origin, auth.username);
+        }
+        if (url.pathname === '/me/mfa/email/enable' && request.method === 'POST') {
+          return await handleMfaEmailToggle(request, env, origin, auth.username, true);
+        }
+        if (url.pathname === '/me/mfa/email/disable' && request.method === 'POST') {
+          return await handleMfaEmailToggle(request, env, origin, auth.username, false);
+        }
+      }
+
       // Rev2.4: Super Admin "Log in as" - see handleAdminImpersonate.
       if (/^\/admin\/users\/[^/]+\/impersonate$/.test(url.pathname) && request.method === 'POST') {
         const id = decodeURIComponent(url.pathname.split('/')[3]);
@@ -505,6 +567,30 @@ export default {
         const auth = await requireRole(request, env, ['super_admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         return await handleAdminImportLegacy(env, origin);
+      }
+
+      // ---- MFA: admin (super_admin only) ----------------------------------
+      if (url.pathname === '/admin/mfa/settings') {
+        const auth = await requireRole(request, env, ['super_admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        if (request.method === 'GET') return await handleGetMfaSettings(env, origin);
+        if (request.method === 'PUT') return await handleUpdateMfaSettings(request, env, origin, auth.username);
+      }
+      if (url.pathname === '/admin/mfa/step-up' && request.method === 'POST') {
+        const auth = await requireRole(request, env, ['super_admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleMfaStepUp(request, env, origin, auth.username);
+      }
+      if (/^\/admin\/mfa\/reset\/[^/]+$/.test(url.pathname) && request.method === 'POST') {
+        const auth = await requireRole(request, env, ['super_admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        const userId = decodeURIComponent(url.pathname.split('/')[4]);
+        return await handleAdminResetMfa(request, env, origin, userId, auth.username);
+      }
+      if (url.pathname === '/admin/mfa/audit' && request.method === 'GET') {
+        const auth = await requireRole(request, env, ['super_admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleGetMfaAudit(env, origin);
       }
 
       if (url.pathname === '/organizations') {
@@ -1205,6 +1291,227 @@ async function clearFailedLogins(env, usernameLower) {
   });
 }
 
+// ---- MFA: storage paths, settings, lockouts, email OTP, audit log, session
+// invalidation -------------------------------------------------------------
+// Every document below follows the exact same JSON-in-D1 shape/optimistic-
+// concurrency pattern as every other DSCM feature (see readJsonObjectFile/
+// mutateJsonObjectFile, readJsonArrayFile/mutateJsonArrayFile) - no new SQL
+// tables, just new document paths.
+
+const MFA_SETTINGS_FILE_PATH = 'data/mfa_settings.json';
+const MFA_AUDIT_LOG_FILE_PATH = 'data/mfa_audit_log.json';
+const MFA_EMAIL_OTP_FILE_PATH = 'data/mfa_email_otp.json';
+const MFA_VERIFY_LOCKOUTS_FILE_PATH = 'data/mfa_verify_lockouts.json';
+const MFA_SESSION_INVALIDATIONS_FILE_PATH = 'data/mfa_session_invalidations.json';
+
+// The 4 roles a super_admin can independently require MFA for.
+// super_admin itself is NEVER a key here - see isMfaRequiredForAccessLevel -
+// so it can't be switched off through this feature's own UI/API by anyone.
+const MFA_TOGGLE_ROLES = ['admin', 'team_member', 'supplier', 'customer'];
+
+const MFA_PENDING_TOKEN_TTL_SECONDS = 10 * 60;   // password verified, 2nd factor not yet
+const MFA_STEP_UP_TOKEN_TTL_SECONDS = 5 * 60;    // re-auth window for changing MFA settings
+
+// Rev-MFA: verify-attempt lockout, deliberately separate from
+// LOGIN_LOCKOUTS_FILE_PATH (a wrong TOTP/backup/email code is a different
+// failure surface than a wrong password) but modeled directly on it -
+// isLoginLocked/recordFailedLogin/clearFailedLogins above. Threshold is 5
+// rather than the password lockout's 3, since a mistyped 6-digit code is a
+// common honest mistake. super_admin is exempt from this lockout for the
+// same reason it's exempt from the password lockout above ("there's always
+// at least one way into the system") - callers check accessLevel themselves
+// before calling these, exactly like handleLogin's `lockable` pattern.
+const MFA_VERIFY_LOCKOUT_THRESHOLD = 5;
+const MFA_VERIFY_LOCKOUT_MESSAGE = 'Too many incorrect codes. Please contact a Super Admin to reset your MFA.';
+
+async function isMfaVerifyLocked(env, usernameLower) {
+  const state = await readJsonObjectFile(env, MFA_VERIFY_LOCKOUTS_FILE_PATH, {});
+  const entry = state.obj[usernameLower];
+  return !!(entry && entry.failCount >= MFA_VERIFY_LOCKOUT_THRESHOLD);
+}
+async function recordFailedMfaVerify(env, usernameLower) {
+  let failCount = 0, justLocked = false;
+  await mutateJsonObjectFile(env, MFA_VERIFY_LOCKOUTS_FILE_PATH, {}, function (obj) {
+    const entry = obj[usernameLower] || { failCount: 0 };
+    entry.failCount = (entry.failCount || 0) + 1;
+    failCount = entry.failCount;
+    justLocked = entry.failCount === MFA_VERIFY_LOCKOUT_THRESHOLD;
+    if (entry.failCount >= MFA_VERIFY_LOCKOUT_THRESHOLD) entry.lockedAt = new Date().toISOString();
+    obj[usernameLower] = entry;
+    return { obj: obj };
+  });
+  return { failCount: failCount, justLocked: justLocked };
+}
+// Called on a successful MFA verify, and by handleAdminResetMfa (a Super
+// Admin's MFA reset is this lockout's own "promised way out", same as
+// clearFailedLogins is for the password lockout).
+async function clearFailedMfaVerify(env, usernameLower) {
+  const state = await readJsonObjectFile(env, MFA_VERIFY_LOCKOUTS_FILE_PATH, {});
+  if (!state.obj[usernameLower]) return;
+  await mutateJsonObjectFile(env, MFA_VERIFY_LOCKOUTS_FILE_PATH, {}, function (obj) {
+    delete obj[usernameLower];
+    return { obj: obj };
+  });
+}
+
+// ---- MFA: email one-time-code send-rate limiting + storage ---------------
+// Governs how often a code can be *requested* (separate from the
+// verify-attempt lockout above, which governs how many wrong *guesses* are
+// tolerated once a code has been sent).
+const MFA_EMAIL_OTP_TTL_SECONDS = 10 * 60;
+const MFA_EMAIL_OTP_MIN_RESEND_SECONDS = 45;
+const MFA_EMAIL_OTP_MAX_SENDS_PER_WINDOW = 5;
+const MFA_EMAIL_OTP_WINDOW_SECONDS = 15 * 60;
+
+async function checkEmailOtpSendAllowed(env, usernameLower) {
+  const state = await readJsonObjectFile(env, MFA_EMAIL_OTP_FILE_PATH, {});
+  const entry = state.obj[usernameLower];
+  if (!entry) return { allowed: true };
+  const nowMs = Date.now();
+  if (entry.lastSentAt && (nowMs - entry.lastSentAt) < MFA_EMAIL_OTP_MIN_RESEND_SECONDS * 1000) {
+    return { allowed: false, retryAfterSeconds: Math.ceil((MFA_EMAIL_OTP_MIN_RESEND_SECONDS * 1000 - (nowMs - entry.lastSentAt)) / 1000) };
+  }
+  const recentSends = (entry.sentTimestamps || []).filter(function (t) { return (nowMs - t) < MFA_EMAIL_OTP_WINDOW_SECONDS * 1000; });
+  if (recentSends.length >= MFA_EMAIL_OTP_MAX_SENDS_PER_WINDOW) {
+    return { allowed: false, retryAfterSeconds: Math.ceil((MFA_EMAIL_OTP_WINDOW_SECONDS * 1000 - (nowMs - recentSends[0])) / 1000) };
+  }
+  return { allowed: true };
+}
+async function recordEmailOtpSend(env, usernameLower, codeHash, codeSalt) {
+  const nowMs = Date.now();
+  await mutateJsonObjectFile(env, MFA_EMAIL_OTP_FILE_PATH, {}, function (obj) {
+    const entry = obj[usernameLower] || { sentTimestamps: [] };
+    const recentSends = (entry.sentTimestamps || []).filter(function (t) { return (nowMs - t) < MFA_EMAIL_OTP_WINDOW_SECONDS * 1000; });
+    recentSends.push(nowMs);
+    obj[usernameLower] = {
+      codeHash: codeHash,
+      codeSalt: codeSalt,
+      expiresAt: nowMs + MFA_EMAIL_OTP_TTL_SECONDS * 1000,
+      lastSentAt: nowMs,
+      sentTimestamps: recentSends
+    };
+    return { obj: obj };
+  });
+}
+async function getEmailOtpEntry(env, usernameLower) {
+  const state = await readJsonObjectFile(env, MFA_EMAIL_OTP_FILE_PATH, {});
+  return state.obj[usernameLower] || null;
+}
+// Clears the pending code itself on successful/expired use, but keeps
+// sentTimestamps (the send-rate history) intact - a used code shouldn't
+// reset how many more can be requested in this window.
+async function clearEmailOtpCode(env, usernameLower) {
+  await mutateJsonObjectFile(env, MFA_EMAIL_OTP_FILE_PATH, {}, function (obj) {
+    const entry = obj[usernameLower];
+    if (entry) {
+      const cleared = Object.assign({}, entry);
+      delete cleared.codeHash; delete cleared.codeSalt; delete cleared.expiresAt;
+      obj[usernameLower] = cleared;
+    }
+    return { obj: obj };
+  });
+}
+
+// ---- MFA: outbound email via Resend ---------------------------------------
+// DSCM sends no other email today - this is the one small integration
+// surface for the email-OTP fallback, kept to a single fetch() call against
+// Resend's REST API (free tier is comfortably enough at this app's scale).
+// Never throws - a delivery failure shouldn't crash the request that
+// triggered it (the caller already committed the rate-limit record either
+// way); logged to the console for wrangler tail / Cloudflare dashboard
+// visibility instead.
+async function sendEmail(env, to, subject, html) {
+  if (!env.RESEND_API_KEY) { console.error('sendEmail: RESEND_API_KEY not configured'); return { ok: false }; }
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: env.RESEND_FROM_EMAIL || 'DSCM <onboarding@resend.dev>', to: [to], subject: subject, html: html })
+    });
+    if (!res.ok) { console.error('sendEmail: Resend responded ' + res.status); return { ok: false }; }
+    return { ok: true };
+  } catch (e) {
+    console.error('sendEmail: ' + (e && e.message ? e.message : String(e)));
+    return { ok: false };
+  }
+}
+
+// ---- MFA: per-role requirement settings -----------------------------------
+async function readMfaSettings(env) {
+  const defaults = { requireForRole: { admin: false, team_member: false, supplier: false, customer: false } };
+  const state = await readJsonObjectFile(env, MFA_SETTINGS_FILE_PATH, defaults);
+  const requireForRole = Object.assign({}, defaults.requireForRole, state.obj.requireForRole || {});
+  return { requireForRole: requireForRole, sha: state.sha };
+}
+// super_admin is hardcoded true here, never read from storage - see
+// MFA_TOGGLE_ROLES above for why.
+async function isMfaRequiredForAccessLevel(env, accessLevel) {
+  if (accessLevel === 'super_admin') return true;
+  if (MFA_TOGGLE_ROLES.indexOf(accessLevel) === -1) return false;
+  const settings = await readMfaSettings(env);
+  return !!settings.requireForRole[accessLevel];
+}
+
+// ---- MFA: audit log --------------------------------------------------------
+// Append-only, mirrors no existing pattern in this app (nothing else logs an
+// audit trail yet) but uses the same mutateJsonArrayFile primitive as every
+// list-shaped document here.
+async function appendMfaAuditLog(env, entry) {
+  const record = Object.assign({ id: cryptoRandomId(), at: new Date().toISOString() }, entry);
+  await mutateJsonArrayFile(env, MFA_AUDIT_LOG_FILE_PATH, function (items) {
+    items.push(record);
+    return { items: items };
+  });
+  return record;
+}
+
+// ---- MFA: session invalidation ---------------------------------------------
+// Sessions are stateless signed tokens (signToken/verifyToken) with no
+// server-side session store, so "revoking" one means requireAuth rejecting
+// any token issued before a recorded cutover - see requireAuth below, and
+// issueSession's new `iat` claim.
+async function readSessionInvalidations(env) {
+  const defaults = { perUser: {}, perRole: {} };
+  const state = await readJsonObjectFile(env, MFA_SESSION_INVALIDATIONS_FILE_PATH, defaults);
+  return {
+    perUser: Object.assign({}, defaults.perUser, state.obj.perUser || {}),
+    perRole: Object.assign({}, defaults.perRole, state.obj.perRole || {})
+  };
+}
+// Called by handleAdminResetMfa - ends that one person's current session(s)
+// the moment their MFA is reset, not just their MFA enrollment.
+async function invalidateUserSessions(env, usernameLower) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  await mutateJsonObjectFile(env, MFA_SESSION_INVALIDATIONS_FILE_PATH, { perUser: {}, perRole: {} }, function (obj) {
+    const perUser = Object.assign({}, obj.perUser);
+    perUser[usernameLower] = nowSec;
+    return { obj: Object.assign({}, obj, { perUser: perUser }) };
+  });
+}
+// Called by handleUpdateMfaSettings, only on a false -> true transition for
+// one role - forces everyone currently signed in under that role to
+// re-authenticate, so a newly-required MFA rule can't be bypassed by an
+// already-open (up to 7-day) session.
+async function invalidateRoleSessions(env, role) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  await mutateJsonObjectFile(env, MFA_SESSION_INVALIDATIONS_FILE_PATH, { perUser: {}, perRole: {} }, function (obj) {
+    const perRole = Object.assign({}, obj.perRole);
+    perRole[role] = nowSec;
+    return { obj: Object.assign({}, obj, { perRole: perRole }) };
+  });
+}
+// A token with no `iat` (every session issued before this feature shipped)
+// is treated as iat:0, so it's always older than any real cutover - pre-
+// existing long-lived tokens are correctly swept up the first time a
+// cutover is ever set for that user/role, not just newly-issued ones.
+async function isSessionInvalidated(env, usernameLower, accessLevel, iat) {
+  const effectiveIat = typeof iat === 'number' ? iat : 0;
+  const inv = await readSessionInvalidations(env);
+  const userCutover = inv.perUser[usernameLower] || 0;
+  const roleCutover = inv.perRole[accessLevel] || 0;
+  return effectiveIat < userCutover || effectiveIat < roleCutover;
+}
+
 async function handleLogin(request, env, origin) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
@@ -1251,7 +1558,7 @@ async function handleLogin(request, env, origin) {
       return badCreds();
     }
     if (lockable) await clearFailedLogins(env, usernameLower);
-    return await issueSession(fileMatch.username, env, origin);
+    return await completeLoginOrChallengeMfa(env, origin, fileMatch.username, accessLevel, null);
   }
 
   const legacy = readLegacyStaff(env);
@@ -1270,15 +1577,247 @@ async function handleLogin(request, env, origin) {
     return badCreds();
   }
   if (legacyLockable) await clearFailedLogins(env, usernameLower);
-  return await issueSession(legacyMatch.username, env, origin);
+  return await completeLoginOrChallengeMfa(env, origin, legacyMatch.username, legacyAccessLevel, legacyMatch);
 }
 
-async function issueSession(username, env, origin, impersonatedBy) {
-  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  const payload = { u: username, exp: exp };
+// ---- MFA: login-time gate --------------------------------------------------
+// A legacy STAFF_USERS-only account (no data/users.json record yet) has
+// nowhere to store an MFA enrollment. The moment MFA actually applies to
+// one, silently carry its existing credentials into a minimal file record -
+// the same "becomes migrated" step the Users page's own Import action does
+// for a whole batch, just triggered per-account exactly when it's first
+// needed, so nobody can end up stuck with no way to enroll.
+async function ensureUserRecordForLogin(env, username, legacyMatch) {
+  const fileState = await readUsersFile(env);
+  if (findUserByUsername(fileState.users, username)) return; // already migrated
+  await mutateUsersFile(env, function (users) {
+    if (findUserByUsername(users, username)) return { users: users }; // race: migrated between the read above and now
+    users.push({
+      id: cryptoRandomId(), name: '', username: legacyMatch.username, hash: legacyMatch.hash, salt: legacyMatch.salt,
+      organization: '', relationship: 'Dessimate Team member', role: '', email: '', phone: '',
+      active: true, accessLevel: null, isDemo: false, stampImage: null
+    });
+    return { users: users };
+  });
+}
+
+// Called at the one moment a password has just been verified (both the
+// data/users.json path and the legacy STAFF_USERS path above funnel through
+// here) - decides whether a 2nd factor applies and either issues a session
+// immediately (byte-for-byte today's behavior, for anyone this feature
+// doesn't touch) or hands back a short-lived pending token instead.
+async function completeLoginOrChallengeMfa(env, origin, username, accessLevel, legacyMatch) {
+  const mfaRequired = await isMfaRequiredForAccessLevel(env, accessLevel);
+  if (mfaRequired && legacyMatch) await ensureUserRecordForLogin(env, username, legacyMatch);
+
+  const fileState = await readUsersFile(env);
+  const userRecord = findUserByUsername(fileState.users, username);
+  const hasEnrolled = !!(userRecord && userRecord.mfa && (
+    (userRecord.mfa.totp && userRecord.mfa.totp.enabled) || (userRecord.mfa.email && userRecord.mfa.email.enabled)
+  ));
+
+  if (!mfaRequired && !hasEnrolled) return await issueSession(username, env, origin);
+
+  const usernameLower = username.toLowerCase();
+  if (accessLevel !== 'super_admin' && await isMfaVerifyLocked(env, usernameLower)) {
+    return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
+  }
+
+  const availableMethods = [];
+  if (hasEnrolled) {
+    if (userRecord.mfa.totp && userRecord.mfa.totp.enabled) availableMethods.push('totp');
+    if (userRecord.mfa.email && userRecord.mfa.email.enabled) availableMethods.push('email');
+    const hasUnusedBackupCodes = Array.isArray(userRecord.mfa.backupCodes) &&
+      userRecord.mfa.backupCodes.some(function (c) { return !c.usedAt; });
+    if (hasUnusedBackupCodes) availableMethods.push('backup');
+  }
+  const mode = hasEnrolled ? 'challenge' : 'enroll_required';
+  const nowSec = Math.floor(Date.now() / 1000);
+  const pendingToken = await signToken({ u: username, purpose: 'mfa', exp: nowSec + MFA_PENDING_TOKEN_TTL_SECONDS }, env.MFA_SECRET);
+  return json({ mfaRequired: true, mode: mode, availableMethods: availableMethods, pendingToken: pendingToken }, 200, origin);
+}
+
+// Verifies a pending token (signed with MFA_SECRET, purpose:'mfa') and
+// returns its username, or null. Deliberately a different secret than
+// SESSION_SECRET, and a different `purpose` field on top of that, so this
+// token can never be mistaken for/replayed as a real session by requireAuth
+// even if some other check were missed.
+async function verifyMfaPendingToken(env, token) {
+  const payload = await verifyToken(token, env.MFA_SECRET);
+  if (!payload || payload.purpose !== 'mfa' || !payload.u) return null;
+  return payload.u;
+}
+
+async function handleLoginMfaVerify(request, env, origin) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const username = await verifyMfaPendingToken(env, (body.pendingToken || '').toString());
+  if (!username) return json({ message: 'Your sign-in session has expired — please sign in again.' }, 401, origin);
+  const method = (body.method || 'totp').toString();
+  const code = (body.code || '').toString();
+  const usernameLower = username.toLowerCase();
+  const accessLevel = await resolveAccessLevel(env, username);
+
+  if (accessLevel !== 'super_admin' && await isMfaVerifyLocked(env, usernameLower)) {
+    return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
+  }
+
+  const fileState = await readUsersFile(env);
+  const userRecord = findUserByUsername(fileState.users, username);
+  if (!userRecord) return json({ message: 'Account not found.' }, 404, origin);
+
+  const fail = async function (message) {
+    if (accessLevel !== 'super_admin') {
+      const attempt = await recordFailedMfaVerify(env, usernameLower);
+      if (attempt.justLocked) return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
+    }
+    return json({ message: message || 'Incorrect code — please try again.' }, 400, origin);
+  };
+
+  if (method === 'totp') {
+    if (!userRecord.mfa || !userRecord.mfa.totp || !userRecord.mfa.totp.enabled) return await fail('Authenticator app is not enabled on this account.');
+    const secretBase32 = await decryptTotpSecret(env, userRecord.mfa.totp.secretEnc, userRecord.mfa.totp.secretIv);
+    const matchedStep = await verifyTotpCode(secretBase32, code, userRecord.mfa.totp.lastUsedStep);
+    if (matchedStep === null) return await fail();
+    await mutateUsersFile(env, function (users) {
+      const u = findUserByUsername(users, username);
+      if (!u || !u.mfa || !u.mfa.totp) return null;
+      u.mfa.totp.lastUsedStep = matchedStep;
+      return { users: users };
+    });
+  } else if (method === 'backup') {
+    const codes = (userRecord.mfa && Array.isArray(userRecord.mfa.backupCodes)) ? userRecord.mfa.backupCodes : [];
+    if (!codes.length) return await fail('No backup codes on this account.');
+    const normalized = normalizeBackupCode(code);
+    let matchIndex = -1;
+    for (let i = 0; i < codes.length; i++) {
+      if (codes[i].usedAt) continue;
+      if (await backupCodeMatchesHash(normalized, codes[i].salt, codes[i].hash)) { matchIndex = i; break; }
+    }
+    if (matchIndex === -1) return await fail('Incorrect or already-used backup code.');
+    const nowIso = new Date().toISOString();
+    await mutateUsersFile(env, function (users) {
+      const u = findUserByUsername(users, username);
+      if (!u || !u.mfa || !Array.isArray(u.mfa.backupCodes) || !u.mfa.backupCodes[matchIndex]) return null;
+      u.mfa.backupCodes[matchIndex].usedAt = nowIso;
+      return { users: users };
+    });
+  } else if (method === 'email') {
+    const entry = await getEmailOtpEntry(env, usernameLower);
+    if (!entry || !entry.codeHash || !entry.expiresAt || entry.expiresAt < Date.now()) return await fail('Code expired — request a new one.');
+    const matches = await emailOtpCodeMatchesHash(code, entry.codeSalt, entry.codeHash);
+    if (!matches) return await fail();
+    await clearEmailOtpCode(env, usernameLower);
+  } else {
+    return json({ message: 'Unknown verification method.' }, 400, origin);
+  }
+
+  if (accessLevel !== 'super_admin') await clearFailedMfaVerify(env, usernameLower);
+  return await issueSession(username, env, origin);
+}
+
+async function handleLoginMfaEmailSend(request, env, origin) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const username = await verifyMfaPendingToken(env, (body.pendingToken || '').toString());
+  if (!username) return json({ message: 'Your sign-in session has expired — please sign in again.' }, 401, origin);
+  const usernameLower = username.toLowerCase();
+
+  const fileState = await readUsersFile(env);
+  const userRecord = findUserByUsername(fileState.users, username);
+  if (!userRecord) return json({ message: 'Account not found.' }, 404, origin);
+  if (!userRecord.mfa || !userRecord.mfa.email || !userRecord.mfa.email.enabled) {
+    return json({ message: 'Email code is not enabled on this account.' }, 400, origin);
+  }
+  if (!userRecord.email) return json({ message: 'This account has no email on file.' }, 400, origin);
+
+  const sendCheck = await checkEmailOtpSendAllowed(env, usernameLower);
+  if (!sendCheck.allowed) {
+    return json({ message: 'Please wait before requesting another code.', retryAfterSeconds: sendCheck.retryAfterSeconds }, 429, origin);
+  }
+  const code = generateEmailOtpCode();
+  const hashed = await hashEmailOtpCode(code);
+  await recordEmailOtpSend(env, usernameLower, hashed.hash, hashed.salt);
+  await sendEmail(env, userRecord.email, 'Your DSCM sign-in code',
+    '<p>Your DSCM sign-in code is <strong>' + code + '</strong>. It expires in 10 minutes. If you didn\'t request this, you can ignore it.</p>');
+  return json({ sent: true }, 200, origin);
+}
+
+// Handles the "enroll now" path (mode:'enroll_required') - the same TOTP
+// enroll/confirm logic as the self-service /me/mfa/totp/* routes, but keyed
+// by the pending token from /login instead of a full session, since one
+// doesn't exist yet. Finishes by issuing the real session.
+async function handleLoginMfaEnroll(request, env, origin) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const username = await verifyMfaPendingToken(env, (body.pendingToken || '').toString());
+  if (!username) return json({ message: 'Your sign-in session has expired — please sign in again.' }, 401, origin);
+  const step = (body.step || 'start').toString();
+
+  if (step === 'start') return await handleMfaTotpEnroll(env, origin, username);
+
+  if (step === 'confirm') {
+    const code = (body.code || '').toString();
+    const usernameLower = username.toLowerCase();
+    const accessLevel = await resolveAccessLevel(env, username);
+    if (accessLevel !== 'super_admin' && await isMfaVerifyLocked(env, usernameLower)) {
+      return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
+    }
+    const fileState = await readUsersFile(env);
+    const target = findUserByUsername(fileState.users, username);
+    if (!target || !target.mfa || !target.mfa.totp || !target.mfa.totp.secretEnc) {
+      return json({ message: 'Start enrollment first.' }, 400, origin);
+    }
+    const secretBase32 = await decryptTotpSecret(env, target.mfa.totp.secretEnc, target.mfa.totp.secretIv);
+    const matchedStep = await verifyTotpCode(secretBase32, code, null);
+    if (matchedStep === null) {
+      if (accessLevel !== 'super_admin') {
+        const attempt = await recordFailedMfaVerify(env, usernameLower);
+        if (attempt.justLocked) return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
+      }
+      return json({ message: 'Incorrect code — please try again.' }, 400, origin);
+    }
+    const backupCodes = generateBackupCodes(10);
+    const hashedCodes = [];
+    for (let i = 0; i < backupCodes.length; i++) {
+      const h = await hashBackupCode(backupCodes[i]);
+      hashedCodes.push({ hash: h.hash, salt: h.salt, usedAt: null });
+    }
+    const nowIso = new Date().toISOString();
+    const result = await mutateUsersFile(env, function (users) {
+      const u = findUserByUsername(users, username);
+      if (!u || !u.mfa || !u.mfa.totp) return null;
+      u.mfa.totp.enabled = true;
+      u.mfa.totp.confirmedAt = nowIso;
+      u.mfa.totp.lastUsedStep = matchedStep;
+      u.mfa.backupCodes = hashedCodes;
+      u.mfa.enrolledAt = u.mfa.enrolledAt || nowIso;
+      return { users: users };
+    });
+    if (result === 'not-found' || !result.ok) return json({ message: 'Could not confirm — please try again.' }, 409, origin);
+    await appendMfaAuditLog(env, { actor: username, action: 'totp_enrolled', target: username, before: null, after: 'totp_enabled' });
+    if (accessLevel !== 'super_admin') await clearFailedMfaVerify(env, usernameLower);
+    return await issueSession(username, env, origin, null, { backupCodes: backupCodes });
+  }
+
+  return json({ message: 'Unknown step.' }, 400, origin);
+}
+
+// `extra` (optional) merges additional fields into the response body -
+// used once, by the login-time MFA enrollment path, to hand back the new
+// session token and that device's one-and-only look at its backup codes in
+// a single response.
+async function issueSession(username, env, origin, impersonatedBy, extra) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const exp = nowSec + SESSION_TTL_SECONDS;
+  // iat (issued-at) lets requireAuth revoke this token early via a recorded
+  // cutover - see isSessionInvalidated - without needing a server-side
+  // session store. A token signed before this field existed simply has no
+  // iat, which isSessionInvalidated treats as 0 (always revocable).
+  const payload = { u: username, iat: nowSec, exp: exp };
   if (impersonatedBy) payload.ib = impersonatedBy;
   const token = await signToken(payload, env.SESSION_SECRET);
-  const resp = { token: token, username: username, expiresAt: exp * 1000 };
+  const resp = Object.assign({ token: token, username: username, expiresAt: exp * 1000 }, extra || {});
   if (impersonatedBy) resp.impersonatedBy = impersonatedBy;
   return json(resp, 200, origin);
 }
@@ -1385,6 +1924,170 @@ async function handleAdminImpersonate(env, origin, id, adminUsername) {
   return await issueSession(targetUsername, env, origin, adminUsername);
 }
 
+// ---- MFA: self-service enrollment (any signed-in role) --------------------
+// All of these operate only on the caller's own record (found by username,
+// never by client-supplied id) - the same "can only ever touch your own
+// account" rule handleChangeOwnPassword above already follows.
+function findUserByUsername(users, username) {
+  const lower = (username || '').toLowerCase();
+  return users.find(function (u) { return (u.username || '').toLowerCase() === lower; });
+}
+
+async function handleGetMyMfa(env, origin, username) {
+  const fileState = await readUsersFile(env);
+  const target = findUserByUsername(fileState.users, username);
+  if (!target) return json({ message: 'Account not found.' }, 404, origin);
+  return json(mfaSummaryForUser(target), 200, origin);
+}
+
+async function handleMfaTotpEnroll(env, origin, username) {
+  const fileState = await readUsersFile(env);
+  const target = findUserByUsername(fileState.users, username);
+  if (!target) return json({ message: 'Account not found.' }, 404, origin);
+  if (target.mfa && target.mfa.totp && target.mfa.totp.enabled) {
+    return json({ message: 'An authenticator app is already enabled — disable it first to re-enroll.' }, 400, origin);
+  }
+  const secretBase32 = generateTotpSecret();
+  const enc = await encryptTotpSecret(env, secretBase32);
+  const result = await mutateUsersFile(env, function (users) {
+    const u = findUserByUsername(users, username);
+    if (!u) return null;
+    u.mfa = u.mfa || {};
+    u.mfa.totp = { enabled: false, secretEnc: enc.secretEnc, secretIv: enc.secretIv, confirmedAt: null, lastUsedStep: null };
+    return { users: users };
+  });
+  if (result === 'not-found' || !result.ok) return json({ message: 'Could not start enrollment — please try again.' }, 409, origin);
+  return json({ otpauthUri: buildOtpauthUri(secretBase32, username), secret: secretBase32 }, 200, origin);
+}
+
+async function handleMfaTotpConfirm(request, env, origin, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const code = (body.code || '').toString();
+  const fileState = await readUsersFile(env);
+  const target = findUserByUsername(fileState.users, username);
+  if (!target || !target.mfa || !target.mfa.totp || !target.mfa.totp.secretEnc) {
+    return json({ message: 'Start enrollment first.' }, 400, origin);
+  }
+  if (target.mfa.totp.enabled) return json({ message: 'Already enabled.' }, 400, origin);
+  const secretBase32 = await decryptTotpSecret(env, target.mfa.totp.secretEnc, target.mfa.totp.secretIv);
+  const matchedStep = await verifyTotpCode(secretBase32, code, null);
+  if (matchedStep === null) return json({ message: 'Incorrect code — please try again.' }, 400, origin);
+
+  const backupCodes = generateBackupCodes(10);
+  const hashedCodes = [];
+  for (let i = 0; i < backupCodes.length; i++) {
+    const h = await hashBackupCode(backupCodes[i]);
+    hashedCodes.push({ hash: h.hash, salt: h.salt, usedAt: null });
+  }
+  const nowIso = new Date().toISOString();
+  const result = await mutateUsersFile(env, function (users) {
+    const u = findUserByUsername(users, username);
+    if (!u || !u.mfa || !u.mfa.totp) return null;
+    u.mfa.totp.enabled = true;
+    u.mfa.totp.confirmedAt = nowIso;
+    u.mfa.totp.lastUsedStep = matchedStep;
+    u.mfa.backupCodes = hashedCodes;
+    u.mfa.enrolledAt = u.mfa.enrolledAt || nowIso;
+    return { users: users };
+  });
+  if (result === 'not-found' || !result.ok) return json({ message: 'Could not confirm — please try again.' }, 409, origin);
+  await appendMfaAuditLog(env, { actor: username, action: 'totp_enrolled', target: username, before: null, after: 'totp_enabled' });
+  // Backup codes are returned exactly once, right here - never retrievable
+  // again after this response (regenerate replaces them, it doesn't recall them).
+  return json({ enabled: true, backupCodes: backupCodes }, 200, origin);
+}
+
+async function handleMfaTotpDisable(request, env, origin, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const password = (body.password || '').toString();
+  const fileState = await readUsersFile(env);
+  const target = findUserByUsername(fileState.users, username);
+  if (!target || !target.hash) return json({ message: 'Account not found.' }, 404, origin);
+  const computedHash = await pbkdf2Hex(password, target.salt);
+  if (computedHash !== target.hash) return json({ message: 'Password is incorrect.' }, 401, origin);
+
+  const accessLevel = await resolveAccessLevel(env, username);
+  const emailEnabled = !!(target.mfa && target.mfa.email && target.mfa.email.enabled);
+  if (accessLevel === 'super_admin' && !emailEnabled) {
+    return json({ message: 'Super Admin accounts must always have at least one MFA method enabled — turn on email as a backup first, or set up a new authenticator before disabling this one.' }, 400, origin);
+  }
+  const result = await mutateUsersFile(env, function (users) {
+    const u = findUserByUsername(users, username);
+    if (!u) return null;
+    u.mfa = u.mfa || {};
+    u.mfa.totp = { enabled: false, secretEnc: null, secretIv: null, confirmedAt: null, lastUsedStep: null };
+    return { users: users };
+  });
+  if (result === 'not-found' || !result.ok) return json({ message: 'Could not disable — please try again.' }, 409, origin);
+  await appendMfaAuditLog(env, { actor: username, action: 'totp_disabled', target: username, before: 'totp_enabled', after: 'totp_disabled' });
+  return json({ enabled: false }, 200, origin);
+}
+
+async function handleMfaBackupCodesRegenerate(request, env, origin, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const password = (body.password || '').toString();
+  const fileState = await readUsersFile(env);
+  const target = findUserByUsername(fileState.users, username);
+  if (!target || !target.hash) return json({ message: 'Account not found.' }, 404, origin);
+  const computedHash = await pbkdf2Hex(password, target.salt);
+  if (computedHash !== target.hash) return json({ message: 'Password is incorrect.' }, 401, origin);
+
+  const backupCodes = generateBackupCodes(10);
+  const hashedCodes = [];
+  for (let i = 0; i < backupCodes.length; i++) {
+    const h = await hashBackupCode(backupCodes[i]);
+    hashedCodes.push({ hash: h.hash, salt: h.salt, usedAt: null });
+  }
+  const result = await mutateUsersFile(env, function (users) {
+    const u = findUserByUsername(users, username);
+    if (!u) return null;
+    u.mfa = u.mfa || {};
+    u.mfa.backupCodes = hashedCodes;
+    return { users: users };
+  });
+  if (result === 'not-found' || !result.ok) return json({ message: 'Could not regenerate — please try again.' }, 409, origin);
+  await appendMfaAuditLog(env, { actor: username, action: 'backup_codes_regenerated', target: username, before: null, after: null });
+  return json({ backupCodes: backupCodes }, 200, origin);
+}
+
+// Covers both /me/mfa/email/enable and /me/mfa/email/disable - password is
+// required either direction, for one simple consistent rule rather than two
+// slightly different ones.
+async function handleMfaEmailToggle(request, env, origin, username, enable) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const password = (body.password || '').toString();
+  const fileState = await readUsersFile(env);
+  const target = findUserByUsername(fileState.users, username);
+  if (!target || !target.hash) return json({ message: 'Account not found.' }, 404, origin);
+  const computedHash = await pbkdf2Hex(password, target.salt);
+  if (computedHash !== target.hash) return json({ message: 'Password is incorrect.' }, 401, origin);
+
+  if (enable && !target.email) {
+    return json({ message: 'This account has no email on file — add one on the Users page first.' }, 400, origin);
+  }
+  if (!enable) {
+    const accessLevel = await resolveAccessLevel(env, username);
+    const totpEnabled = !!(target.mfa && target.mfa.totp && target.mfa.totp.enabled);
+    if (accessLevel === 'super_admin' && !totpEnabled) {
+      return json({ message: 'Super Admin accounts must always have at least one MFA method enabled — set up an authenticator app first.' }, 400, origin);
+    }
+  }
+  const result = await mutateUsersFile(env, function (users) {
+    const u = findUserByUsername(users, username);
+    if (!u) return null;
+    u.mfa = u.mfa || {};
+    u.mfa.email = { enabled: !!enable };
+    return { users: users };
+  });
+  if (result === 'not-found' || !result.ok) return json({ message: 'Could not update — please try again.' }, 409, origin);
+  await appendMfaAuditLog(env, { actor: username, action: enable ? 'email_mfa_enabled' : 'email_mfa_disabled', target: username, before: !enable, after: !!enable });
+  return json({ enabled: !!enable }, 200, origin);
+}
+
 async function handleListUsers(env, origin) {
   const fileState = await readUsersFile(env);
   const legacy = readLegacyStaff(env);
@@ -1430,8 +2133,31 @@ async function handleListOrgContacts(env, origin, organization) {
 
 // ---- admin: user directory --------------------------------------------------
 
-function sanitizeFileUser(u) {
+// A user's `mfa` field (see USERS_FILE_PATH schema note near MFA_TOGGLE_ROLES
+// above) holds the encrypted TOTP secret and backup-code hashes - never sent
+// to the client. This is the one safe summary derived from it: whether MFA
+// is enabled at all, which methods, and how many backup codes are left -
+// enough for the Security page/modal to render status without ever seeing
+// secret material again after enrollment.
+function mfaSummaryForUser(u) {
+  const mfa = u.mfa || {};
+  const totpEnabled = !!(mfa.totp && mfa.totp.enabled);
+  const emailEnabled = !!(mfa.email && mfa.email.enabled);
+  const methods = [];
+  if (totpEnabled) methods.push('totp');
+  if (emailEnabled) methods.push('email');
+  const backupCodesRemaining = Array.isArray(mfa.backupCodes)
+    ? mfa.backupCodes.filter(function (c) { return !c.usedAt; }).length
+    : 0;
   return {
+    mfaEnabled: totpEnabled || emailEnabled,
+    mfaMethods: methods,
+    backupCodesRemaining: backupCodesRemaining,
+    mfaEnrolledAt: mfa.enrolledAt || null
+  };
+}
+function sanitizeFileUser(u) {
+  return Object.assign({
     id: u.id,
     name: u.name || '',
     username: u.username || null,
@@ -1446,7 +2172,7 @@ function sanitizeFileUser(u) {
     isDemo: !!u.isDemo,
     stampImage: sanitizeOrgDoc(u.stampImage),
     migrated: true
-  };
+  }, mfaSummaryForUser(u));
 }
 function legacyToRow(u) {
   return {
@@ -1506,6 +2232,141 @@ async function handleAdminImportLegacy(env, origin) {
   });
   if (!result.ok) return json({ message: result.message }, 500, origin);
   return json({ imported: result.meta.added, users: result.users.map(sanitizeFileUser) }, 200, origin);
+}
+
+// ---- MFA: admin (super_admin only) -----------------------------------------
+
+async function handleGetMfaSettings(env, origin) {
+  const settings = await readMfaSettings(env);
+  return json({ requireForRole: settings.requireForRole }, 200, origin);
+}
+
+// Re-verifies the acting super_admin's own identity *right now* (password,
+// or their own enrolled TOTP/backup code) and hands back a short-lived
+// token that PUT /admin/mfa/settings and POST /admin/mfa/reset/<id> both
+// require - an already-open session isn't enough on its own to change an
+// MFA requirement or reset someone's enrollment. No lockout tracking here:
+// only a super_admin ever reaches this route, and super_admin is
+// deliberately exempt from the MFA-verify lockout (see
+// MFA_VERIFY_LOCKOUT_THRESHOLD) for the same reason it's exempt from the
+// password lockout - there must always be one way in.
+async function handleMfaStepUp(request, env, origin, actorUsername) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const fileState = await readUsersFile(env);
+  const target = findUserByUsername(fileState.users, actorUsername);
+  if (!target || !target.hash) return json({ message: 'Account not found.' }, 404, origin);
+
+  let ok = false;
+  const password = (body.password || '').toString();
+  if (password) {
+    const computedHash = await pbkdf2Hex(password, target.salt);
+    ok = computedHash === target.hash;
+  } else if (body.code) {
+    const method = (body.method || 'totp').toString();
+    const code = (body.code || '').toString();
+    if (method === 'totp' && target.mfa && target.mfa.totp && target.mfa.totp.enabled) {
+      const secretBase32 = await decryptTotpSecret(env, target.mfa.totp.secretEnc, target.mfa.totp.secretIv);
+      ok = (await verifyTotpCode(secretBase32, code, null)) !== null;
+    } else if (method === 'backup') {
+      const codes = (target.mfa && Array.isArray(target.mfa.backupCodes)) ? target.mfa.backupCodes : [];
+      const normalized = normalizeBackupCode(code);
+      for (let i = 0; i < codes.length; i++) {
+        if (codes[i].usedAt) continue;
+        if (await backupCodeMatchesHash(normalized, codes[i].salt, codes[i].hash)) { ok = true; break; }
+      }
+    }
+  }
+  if (!ok) return json({ message: 'Could not verify your identity — check your password or code and try again.' }, 401, origin);
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const stepUpToken = await signToken({ u: actorUsername, purpose: 'step-up', exp: nowSec + MFA_STEP_UP_TOKEN_TTL_SECONDS }, env.MFA_SECRET);
+  return json({ stepUpToken: stepUpToken, expiresAt: (nowSec + MFA_STEP_UP_TOKEN_TTL_SECONDS) * 1000 }, 200, origin);
+}
+
+async function verifyStepUpToken(env, token, actorUsername) {
+  const payload = await verifyToken(token, env.MFA_SECRET);
+  if (!payload || payload.purpose !== 'step-up' || !payload.u) return false;
+  return payload.u.toLowerCase() === (actorUsername || '').toLowerCase();
+}
+
+// PUT /admin/mfa/settings - the per-role toggle itself. super_admin is
+// never accepted as a key (it's hardcoded true in
+// isMfaRequiredForAccessLevel and never read from this document), and a
+// false -> true transition for any role immediately revokes every
+// already-open session for that role (see invalidateRoleSessions) so a
+// newly-required MFA rule can't be bypassed by a session that predates it.
+async function handleUpdateMfaSettings(request, env, origin, actorUsername) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const stepUpOk = await verifyStepUpToken(env, (body.stepUpToken || '').toString(), actorUsername);
+  if (!stepUpOk) return json({ message: 'Please re-verify your identity before changing MFA settings.' }, 401, origin);
+
+  const requested = body.requireForRole || {};
+  const before = await readMfaSettings(env);
+  const nextRequireForRole = Object.assign({}, before.requireForRole);
+  MFA_TOGGLE_ROLES.forEach(function (role) {
+    if (Object.prototype.hasOwnProperty.call(requested, role)) nextRequireForRole[role] = !!requested[role];
+  });
+
+  const result = await mutateJsonObjectFile(env, MFA_SETTINGS_FILE_PATH, { requireForRole: {} }, function () {
+    return { obj: { requireForRole: nextRequireForRole } };
+  });
+  if (!result.ok) return json({ message: 'Could not save — please try again.' }, 409, origin);
+
+  const changed = [];
+  for (let i = 0; i < MFA_TOGGLE_ROLES.length; i++) {
+    const role = MFA_TOGGLE_ROLES[i];
+    const oldValue = !!before.requireForRole[role];
+    const newValue = !!nextRequireForRole[role];
+    if (oldValue === newValue) continue;
+    changed.push(role);
+    await appendMfaAuditLog(env, { actor: actorUsername, action: 'mfa_requirement_changed', target: role, before: oldValue, after: newValue });
+    if (!oldValue && newValue) await invalidateRoleSessions(env, role);
+  }
+  return json({ requireForRole: nextRequireForRole, changed: changed }, 200, origin);
+}
+
+// POST /admin/mfa/reset/<userId> - lost-device recovery, or simply undoing
+// a mistaken enrollment. Clears TOTP/backup codes/email preference, clears
+// that person's verify-lockout counter (their own "promised way out" of it,
+// same as clearFailedLogins is for the password lockout), and revokes their
+// current session(s) immediately rather than just their MFA state.
+async function handleAdminResetMfa(request, env, origin, userId, actorUsername) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const stepUpOk = await verifyStepUpToken(env, (body.stepUpToken || '').toString(), actorUsername);
+  if (!stepUpOk) return json({ message: 'Please re-verify your identity before resetting someone’s MFA.' }, 401, origin);
+
+  const fileState = await readUsersFile(env);
+  const target = fileState.users.find(function (u) { return u.id === userId; });
+  if (!target || !target.username) return json({ message: 'Account not found.' }, 404, origin);
+  const before = mfaSummaryForUser(target);
+
+  const result = await mutateUsersFile(env, function (users) {
+    const u = users.find(function (x) { return x.id === userId; });
+    if (!u) return null;
+    u.mfa = {
+      totp: { enabled: false, secretEnc: null, secretIv: null, confirmedAt: null, lastUsedStep: null },
+      backupCodes: [],
+      email: { enabled: false },
+      enrolledAt: null
+    };
+    return { users: users };
+  });
+  if (result === 'not-found' || !result.ok) return json({ message: 'Could not reset — please try again.' }, 409, origin);
+
+  const usernameLower = target.username.toLowerCase();
+  await clearFailedMfaVerify(env, usernameLower);
+  await invalidateUserSessions(env, usernameLower);
+  await appendMfaAuditLog(env, { actor: actorUsername, action: 'mfa_reset', target: target.username, before: before, after: null });
+  return json({ ok: true }, 200, origin);
+}
+
+async function handleGetMfaAudit(env, origin) {
+  const state = await readJsonArrayFile(env, MFA_AUDIT_LOG_FILE_PATH);
+  const sorted = state.items.slice().sort(function (a, b) { return (b.at || '').localeCompare(a.at || ''); });
+  return json({ entries: sorted.slice(0, 500) }, 200, origin);
 }
 
 function validateDirectoryFields(body, origin) {
@@ -8017,6 +8878,14 @@ async function requireAuth(request, env) {
   if (!m) return { ok: false, status: 401, message: 'Not logged in.' };
   const verified = await verifyToken(m[1], env.SESSION_SECRET);
   if (!verified) return { ok: false, status: 401, message: 'Your session has expired â€” please log in again.' };
+  // Rev-MFA: a session can be revoked early - an admin's MFA reset for this
+  // user, or a role's MFA requirement newly turning on - even though the
+  // signed token itself is still within its normal life. See
+  // isSessionInvalidated; a token with no iat (pre-dates this check) is
+  // always treated as revocable the first time either cutover is ever set.
+  const accessLevel = await resolveAccessLevel(env, verified.u);
+  const invalidated = await isSessionInvalidated(env, (verified.u || '').toLowerCase(), accessLevel, verified.iat);
+  if (invalidated) return { ok: false, status: 401, message: 'Your session has expired â€” please log in again.' };
   return { ok: true, username: verified.u, impersonatedBy: verified.ib || null };
 }
 
@@ -8121,6 +8990,136 @@ function randomSaltHex() {
 }
 function cryptoRandomId() {
   return (crypto.randomUUID ? crypto.randomUUID() : (hexEncode(crypto.getRandomValues(new Uint8Array(16)))));
+}
+
+// ---- MFA: TOTP (RFC 6238/4226) --------------------------------------------
+// Base32 (RFC 4648, no padding) - the format TOTP's own RFC mandates for
+// secrets, independent of this file's base64/hex helpers below.
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function base32Encode(bytes) {
+  var bits = '', output = '';
+  for (var i = 0; i < bytes.length; i++) bits += bytes[i].toString(2).padStart(8, '0');
+  for (var j = 0; j < bits.length; j += 5) {
+    var chunk = bits.substr(j, 5);
+    if (chunk.length < 5) chunk = chunk.padEnd(5, '0');
+    output += BASE32_ALPHABET[parseInt(chunk, 2)];
+  }
+  return output;
+}
+function base32Decode(str) {
+  var clean = (str || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+  var bits = '';
+  for (var i = 0; i < clean.length; i++) {
+    var idx = BASE32_ALPHABET.indexOf(clean[i]);
+    if (idx === -1) continue;
+    bits += idx.toString(2).padStart(5, '0');
+  }
+  var bytes = [];
+  for (var j = 0; j + 8 <= bits.length; j += 8) bytes.push(parseInt(bits.substr(j, 8), 2));
+  return new Uint8Array(bytes);
+}
+function generateTotpSecret() {
+  var bytes = new Uint8Array(20); // 160-bit, the standard TOTP secret length
+  crypto.getRandomValues(bytes);
+  return base32Encode(bytes);
+}
+function buildOtpauthUri(secretBase32, username) {
+  var label = encodeURIComponent('DSCM:' + username);
+  return 'otpauth://totp/' + label + '?secret=' + secretBase32 + '&issuer=DSCM&algorithm=SHA1&digits=6&period=30';
+}
+// HMAC-SHA1-based TOTP code for one specific 30s time step (RFC 6238/4226 -
+// SHA-1 is what every authenticator app assumes when no algorithm is agreed
+// out of band, not a security downgrade of this app's own crypto elsewhere).
+async function totpCodeForStep(secretBase32, step) {
+  var keyBytes = base32Decode(secretBase32);
+  var key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  var counter = new ArrayBuffer(8);
+  var view = new DataView(counter);
+  // Only the low 4 bytes are ever set - 30s steps don't overflow 32 bits
+  // until the year ~6429 - matching RFC 4226's big-endian 8-byte counter.
+  view.setUint32(4, step, false);
+  var sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, counter));
+  var offset = sig[sig.length - 1] & 0x0f;
+  var binCode = ((sig[offset] & 0x7f) << 24) | ((sig[offset + 1] & 0xff) << 16) | ((sig[offset + 2] & 0xff) << 8) | (sig[offset + 3] & 0xff);
+  return (binCode % 1000000).toString().padStart(6, '0');
+}
+// Verifies a submitted code against the current time step, ±1 step (30s) of
+// skew tolerance for clock drift between the phone and this server. Returns
+// the matched step number (so the caller can persist it as lastUsedStep and
+// block replay of that exact code) or null if nothing nearby matches.
+async function verifyTotpCode(secretBase32, code, lastUsedStep) {
+  var submitted = (code || '').toString().replace(/\s+/g, '');
+  if (!/^\d{6}$/.test(submitted)) return null;
+  var currentStep = Math.floor(Date.now() / 1000 / 30);
+  for (var delta = -1; delta <= 1; delta++) {
+    var step = currentStep + delta;
+    if (typeof lastUsedStep === 'number' && step <= lastUsedStep) continue; // block replay
+    var expected = await totpCodeForStep(secretBase32, step);
+    if (expected === submitted) return step;
+  }
+  return null;
+}
+
+// ---- MFA: AES-GCM encryption for TOTP secrets at rest ---------------------
+// Key material is derived once from the MFA_SECRET Worker secret via
+// SHA-256 (giving exactly the 32 bytes AES-256-GCM needs) - never stored,
+// never sent to the client, recomputed on demand.
+async function mfaEncryptionKey(env) {
+  var digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(env.MFA_SECRET));
+  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+async function encryptTotpSecret(env, secretBase32) {
+  var key = await mfaEncryptionKey(env);
+  var iv = crypto.getRandomValues(new Uint8Array(12));
+  var ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, new TextEncoder().encode(secretBase32));
+  return { secretEnc: b64urlEncode(new Uint8Array(ciphertext)), secretIv: b64urlEncode(iv) };
+}
+async function decryptTotpSecret(env, secretEnc, secretIv) {
+  var key = await mfaEncryptionKey(env);
+  var iv = b64urlDecode(secretIv);
+  var plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, b64urlDecode(secretEnc));
+  return new TextDecoder().decode(plaintext);
+}
+
+// ---- MFA: backup/recovery codes -------------------------------------------
+// 10 codes at enrollment, shown once, hashed with the same pbkdf2Hex used
+// for passwords (each with its own random salt) - never stored plaintext.
+function generateBackupCodes(count) {
+  var codes = [];
+  for (var i = 0; i < (count || 10); i++) {
+    var bytes = crypto.getRandomValues(new Uint8Array(5));
+    var raw = base32Encode(bytes).slice(0, 8); // 8 base32 chars, e.g. "K3F7QZ2M"
+    codes.push(raw.slice(0, 4) + '-' + raw.slice(4));
+  }
+  return codes;
+}
+function normalizeBackupCode(code) {
+  return (code || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+async function hashBackupCode(code) {
+  var salt = randomSaltHex();
+  var hash = await pbkdf2Hex(normalizeBackupCode(code), salt);
+  return { hash: hash, salt: salt };
+}
+async function backupCodeMatchesHash(code, salt, hash) {
+  var computed = await pbkdf2Hex(normalizeBackupCode(code), salt);
+  return computed === hash;
+}
+
+// ---- MFA: email one-time codes --------------------------------------------
+function generateEmailOtpCode() {
+  var bytes = crypto.getRandomValues(new Uint8Array(4));
+  var num = ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0;
+  return (num % 1000000).toString().padStart(6, '0');
+}
+async function hashEmailOtpCode(code) {
+  var salt = randomSaltHex();
+  var hash = await pbkdf2Hex((code || '').toString().trim(), salt);
+  return { hash: hash, salt: salt };
+}
+async function emailOtpCodeMatchesHash(code, salt, hash) {
+  var computed = await pbkdf2Hex((code || '').toString().trim(), salt);
+  return computed === hash;
 }
 
 // ---- small utils ---------------------------------------------------------

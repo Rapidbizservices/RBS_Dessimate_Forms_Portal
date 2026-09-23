@@ -78,6 +78,23 @@ yourself, e.g.:
 [{"username":"roberto","salt":"<from the tool>","hash":"<from the tool>"}]
 ```
 
+```
+npx wrangler secret put MFA_SECRET
+```
+Paste another long random string, generated the same way as
+`SESSION_SECRET` above — **use a different value**, don't reuse it. This is
+only needed once you actually use multi-factor authentication (see
+**Multi-factor authentication (MFA)** below), but it's fine to set it now.
+
+```
+npx wrangler secret put RESEND_API_KEY
+```
+Optional — only needed if you want MFA's email-code fallback to actually
+send. Create a free account at [resend.com](https://resend.com) and paste
+an API key from there. Skip this entirely if you're only using the
+authenticator-app method (the common case) — everything else works fine
+without it.
+
 ## 5. Deploy
 
 ```
@@ -559,6 +576,116 @@ who could reach Users/Organizations before this existed (originally just
 Roberto and Amy) keeps that access automatically even without an explicit
 level set, so nothing breaks on upgrade — set an explicit level from here on
 for anyone new.
+
+## Multi-factor authentication (MFA)
+
+Optional, per-role-enforceable two-factor sign-in. There's nothing to turn
+on to keep using the Portal exactly as before — MFA only applies once a
+Super Admin requires it for a role, or someone opts into it themselves from
+their own **Security** button.
+
+**Two methods, both free:**
+- **Authenticator app (TOTP)** — the default. Works with any standard app
+  (Microsoft Authenticator, Google Authenticator, Authy) via a QR code shown
+  at enrollment. No external service involved — the codes are computed
+  entirely by this Worker and the app on your phone (RFC 6238), never sent
+  anywhere.
+- **Email code** — a 6-digit backup, sent via [Resend](https://resend.com)'s
+  free tier (see **Set the backend's secrets** below). Someone has to opt
+  into this themselves after setting up an authenticator app — it's not a
+  first-class method on its own.
+
+**Enrolling (any signed-in role):** click **Security** next to **Change
+Password** — scan the QR code with an authenticator app, enter the 6-digit
+code it shows to confirm, and you're given **10 one-time backup codes**
+(shown once — save them somewhere safe). From there you can also turn on
+the email code as a backup method, regenerate backup codes, or disable the
+authenticator app — every one of those re-checks your password first.
+
+**Signing in once MFA applies:** after your password is accepted, you're
+asked for a code instead of being signed in immediately — the authenticator
+app by default, with **Use email code instead** / **Use a backup code**
+links if you've set those up. Get the code wrong 5 times in a row and
+you're locked out of that step (a Super Admin has to reset your MFA to get
+back in — see below); this is a separate counter from the 3-attempt
+password lockout, so a few mistyped codes don't also burn your password
+attempts.
+
+**Per-role requirement (Super Admin only, from the new Security page):**
+toggle MFA on independently for **Admin**, **Team Member**, **Supplier**,
+and **Customer**. Turning one on doesn't lock anyone out on the spot —
+anyone in that role who hasn't enrolled yet is simply walked through setup
+inline the next time they sign in, right where the code prompt would
+otherwise be. **Super Admin accounts always require MFA** and this can't be
+turned off for them through this page, by anyone, including themselves —
+it's hardcoded, not a settings row.
+
+**Turning a requirement on also signs everyone in that role out.** Sessions
+normally last 7 days; without this, someone already signed in before the
+toggle flipped would keep working MFA-free until their session happened to
+expire. Instead, every session issued before that moment for that role
+stops working on its very next request, so the person has to sign in again
+— which now correctly asks for the second factor.
+
+**Changing the toggle, or resetting someone's MFA, requires re-entering
+your password right then** — a small "Re-verify Your Identity" prompt
+appears before either action actually takes effect. An already-open session
+isn't enough on its own for a change this sensitive.
+
+**Lost a device? Three ways back in**, same Security page:
+- Use one of the 10 backup codes issued at enrollment (each works once).
+- Use the email code fallback, if it was turned on.
+- Ask a Super Admin to **Reset MFA** for that account — from the Security
+  page's own picker, or the **Reset MFA** button on that person's row in the
+  Users page's Edit modal. This clears their authenticator app, backup
+  codes, and email preference, immediately ends any session they currently
+  have open (same mechanism as the per-role toggle above, just scoped to
+  one person), and is logged.
+
+**Audit log** — every requirement change and every reset is recorded (who,
+what changed, old value, new value, when) and shown as a table on the
+Security page, most recent first.
+
+**Break-glass recovery if a Super Admin locks themselves out during
+testing** — the MFA-verify lockout (5 wrong codes) deliberately **exempts
+Super Admin accounts**, the same way the existing 3-attempt password
+lockout already exempts them (`LOGIN_LOCKOUT_THRESHOLD` — "there's always
+one way in"), so this shouldn't come up in the ordinary course of things.
+If you still manage to end up stuck (e.g. testing against a fresh D1 with
+only one Super Admin account and something else goes wrong), you can clear
+the underlying lockout record directly, from the `worker/` folder:
+```
+npx wrangler d1 execute dscm-db --remote --command "UPDATE documents SET content = '{}', updated_at = datetime('now') WHERE path = 'data/mfa_verify_lockouts.json'"
+```
+(Swap in `data/login_lockouts.json` if it's the ordinary password lockout
+you've hit instead, or add `--local` in place of `--remote` when testing
+against `wrangler dev`.) As a general precaution before hands-on MFA
+testing, it's still worth promoting a second account to Super Admin first —
+gives you a normal in-app way to reset each other's MFA.
+
+**New secrets/vars** (see **Set the backend's secrets** below for the exact
+commands):
+- `MFA_SECRET` (secret) — signs the short-lived tokens used mid-login and
+  for the settings step-up, and is the key material TOTP secrets are
+  encrypted with before being stored. Different from `SESSION_SECRET` —
+  keep them separate.
+- `RESEND_API_KEY` (secret) — from your free Resend account. Only needed if
+  you want the email-code fallback to actually send; MFA itself works fine
+  with just an authenticator app if this is never set.
+- `RESEND_FROM_EMAIL` (plain var, in `wrangler.toml`) — the "from" address
+  email codes are sent from. Must be a verified sender/domain in your
+  Resend account or Resend will reject the send.
+
+**A note on standalone module pages:** every module page (Parts, Customer
+POs, etc.) can be opened directly rather than through the dashboard, each
+with its own copy of the sign-in form. `index.html`, `PDIR_Security.html`,
+and `PDIR_Users.html` all understand the MFA step in that form; the
+remaining module pages' own standalone sign-in forms don't yet — they'll
+still work fine for anyone whose role doesn't require MFA (the common
+case), but a Super Admin account (which always requires it) landing
+directly on one of those pages without an existing session should sign in
+through the dashboard or one of the three pages above first, rather than
+that page's own login form.
 
 ## Managing users (staff, suppliers, customers)
 

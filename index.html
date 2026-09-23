@@ -168,6 +168,7 @@
 
     <div class="sideFoot">
       <div class="sideUser" id="sideUser">Not signed in</div>
+      <button type="button" class="sideLogoutBtn" id="sideSecurityBtn" style="margin-bottom:8px;">Security</button>
       <button type="button" class="sideLogoutBtn" id="sideChangePasswordBtn" style="margin-bottom:8px;">Change Password</button>
       <button type="button" class="sideLogoutBtn" id="sideLogoutBtn">Log out</button>
       <div class="sideVersion" id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</div>
@@ -198,20 +199,113 @@
 
   <div class="authOverlay" id="authOverlay">
     <div class="authCard">
-      <h2>Staff Sign-In</h2>
-      <p class="authSub">Sign in with the username and password you were given to use the DSCM system.</p>
-      <p class="authNote">Please check the username and password provided by your Dessimate contact. Your account will be locked after 3 unsuccessful login attempts.</p>
-      <form id="authForm">
-        <label>Username
-          <input type="text" id="authUsername" autocomplete="username" autofocus>
+      <div id="authStepPassword">
+        <h2>Staff Sign-In</h2>
+        <p class="authSub">Sign in with the username and password you were given to use the DSCM system.</p>
+        <p class="authNote">Please check the username and password provided by your Dessimate contact. Your account will be locked after 3 unsuccessful login attempts.</p>
+        <form id="authForm">
+          <label>Username
+            <input type="text" id="authUsername" autocomplete="username" autofocus>
+          </label>
+          <label>Password
+            <input type="password" id="authPassword" autocomplete="current-password">
+          </label>
+          <button type="submit" id="authSubmitBtn">Log In</button>
+          <div class="authError" id="authError"></div>
+          <div class="authAttempts" id="authAttempts"></div>
+        </form>
+      </div>
+
+      <div id="authStepMfa" style="display:none;">
+        <h2 id="authMfaTitle">Verification Required</h2>
+        <p class="authSub" id="authMfaSub">Enter the 6-digit code from your authenticator app.</p>
+        <form id="authMfaForm">
+          <div id="authMfaEnrollBlock" style="display:none;">
+            <div style="text-align:center; margin-bottom:10px;">
+              <div id="authMfaQr" style="width:180px; height:180px; border:1px solid var(--line); border-radius:8px; display:inline-block; overflow:hidden;"></div>
+            </div>
+            <p style="font-size:11.5px; color:var(--label); word-break:break-all; text-align:center; margin:0 0 12px;">
+              Can&rsquo;t scan? Enter this key manually: <strong id="authMfaSecretText"></strong>
+            </p>
+          </div>
+          <label>Code
+            <input type="text" id="authMfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="12">
+          </label>
+          <button type="submit" id="authMfaSubmitBtn">Verify</button>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <button type="button" id="authMfaUseEmailBtn" style="background:#5b5f66; font-size:12px; padding:8px; display:none;">Use email code instead</button>
+            <button type="button" id="authMfaUseBackupBtn" style="background:#5b5f66; font-size:12px; padding:8px; display:none;">Use a backup code</button>
+          </div>
+          <div class="authError" id="authMfaError"></div>
+        </form>
+        <div id="authMfaBackupCodesBlock" style="display:none;">
+          <p class="authSub">Save these backup codes somewhere safe &mdash; each works once if you lose your device. They won&rsquo;t be shown again.</p>
+          <div id="authMfaBackupCodesList" style="font-family:monospace; font-size:13px; line-height:1.8; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; padding:10px 14px; margin-bottom:12px;"></div>
+          <button type="button" id="authMfaBackupCodesDoneBtn">I&rsquo;ve saved these codes &mdash; Continue</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="authOverlay" id="securityOverlay">
+    <div class="authCard" style="max-width:420px;">
+      <h2>Security</h2>
+      <p class="authSub">Add a second sign-in step so your account can&rsquo;t be accessed with just a password.</p>
+
+      <div id="secStatusBlock" style="margin-bottom:16px; font-size:13px; color:var(--label); line-height:1.9;">
+        <div>Authenticator app: <strong id="secTotpStatus">&mdash;</strong></div>
+        <div>Email backup code: <strong id="secEmailStatus">&mdash;</strong></div>
+        <div>Backup codes remaining: <strong id="secBackupCount">&mdash;</strong></div>
+      </div>
+
+      <div id="secTotpOffBlock">
+        <button type="button" id="secEnableTotpBtn">Set Up Authenticator App</button>
+      </div>
+
+      <div id="secEnrollBlock" style="display:none;">
+        <div style="text-align:center; margin-bottom:10px;">
+          <div id="secQr" style="width:180px; height:180px; border:1px solid var(--line); border-radius:8px; display:inline-block; overflow:hidden;"></div>
+        </div>
+        <p style="font-size:11.5px; color:var(--label); word-break:break-all; text-align:center; margin:0 0 12px;">
+          Can&rsquo;t scan? Enter this key manually: <strong id="secSecretText"></strong>
+        </p>
+        <form id="secConfirmForm">
+          <label>Enter the 6-digit code from your app
+            <input type="text" id="secConfirmCode" inputmode="numeric" maxlength="6">
+          </label>
+          <button type="submit" id="secConfirmBtn">Confirm</button>
+          <button type="button" id="secEnrollCancelBtn" style="background:#5b5f66; margin-top:8px;">Cancel</button>
+        </form>
+      </div>
+
+      <div id="secBackupCodesBlock" style="display:none;">
+        <p class="authSub">Save these backup codes somewhere safe &mdash; each works once if you lose your device. They won&rsquo;t be shown again.</p>
+        <div id="secBackupCodesList" style="font-family:monospace; font-size:13px; line-height:1.8; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; padding:10px 14px; margin-bottom:12px;"></div>
+        <button type="button" id="secBackupCodesDoneBtn">I&rsquo;ve saved these codes</button>
+      </div>
+
+      <div id="secTotpOnBlock" style="display:none;">
+        <button type="button" id="secRegenBackupBtn" style="background:#5b5f66; margin-bottom:8px;">Regenerate Backup Codes</button>
+        <button type="button" id="secDisableTotpBtn" style="background:#b23b3b;">Disable Authenticator App</button>
+      </div>
+
+      <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--line);">
+        <label style="display:flex; align-items:center; gap:8px; font-weight:600; font-size:13px; color:var(--label); cursor:pointer;">
+          <input type="checkbox" id="secEmailToggle" style="width:auto; margin:0;"> Allow email code as a backup sign-in method
         </label>
-        <label>Password
-          <input type="password" id="authPassword" autocomplete="current-password">
+      </div>
+
+      <div id="secPasswordConfirmBlock" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--line);">
+        <label><span id="secPasswordConfirmLabelText">Enter your password to confirm</span>
+          <input type="password" id="secPasswordConfirmInput" autocomplete="current-password">
         </label>
-        <button type="submit" id="authSubmitBtn">Log In</button>
-        <div class="authError" id="authError"></div>
-        <div class="authAttempts" id="authAttempts"></div>
-      </form>
+        <button type="button" id="secPasswordConfirmBtn">Confirm</button>
+        <button type="button" id="secPasswordConfirmCancelBtn" style="background:#5b5f66; margin-top:8px;">Cancel</button>
+      </div>
+
+      <div class="authError" id="secError" style="margin-top:12px;"></div>
+      <div class="authAttempts" id="secSuccess" style="color:#187b46; font-weight:600;"></div>
+      <button type="button" id="secCloseBtn" style="background:#5b5f66; margin-top:12px;">Close</button>
     </div>
   </div>
 
@@ -339,8 +433,12 @@
         loginErr.attemptsRemaining = data.attemptsRemaining;
         throw loginErr;
       }
-      setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
       document.getElementById('authPassword').value = '';
+      if (data.mfaRequired) {
+        await enterAuthMfaStep(data);
+        return;
+      }
+      setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
       hideAuthOverlay();
       var fn = pendingAfterAuth; pendingAfterAuth = null;
       if (fn) fn();
@@ -353,6 +451,176 @@
     } finally {
       btn.disabled = false; btn.textContent = 'Log In';
     }
+  });
+
+  // ---- MFA: lazy-loaded QR code rendering --------------------------------
+  // Same lazy-CDN-on-demand pattern already used elsewhere in this app for
+  // occasional heavy features (JSZip, three.js) - loaded only when someone
+  // actually reaches a QR-code step, never on every page load.
+  // davidshimjs/qrcodejs - a genuine standalone browser build with no
+  // bundler required (unlike the `qrcode` npm package's published files,
+  // which are CommonJS-only and throw if loaded as a plain <script>).
+  // Renders directly into a container element (new QRCode(el, {...})),
+  // rather than handing back a data URL.
+  var QRCODE_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+  var qrCodeLoadPromise = null;
+  function ensureQrCodeLib(){
+    if (window.QRCode) return Promise.resolve();
+    if (qrCodeLoadPromise) return qrCodeLoadPromise;
+    qrCodeLoadPromise = new Promise(function(resolve, reject){
+      var s = document.createElement('script');
+      s.src = QRCODE_CDN;
+      s.onload = function(){ resolve(); };
+      s.onerror = function(){ qrCodeLoadPromise = null; reject(new Error('Could not load the QR code library — check your connection.')); };
+      document.head.appendChild(s);
+    });
+    return qrCodeLoadPromise;
+  }
+  function renderQrCode(containerEl, text){
+    return ensureQrCodeLib().then(function(){
+      containerEl.innerHTML = '';
+      new window.QRCode(containerEl, { text: text, width: 178, height: 178, correctLevel: window.QRCode.CorrectLevel.M });
+    });
+  }
+  function renderCodeList(containerEl, codes){
+    containerEl.innerHTML = '';
+    codes.forEach(function(c){
+      var div = document.createElement('div');
+      div.textContent = c;
+      containerEl.appendChild(div);
+    });
+  }
+
+  // ---- MFA: login-time 2nd-factor step -----------------------------------
+  // Triggered when /login responds with mfaRequired instead of a session -
+  // see completeLoginOrChallengeMfa in the Worker. Reuses the same
+  // authOverlay the password step already uses, just swapping which inner
+  // block is visible, so nothing about the "is anyone signed in" gating
+  // elsewhere in this file needs to change.
+  var authMfaPendingToken = null;
+  var authMfaMode = null;       // 'challenge' | 'enroll_required'
+  var authMfaMethod = 'totp';   // 'totp' | 'email' | 'backup'
+
+  function showAuthStepMfa(){
+    document.getElementById('authStepPassword').style.display = 'none';
+    document.getElementById('authStepMfa').style.display = '';
+  }
+  function showAuthStepPassword(){
+    document.getElementById('authStepPassword').style.display = '';
+    document.getElementById('authStepMfa').style.display = 'none';
+  }
+
+  async function enterAuthMfaStep(data){
+    authMfaPendingToken = data.pendingToken;
+    authMfaMode = data.mode;
+    authMfaMethod = 'totp';
+    document.getElementById('authMfaForm').style.display = '';
+    document.getElementById('authMfaBackupCodesBlock').style.display = 'none';
+    document.getElementById('authMfaEnrollBlock').style.display = 'none';
+    document.getElementById('authMfaCode').value = '';
+    document.getElementById('authMfaError').textContent = '';
+    showAuthStepMfa();
+
+    var methods = data.availableMethods || [];
+    document.getElementById('authMfaUseEmailBtn').style.display = methods.indexOf('email') !== -1 ? '' : 'none';
+    document.getElementById('authMfaUseBackupBtn').style.display = methods.indexOf('backup') !== -1 ? '' : 'none';
+
+    if (data.mode === 'enroll_required') {
+      document.getElementById('authMfaTitle').textContent = 'Set Up Your Authenticator App';
+      document.getElementById('authMfaSub').textContent = 'Your account requires an extra sign-in step. Scan this with an authenticator app (Microsoft Authenticator, Google Authenticator, Authy), then enter the 6-digit code it shows.';
+      document.getElementById('authMfaEnrollBlock').style.display = '';
+      document.getElementById('authMfaUseEmailBtn').style.display = 'none';
+      document.getElementById('authMfaUseBackupBtn').style.display = 'none';
+      var errEl = document.getElementById('authMfaError');
+      errEl.textContent = 'Loading your QR code…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login/mfa/enroll', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pendingToken: authMfaPendingToken, step: 'start' })
+        });
+        var enrollData = await res.json();
+        if (!res.ok) throw new Error(enrollData.message || 'Could not start enrollment.');
+        document.getElementById('authMfaSecretText').textContent = enrollData.secret;
+        await renderQrCode(document.getElementById('authMfaQr'), enrollData.otpauthUri);
+        errEl.textContent = '';
+      } catch (err) {
+        errEl.textContent = err && err.message ? err.message : 'Could not load QR code.';
+      }
+    } else {
+      document.getElementById('authMfaTitle').textContent = 'Verification Required';
+      document.getElementById('authMfaSub').textContent = 'Enter the 6-digit code from your authenticator app.';
+    }
+  }
+
+  function finishAuthMfaLogin(data){
+    setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+    authMfaPendingToken = null;
+    showAuthStepPassword();
+    hideAuthOverlay();
+    var fn = pendingAfterAuth; pendingAfterAuth = null;
+    if (fn) fn();
+  }
+
+  document.getElementById('authMfaForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var code = document.getElementById('authMfaCode').value.trim();
+    var errEl = document.getElementById('authMfaError');
+    var btn = document.getElementById('authMfaSubmitBtn');
+    errEl.textContent = '';
+    if (!code) { errEl.textContent = 'Enter the code.'; return; }
+    btn.disabled = true; btn.textContent = 'Verifying…';
+    try {
+      var url, payload;
+      if (authMfaMode === 'enroll_required') {
+        url = WORKER_BASE_URL + '/login/mfa/enroll';
+        payload = { pendingToken: authMfaPendingToken, step: 'confirm', code: code };
+      } else {
+        url = WORKER_BASE_URL + '/login/mfa/verify';
+        payload = { pendingToken: authMfaPendingToken, method: authMfaMethod, code: code };
+      }
+      var res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      if (data.backupCodes && data.backupCodes.length) {
+        document.getElementById('authMfaForm').style.display = 'none';
+        renderCodeList(document.getElementById('authMfaBackupCodesList'), data.backupCodes);
+        document.getElementById('authMfaBackupCodesBlock').style.display = '';
+        document.getElementById('authMfaBackupCodesDoneBtn').onclick = function(){ finishAuthMfaLogin(data); };
+        return;
+      }
+      finishAuthMfaLogin(data);
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Incorrect code — please try again.';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Verify';
+    }
+  });
+
+  document.getElementById('authMfaUseEmailBtn').addEventListener('click', async function(){
+    var errEl = document.getElementById('authMfaError');
+    authMfaMethod = 'email';
+    errEl.textContent = 'Sending code…';
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/login/mfa/email/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pendingToken: authMfaPendingToken })
+      });
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.message + (data.retryAfterSeconds ? ' Try again in ' + data.retryAfterSeconds + 's.' : ''));
+      errEl.textContent = '';
+      document.getElementById('authMfaSub').textContent = 'Enter the 6-digit code we just emailed you.';
+      document.getElementById('authMfaCode').value = '';
+      document.getElementById('authMfaCode').focus();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not send code.';
+    }
+  });
+  document.getElementById('authMfaUseBackupBtn').addEventListener('click', function(){
+    authMfaMethod = 'backup';
+    document.getElementById('authMfaSub').textContent = 'Enter one of your backup codes.';
+    document.getElementById('authMfaError').textContent = '';
+    document.getElementById('authMfaCode').value = '';
+    document.getElementById('authMfaCode').focus();
   });
 
   // ---- Self-service Change Password (Rev2.11) --------------------------
@@ -409,6 +677,172 @@
       errEl.textContent = err && err.message ? err.message : 'Could not update your password.';
     } finally {
       btn.disabled = false; btn.textContent = 'Update Password';
+    }
+  });
+  // -----------------------------------------------------------------------
+
+  // ---- Self-service Security modal (enroll/manage MFA) -------------------
+  function openSecurityModal(){
+    if (!getSession()) { showAuthOverlay(); return; }
+    document.getElementById('secError').textContent = '';
+    document.getElementById('secSuccess').textContent = '';
+    document.getElementById('secEnrollBlock').style.display = 'none';
+    document.getElementById('secBackupCodesBlock').style.display = 'none';
+    hideSecPasswordConfirm();
+    document.getElementById('securityOverlay').classList.add('open');
+    refreshSecurityStatus();
+  }
+  function closeSecurityModal(){
+    document.getElementById('securityOverlay').classList.remove('open');
+  }
+  document.getElementById('sideSecurityBtn').addEventListener('click', openSecurityModal);
+  document.getElementById('secCloseBtn').addEventListener('click', closeSecurityModal);
+  document.getElementById('securityOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'securityOverlay') closeSecurityModal();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && document.getElementById('securityOverlay').classList.contains('open')) closeSecurityModal();
+  });
+
+  async function refreshSecurityStatus(){
+    var session = getSession();
+    if (!session) return;
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me/mfa', { headers: { Authorization: 'Bearer ' + session.token } });
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Could not load status.');
+      var totpOn = data.mfaMethods.indexOf('totp') !== -1;
+      var emailOn = data.mfaMethods.indexOf('email') !== -1;
+      document.getElementById('secTotpStatus').textContent = totpOn ? 'On' : 'Off';
+      document.getElementById('secEmailStatus').textContent = emailOn ? 'On' : 'Off';
+      document.getElementById('secBackupCount').textContent = totpOn ? data.backupCodesRemaining : '—';
+      document.getElementById('secTotpOffBlock').style.display = totpOn ? 'none' : '';
+      document.getElementById('secTotpOnBlock').style.display = totpOn ? '' : 'none';
+      document.getElementById('secEmailToggle').checked = emailOn;
+    } catch (err) {
+      document.getElementById('secError').textContent = err && err.message ? err.message : 'Could not load status.';
+    }
+  }
+
+  document.getElementById('secEnableTotpBtn').addEventListener('click', async function(){
+    var session = getSession();
+    if (!session) return;
+    var errEl = document.getElementById('secError');
+    errEl.textContent = '';
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me/mfa/totp/enroll', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + session.token }
+      });
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Could not start enrollment.');
+      document.getElementById('secSecretText').textContent = data.secret;
+      document.getElementById('secTotpOffBlock').style.display = 'none';
+      document.getElementById('secEnrollBlock').style.display = '';
+      document.getElementById('secConfirmCode').value = '';
+      await renderQrCode(document.getElementById('secQr'), data.otpauthUri);
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not start enrollment.';
+    }
+  });
+  document.getElementById('secEnrollCancelBtn').addEventListener('click', function(){
+    document.getElementById('secEnrollBlock').style.display = 'none';
+    refreshSecurityStatus();
+  });
+  document.getElementById('secConfirmForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var session = getSession();
+    if (!session) return;
+    var code = document.getElementById('secConfirmCode').value.trim();
+    var errEl = document.getElementById('secError');
+    errEl.textContent = '';
+    if (!code) { errEl.textContent = 'Enter the code.'; return; }
+    var btn = document.getElementById('secConfirmBtn');
+    btn.disabled = true;
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me/mfa/totp/confirm', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.token },
+        body: JSON.stringify({ code: code })
+      });
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Incorrect code.');
+      document.getElementById('secEnrollBlock').style.display = 'none';
+      renderCodeList(document.getElementById('secBackupCodesList'), data.backupCodes);
+      document.getElementById('secBackupCodesBlock').style.display = '';
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Incorrect code — please try again.';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  document.getElementById('secBackupCodesDoneBtn').addEventListener('click', function(){
+    document.getElementById('secBackupCodesBlock').style.display = 'none';
+    refreshSecurityStatus();
+  });
+
+  // Disable/regenerate/email-toggle all funnel through one password-confirm
+  // step - a single, simple, consistent rule ("any MFA change re-checks
+  // your password") rather than several slightly different flows.
+  var pendingSecAction = null;      // 'disableTotp' | 'regenBackup' | 'toggleEmail'
+  var pendingSecEmailEnable = false;
+  function showSecPasswordConfirm(action, label){
+    pendingSecAction = action;
+    document.getElementById('secPasswordConfirmLabelText').textContent = label;
+    document.getElementById('secPasswordConfirmInput').value = '';
+    document.getElementById('secError').textContent = '';
+    document.getElementById('secPasswordConfirmBlock').style.display = '';
+    document.getElementById('secPasswordConfirmInput').focus();
+  }
+  function hideSecPasswordConfirm(){
+    pendingSecAction = null;
+    document.getElementById('secPasswordConfirmBlock').style.display = 'none';
+  }
+  document.getElementById('secDisableTotpBtn').addEventListener('click', function(){
+    showSecPasswordConfirm('disableTotp', 'Enter your password to disable the authenticator app');
+  });
+  document.getElementById('secRegenBackupBtn').addEventListener('click', function(){
+    showSecPasswordConfirm('regenBackup', 'Enter your password to regenerate backup codes');
+  });
+  document.getElementById('secEmailToggle').addEventListener('change', function(e){
+    pendingSecEmailEnable = e.target.checked;
+    // Revert visually until the password is confirmed, so there's no flash
+    // of an "on" state that doesn't end up sticking on a wrong password.
+    e.target.checked = !e.target.checked;
+    showSecPasswordConfirm('toggleEmail', pendingSecEmailEnable ? 'Enter your password to enable email backup codes' : 'Enter your password to disable email backup codes');
+  });
+  document.getElementById('secPasswordConfirmCancelBtn').addEventListener('click', hideSecPasswordConfirm);
+  document.getElementById('secPasswordConfirmBtn').addEventListener('click', async function(){
+    var session = getSession();
+    if (!session) return;
+    var password = document.getElementById('secPasswordConfirmInput').value;
+    var errEl = document.getElementById('secError');
+    errEl.textContent = '';
+    if (!password) { errEl.textContent = 'Enter your password.'; return; }
+    var btn = document.getElementById('secPasswordConfirmBtn');
+    btn.disabled = true;
+    try {
+      var url, body = { password: password };
+      if (pendingSecAction === 'disableTotp') url = '/me/mfa/totp/disable';
+      else if (pendingSecAction === 'regenBackup') url = '/me/mfa/backup-codes/regenerate';
+      else if (pendingSecAction === 'toggleEmail') url = pendingSecEmailEnable ? '/me/mfa/email/enable' : '/me/mfa/email/disable';
+      else return;
+      var res = await fetch(WORKER_BASE_URL + url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.token },
+        body: JSON.stringify(body)
+      });
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      hideSecPasswordConfirm();
+      if (pendingSecAction === 'regenBackup' && data.backupCodes) {
+        renderCodeList(document.getElementById('secBackupCodesList'), data.backupCodes);
+        document.getElementById('secBackupCodesBlock').style.display = '';
+      } else {
+        document.getElementById('secSuccess').textContent = 'Updated.';
+        await refreshSecurityStatus();
+      }
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not update.';
+    } finally {
+      btn.disabled = false;
     }
   });
   // -----------------------------------------------------------------------
@@ -495,7 +929,8 @@
         // Rev2.1: Customer logins no longer see Dessimate Invoices at all.
         { name: 'Dessimate Invoices', href: 'PDIR_DessimateInvoices.html', minLevel: 'admin', levels: ['admin', 'super_admin'] },
         { name: 'Users', href: 'PDIR_Users.html', minLevel: 'super_admin' },
-        { name: 'Organizations', href: 'PDIR_Organizations.html', minLevel: 'super_admin' }
+        { name: 'Organizations', href: 'PDIR_Organizations.html', minLevel: 'super_admin' },
+        { name: 'Security', href: 'PDIR_Security.html', minLevel: 'super_admin' }
       ]
     },
     {
