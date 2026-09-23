@@ -1377,6 +1377,54 @@ only, checked fresh from storage on every file request (never
 list-time-only), same defense-in-depth already used for the original RFQ
 module's equivalent branches.
 
+## Installable app (PWA)
+
+The portal can be "installed" from Chrome or Edge - it shows up as a real
+desktop/taskbar icon with its own window (no address bar, no tabs), while
+still being the exact same hosted site and Worker backend. There's
+nothing to migrate and no separate build: open any page, click the
+install icon in the address bar (or the browser's "Install app" / "Apps
+→ Install this site as an app" menu item), and it's added like a native
+app. It still needs internet the same as visiting the site normally, and
+it updates itself automatically the next time it's opened - there's no
+"old installed version" to fall behind.
+
+Three small additions make this work, all at the repo root (served
+alongside the HTML pages, no server-side involvement):
+
+- **`manifest.json`** - name, icons, `start_url` (`index.html`, so the
+  installed app always opens on the dashboard regardless of which page
+  someone clicked "Install" from), `display: "standalone"` (the
+  no-address-bar window), and the theme/background colors that match the
+  app's own `--brand`/`--bg` CSS variables.
+- **`icons/`** - `icon-192.png` / `icon-512.png` (the standard install
+  icons), `icon-512-maskable.png` (extra safe-zone padding so Android's
+  adaptive-icon masking - circle, squircle, rounded square - never crops
+  into the artwork), `apple-touch-icon.png`, and `favicon-32.png`. All
+  five are the same "Dessimate" compass mark from `logo.jpg`, re-rendered
+  against its own brand blue background at each size.
+- **`sw.js`** - a minimal service worker (install/activate/fetch
+  handlers) registered from every page. Chrome/Edge require an active
+  service worker with a fetch handler before they'll offer to install a
+  site at all, but this one deliberately does **no caching** - every
+  request just passes straight through to the network (`fetch(event.
+  request)`, nothing more) - so the installed app always shows the exact
+  same live site/data as an ordinary browser tab, with no separate
+  offline copy that could ever go stale or need clearing.
+
+Every page (`<link rel="manifest">`, the theme-color/icon `<link>`s, and
+the service-worker registration `<script>`) carries the same five lines
+right after its own `<meta charset="utf-8">`, so the install prompt is
+available no matter which page a staff member happens to have open -
+`index_2.html` (an orphaned, unlinked leftover from before the current
+`index.html`) was deliberately skipped since nothing routes to it.
+
+Verified end-to-end with a real local HTTP server (service workers
+require `http(s)://`, not `file://`) and a headless browser: the manifest
+and every icon fetch with a 200, and `navigator.serviceWorker.register()`
+resolves to an active registration - not just a static file-presence
+check.
+
 ## About the GitHub repo's visibility
 
 Now that every page and file is fetched through this backend (using your
