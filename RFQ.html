@@ -545,6 +545,7 @@
 <script src="office-viewer.js"></script>
 <script src="confirm-dialog.js"></script>
 <script src="sortable-table.js"></script>
+<script src="mfa-login.js"></script>
 <script>
 (function(){
   // ---- Backend (staff login + file proxy) ------------------------------------
@@ -734,8 +735,17 @@
           loginErr.attemptsRemaining = data.attemptsRemaining;
           throw loginErr;
         }
-        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
         document.getElementById('authPassword').value = '';
+        if (data.mfaRequired) {
+          DscmMfaLogin.start(data, { baseUrl: WORKER_BASE_URL, onSuccess: function (session) {
+            setSession(session);
+            hideAuthOverlay();
+            var fn = pendingAfterAuth; pendingAfterAuth = null;
+            if (fn) fn();
+          } });
+          return;
+        }
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
         hideAuthOverlay();
         var fn = pendingAfterAuth; pendingAfterAuth = null;
         if (fn) fn();

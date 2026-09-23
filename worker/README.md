@@ -676,16 +676,24 @@ commands):
   email codes are sent from. Must be a verified sender/domain in your
   Resend account or Resend will reject the send.
 
-**A note on standalone module pages:** every module page (Parts, Customer
-POs, etc.) can be opened directly rather than through the dashboard, each
-with its own copy of the sign-in form. `index.html`, `PDIR_Security.html`,
-and `PDIR_Users.html` all understand the MFA step in that form; the
-remaining module pages' own standalone sign-in forms don't yet — they'll
-still work fine for anyone whose role doesn't require MFA (the common
-case), but a Super Admin account (which always requires it) landing
-directly on one of those pages without an existing session should sign in
-through the dashboard or one of the three pages above first, rather than
-that page's own login form.
+**Standalone module pages** (Parts, Customer POs, etc.) can be opened
+directly rather than through the dashboard, each with its own copy of the
+sign-in form — this is how a supplier or customer most often actually
+reaches DSCM, via a cross-module link with no existing session (a Dessimate
+PO linking to its Customer PO, a Supplier Invoice linking back to its PO,
+and so on). Every one of those forms understands the MFA step, via a single
+shared file, **`mfa-login.js`**, loaded by every page with a login form
+(`<script src="mfa-login.js"></script>`, right before that page's own
+script). It exposes one function, `DscmMfaLogin.start(data, { baseUrl,
+onSuccess })`, called from inside each page's own `POST /login` handler the
+moment the response comes back `mfaRequired: true` — it builds the QR/code-
+entry screen on first use (appending a second `.authCard` into that page's
+existing `#authOverlay`, so no page needs any markup of its own for this),
+drives the `enroll_required`/`challenge` flow exactly like the dashboard's
+own Security modal, and hands back a real session via `onSuccess` once the
+2nd factor succeeds — at which point that page's own login handler finishes
+exactly as it always has. One file to maintain the MFA login flow in,
+instead of it being duplicated per page.
 
 ## Managing users (staff, suppliers, customers)
 
