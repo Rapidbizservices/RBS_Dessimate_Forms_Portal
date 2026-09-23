@@ -505,10 +505,10 @@ linked here for a fast overview if you're updating an existing deployment.
 
 ## The dashboard (`index.html`)
 
-`index.html` is a persistent left sidebar with a content pane next to it —
-every module page (Parts, the PO/Invoice pages, APQP, Users, Organizations,
-the PDIR portal) loads inside that pane instead of you navigating to a
-separate URL for each one. It's built once you sign in:
+`index.html` is a left sidebar with a content pane next to it — every module
+page (Parts, the PO/Invoice pages, APQP, Users, Organizations, the PDIR
+portal) loads inside that pane instead of you navigating to a separate URL
+for each one. It's built once you sign in:
 
 - The sidebar is grouped into **Production Modules**, **Pre-Production
   Modules**, **Admin Modules**, and **Resources**, and only shows the
@@ -521,8 +521,13 @@ separate URL for each one. It's built once you sign in:
   every page still functions perfectly on its own, opened standalone).
 - Your last-open module is remembered for the rest of the browser tab's
   session, so refreshing `index.html` puts you back where you were.
-- On a phone or narrow window, the sidebar becomes a slide-out drawer behind
-  a hamburger button instead of a fixed column.
+- **Hidden by default (all screen sizes)** - the sidebar is a slide-out
+  drawer everywhere now, not just on a phone or narrow window. It opens over
+  the content via the hamburger button in the top-left of the page, and
+  closes again as soon as you pick a module or click outside it. This keeps
+  the full width of the screen for the content pane and keeps the full menu
+  of modules out of sight by default when screen-sharing with a customer or
+  supplier.
 
 Nothing about the individual module pages changed to make this work — each
 one still runs exactly as it did as a standalone page (their own README
