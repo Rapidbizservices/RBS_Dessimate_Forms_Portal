@@ -927,7 +927,18 @@
       items: [
         { name: 'Customer POs', href: 'PDIR_CustomerPOs.html', minLevel: 'admin', levels: ['admin', 'super_admin'] },
         // Rev2.1: Customer logins no longer see Dessimate Invoices at all.
-        { name: 'Dessimate Invoices', href: 'PDIR_DessimateInvoices.html', minLevel: 'admin', levels: ['admin', 'super_admin'] },
+        { name: 'Dessimate Invoices', href: 'PDIR_DessimateInvoices.html', minLevel: 'admin', levels: ['admin', 'super_admin'] }
+      ]
+    },
+    // Split out from Admin Modules above - these three are super_admin-only
+    // (an Admin login never sees this section at all), and grouping them
+    // under "Admin Modules" wording/heading was confusing even though
+    // access was already correctly locked down. See the old Customer POs
+    // comment above for the same tension this used to create.
+    {
+      label: 'Super Admin',
+      minLevel: 'super_admin',
+      items: [
         { name: 'Users', href: 'PDIR_Users.html', minLevel: 'super_admin' },
         { name: 'Organizations', href: 'PDIR_Organizations.html', minLevel: 'super_admin' },
         { name: 'Security', href: 'PDIR_Security.html', minLevel: 'super_admin' }
