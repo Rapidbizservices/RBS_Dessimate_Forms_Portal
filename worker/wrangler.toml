@@ -10,7 +10,7 @@ compatibility_date = "2024-11-01"
 # Multi-factor authentication section.
 [vars]
 ALLOWED_ORIGIN = "https://rapidbizservices.github.io"
-RESEND_FROM_EMAIL = "DSCM <onboarding@resend.dev>"
+RESEND_FROM_EMAIL = "DSCM <IT_Dessimate@dessimate.com>"
 
 # Cloudflare-native storage bindings - replaces the old GitHub-backed
 # storage entirely. Both resources already exist in your Cloudflare account
@@ -42,9 +42,11 @@ bucket_name = "dscm-files"
 #                     encrypting TOTP secrets at rest. See worker/README.md's
 #                     Multi-factor authentication section.
 #   RESEND_API_KEY  - from your Resend account (resend.com, free tier).
-#                     Sends the email one-time-code MFA fallback. MFA still
-#                     works with just an authenticator app if this is never
-#                     set - only the email fallback needs it.
+#                     Sends the email one-time-code MFA fallback. Once set,
+#                     every account with an email on file automatically sees
+#                     "use email code instead" at MFA login - no per-user
+#                     opt-in. MFA still works with just an authenticator app
+#                     if this is never set - only the email fallback needs it.
 # Note: GITHUB_TOKEN is no longer used - this backend never talks to GitHub
 # for anything except the one-time migration, which reads the old public
 # repo's already-public files with no token at all.

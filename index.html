@@ -66,6 +66,13 @@
   .installAppBtn:disabled{ opacity:.65; cursor:wait; }
   .installAppIcon{ font-size:15px; line-height:1; flex:0 0 auto; }
 
+  .installHelpLink{
+    display:block; width:calc(100% - 24px); margin:-4px 12px 10px; text-align:left;
+    font-family:inherit; font-size:11.5px; font-weight:600; color:var(--side-text-dim);
+    background:none; border:none; padding:0 12px; cursor:pointer; text-decoration:underline;
+  }
+  .installHelpLink:hover{ color:var(--side-text); }
+
   .sideNav{ flex:1 1 auto; padding:6px 12px 12px; }
   .sideGroup{ margin-top:16px; }
   .sideGroup:first-child{ margin-top:2px; }
@@ -161,6 +168,7 @@
       <span class="installAppIcon">&#11123;</span>
       <span>Install Desktop App</span>
     </button>
+    <button type="button" class="installHelpLink" id="installHelpLink">How to install&hellip;</button>
 
     <div class="sideNav" id="sideNav">
       <!-- populated by renderNav() once /me resolves the signed-in person's access level -->
@@ -289,12 +297,6 @@
         <button type="button" id="secDisableTotpBtn" style="background:#b23b3b;">Disable Authenticator App</button>
       </div>
 
-      <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--line);">
-        <label style="display:flex; align-items:center; gap:8px; font-weight:600; font-size:13px; color:var(--label); cursor:pointer;">
-          <input type="checkbox" id="secEmailToggle" style="width:auto; margin:0;"> Allow email code as a backup sign-in method
-        </label>
-      </div>
-
       <div id="secPasswordConfirmBlock" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--line);">
         <label><span id="secPasswordConfirmLabelText">Enter your password to confirm</span>
           <input type="password" id="secPasswordConfirmInput" autocomplete="current-password">
@@ -306,6 +308,23 @@
       <div class="authError" id="secError" style="margin-top:12px;"></div>
       <div class="authAttempts" id="secSuccess" style="color:#187b46; font-weight:600;"></div>
       <button type="button" id="secCloseBtn" style="background:#5b5f66; margin-top:12px;">Close</button>
+    </div>
+  </div>
+
+  <div class="authOverlay" id="installHelpOverlay">
+    <div class="authCard" style="max-width:420px;">
+      <h2>Install as a Desktop App</h2>
+      <p class="authSub">Same site, same login — it just gets its own taskbar icon and window, with no address bar or tabs.</p>
+      <div style="font-size:13px; color:var(--label); line-height:1.7; margin-bottom:6px;">
+        <p style="margin:0 0 6px; font-weight:700; color:var(--ink);">Chrome or Edge (Windows/Mac)</p>
+        <p style="margin:0 0 14px;">Click the <strong>&#8942;</strong> menu (top-right) &rarr; <strong>Save and share &rarr; Install DSCM&hellip;</strong> (Chrome) or <strong>Apps &rarr; Install this site as an app</strong> (Edge). Or look for a small install icon at the right end of the address bar.</p>
+        <p style="margin:0 0 6px; font-weight:700; color:var(--ink);">Safari on Mac</p>
+        <p style="margin:0 0 14px;">File menu &rarr; <strong>Add to Dock&hellip;</strong></p>
+        <p style="margin:0 0 6px; font-weight:700; color:var(--ink);">Safari on iPhone/iPad</p>
+        <p style="margin:0 0 14px;">Tap the Share icon &rarr; <strong>Add to Home Screen</strong>.</p>
+        <p style="margin:0; font-size:11.5px; color:var(--side-text-dim, var(--label));">Not seeing an install option in Chrome/Edge at all? Some workplaces manage Chrome centrally and turn this off — check with whoever manages your computer. Installing is just a convenience either way; DSCM works exactly the same as a regular browser tab.</p>
+      </div>
+      <button type="button" id="installHelpCloseBtn" style="background:#5b5f66;">Close</button>
     </div>
   </div>
 
@@ -712,13 +731,12 @@
       var data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Could not load status.');
       var totpOn = data.mfaMethods.indexOf('totp') !== -1;
-      var emailOn = data.mfaMethods.indexOf('email') !== -1;
+      var emailAvailable = data.mfaMethods.indexOf('email') !== -1;
       document.getElementById('secTotpStatus').textContent = totpOn ? 'On' : 'Off';
-      document.getElementById('secEmailStatus').textContent = emailOn ? 'On' : 'Off';
+      document.getElementById('secEmailStatus').textContent = emailAvailable ? 'Available (automatic)' : 'Not available — add an email on the Users page';
       document.getElementById('secBackupCount').textContent = totpOn ? data.backupCodesRemaining : '—';
       document.getElementById('secTotpOffBlock').style.display = totpOn ? 'none' : '';
       document.getElementById('secTotpOnBlock').style.display = totpOn ? '' : 'none';
-      document.getElementById('secEmailToggle').checked = emailOn;
     } catch (err) {
       document.getElementById('secError').textContent = err && err.message ? err.message : 'Could not load status.';
     }
@@ -779,11 +797,10 @@
     refreshSecurityStatus();
   });
 
-  // Disable/regenerate/email-toggle all funnel through one password-confirm
-  // step - a single, simple, consistent rule ("any MFA change re-checks
-  // your password") rather than several slightly different flows.
-  var pendingSecAction = null;      // 'disableTotp' | 'regenBackup' | 'toggleEmail'
-  var pendingSecEmailEnable = false;
+  // Disable/regenerate both funnel through one password-confirm step - a
+  // single, simple, consistent rule ("any MFA change re-checks your
+  // password") rather than two slightly different flows.
+  var pendingSecAction = null;      // 'disableTotp' | 'regenBackup'
   function showSecPasswordConfirm(action, label){
     pendingSecAction = action;
     document.getElementById('secPasswordConfirmLabelText').textContent = label;
@@ -802,13 +819,6 @@
   document.getElementById('secRegenBackupBtn').addEventListener('click', function(){
     showSecPasswordConfirm('regenBackup', 'Enter your password to regenerate backup codes');
   });
-  document.getElementById('secEmailToggle').addEventListener('change', function(e){
-    pendingSecEmailEnable = e.target.checked;
-    // Revert visually until the password is confirmed, so there's no flash
-    // of an "on" state that doesn't end up sticking on a wrong password.
-    e.target.checked = !e.target.checked;
-    showSecPasswordConfirm('toggleEmail', pendingSecEmailEnable ? 'Enter your password to enable email backup codes' : 'Enter your password to disable email backup codes');
-  });
   document.getElementById('secPasswordConfirmCancelBtn').addEventListener('click', hideSecPasswordConfirm);
   document.getElementById('secPasswordConfirmBtn').addEventListener('click', async function(){
     var session = getSession();
@@ -823,7 +833,6 @@
       var url, body = { password: password };
       if (pendingSecAction === 'disableTotp') url = '/me/mfa/totp/disable';
       else if (pendingSecAction === 'regenBackup') url = '/me/mfa/backup-codes/regenerate';
-      else if (pendingSecAction === 'toggleEmail') url = pendingSecEmailEnable ? '/me/mfa/email/enable' : '/me/mfa/email/disable';
       else return;
       var res = await fetch(WORKER_BASE_URL + url, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.token },
@@ -1095,6 +1104,29 @@
       installBtn.disabled = false;
     });
   })();
+  // -------------------------------------------------------------------------
+
+  // ---- Install help (manual steps, always available) --------------------
+  // The button above only ever shows up if the browser itself decides to
+  // fire beforeinstallprompt - it can stay silent for reasons nothing here
+  // can detect or override (unsupported browser, already installed, or a
+  // workplace-managed Chrome policy blocking it). This link is the
+  // always-visible fallback so there's still a real answer for someone who
+  // never sees that button.
+  document.getElementById('installHelpLink').addEventListener('click', function(){
+    document.getElementById('installHelpOverlay').classList.add('open');
+  });
+  document.getElementById('installHelpCloseBtn').addEventListener('click', function(){
+    document.getElementById('installHelpOverlay').classList.remove('open');
+  });
+  document.getElementById('installHelpOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'installHelpOverlay') document.getElementById('installHelpOverlay').classList.remove('open');
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && document.getElementById('installHelpOverlay').classList.contains('open')) {
+      document.getElementById('installHelpOverlay').classList.remove('open');
+    }
+  });
   // -------------------------------------------------------------------------
 
   requireAuthThen(resolveAccessAndRenderNav);

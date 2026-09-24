@@ -89,11 +89,12 @@ only needed once you actually use multi-factor authentication (see
 ```
 npx wrangler secret put RESEND_API_KEY
 ```
-Optional — only needed if you want MFA's email-code fallback to actually
-send. Create a free account at [resend.com](https://resend.com) and paste
-an API key from there. Skip this entirely if you're only using the
-authenticator-app method (the common case) — everything else works fine
-without it.
+Optional — only needed if you want MFA's email-code fallback active. Create
+a free account at [resend.com](https://resend.com) and paste an API key
+from there. Setting it turns the fallback on for every account with an
+email on file, immediately — there's no per-account opt-in step. Skip this
+entirely if you're only using the authenticator-app method — everything
+else works fine without it.
 
 ## 5. Deploy
 
@@ -590,17 +591,20 @@ their own **Security** button.
   at enrollment. No external service involved — the codes are computed
   entirely by this Worker and the app on your phone (RFC 6238), never sent
   anywhere.
-- **Email code** — a 6-digit backup, sent via [Resend](https://resend.com)'s
-  free tier (see **Set the backend's secrets** below). Someone has to opt
-  into this themselves after setting up an authenticator app — it's not a
-  first-class method on its own.
+- **Email code** — a 6-digit fallback, sent via [Resend](https://resend.com)'s
+  free tier (see **Set the backend's secrets** below). Automatic, not an
+  opt-in: once `RESEND_API_KEY` is set, every account with an email on file
+  sees **Use email code instead** at login the moment they're already
+  TOTP-enrolled — nothing to turn on. TOTP is still the required, primary
+  setup step; email is only ever an alternative once that's done, never a
+  standalone way to enroll.
 
 **Enrolling (any signed-in role):** click **Security** next to **Change
 Password** — scan the QR code with an authenticator app, enter the 6-digit
 code it shows to confirm, and you're given **10 one-time backup codes**
-(shown once — save them somewhere safe). From there you can also turn on
-the email code as a backup method, regenerate backup codes, or disable the
-authenticator app — every one of those re-checks your password first.
+(shown once — save them somewhere safe). From there you can also regenerate
+backup codes or disable the authenticator app — either one re-checks your
+password first.
 
 **Signing in once MFA applies:** after your password is accepted, you're
 asked for a code instead of being signed in immediately — the authenticator
@@ -634,7 +638,7 @@ isn't enough on its own for a change this sensitive.
 
 **Lost a device? Three ways back in**, same Security page:
 - Use one of the 10 backup codes issued at enrollment (each works once).
-- Use the email code fallback, if it was turned on.
+- Use the email code fallback (automatic whenever there's an email on file).
 - Ask a Super Admin to **Reset MFA** for that account — from the Security
   page's own picker, or the **Reset MFA** button on that person's row in the
   Users page's Edit modal. This clears their authenticator app, backup
@@ -669,8 +673,9 @@ commands):
   for the settings step-up, and is the key material TOTP secrets are
   encrypted with before being stored. Different from `SESSION_SECRET` —
   keep them separate.
-- `RESEND_API_KEY` (secret) — from your free Resend account. Only needed if
-  you want the email-code fallback to actually send; MFA itself works fine
+- `RESEND_API_KEY` (secret) — from your free Resend account. Setting this is
+  what turns the email fallback on, for every account with an email on
+  file, all at once — there's no per-account switch. MFA itself works fine
   with just an authenticator app if this is never set.
 - `RESEND_FROM_EMAIL` (plain var, in `wrangler.toml`) — the "from" address
   email codes are sent from. Must be a verified sender/domain in your

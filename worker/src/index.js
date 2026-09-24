@@ -53,9 +53,12 @@
  * Optional, per-role-enforceable two-factor sign-in - see worker/README.md's
  * "Multi-factor authentication (MFA)" section for the full user-facing
  * explanation. Backend shape, in one paragraph: each user's `mfa` field
- * (encrypted TOTP secret, hashed backup codes, email-fallback preference)
- * lives inline on their USERS_FILE_PATH record; MFA_SETTINGS_FILE_PATH holds
- * the 4 per-role toggles (super_admin is hardcoded true, never a key there);
+ * (encrypted TOTP secret, hashed backup codes) lives inline on their
+ * USERS_FILE_PATH record - email is not a per-user toggle in there, see
+ * emailFactorAvailable (available whenever the account has an email on
+ * file and RESEND_API_KEY is configured, nothing to opt into).
+ * MFA_SETTINGS_FILE_PATH holds the 4 per-role toggles (super_admin is
+ * hardcoded true, never a key there);
  * MFA_AUDIT_LOG_FILE_PATH is an append-only trail of every setting change
  * and reset; MFA_VERIFY_LOCKOUTS_FILE_PATH and MFA_EMAIL_OTP_FILE_PATH mirror
  * LOGIN_LOCKOUTS_FILE_PATH's shape for, respectively, wrong-code lockout and
@@ -534,12 +537,6 @@ export default {
         }
         if (url.pathname === '/me/mfa/backup-codes/regenerate' && request.method === 'POST') {
           return await handleMfaBackupCodesRegenerate(request, env, origin, auth.username);
-        }
-        if (url.pathname === '/me/mfa/email/enable' && request.method === 'POST') {
-          return await handleMfaEmailToggle(request, env, origin, auth.username, true);
-        }
-        if (url.pathname === '/me/mfa/email/disable' && request.method === 'POST') {
-          return await handleMfaEmailToggle(request, env, origin, auth.username, false);
         }
       }
 
@@ -1380,6 +1377,16 @@ async function clearFailedMfaVerify(env, usernameLower) {
   });
 }
 
+// ---- MFA: email factor availability ---------------------------------------
+// Email is a fallback/alternative alongside TOTP, not something anyone
+// opts into per-account - it's simply available whenever the account has an
+// email on file and the backend is configured to send (RESEND_API_KEY set).
+// There's no per-user "email.enabled" gate: every account with an email
+// automatically sees "use email code instead" at MFA login.
+function emailFactorAvailable(env, user) {
+  return !!(user && user.email) && !!env.RESEND_API_KEY;
+}
+
 // ---- MFA: email one-time-code send-rate limiting + storage ---------------
 // Governs how often a code can be *requested* (separate from the
 // verify-attempt lockout above, which governs how many wrong *guesses* are
@@ -1638,9 +1645,11 @@ async function completeLoginOrChallengeMfa(env, origin, username, accessLevel, l
 
   const fileState = await readUsersFile(env);
   const userRecord = findUserByUsername(fileState.users, username);
-  const hasEnrolled = !!(userRecord && userRecord.mfa && (
-    (userRecord.mfa.totp && userRecord.mfa.totp.enabled) || (userRecord.mfa.email && userRecord.mfa.email.enabled)
-  ));
+  // TOTP is the one thing that counts as "enrolled" - it's the required
+  // primary setup step. Email is never a standalone enrollment path (see
+  // emailFactorAvailable above); it only ever shows up as an alternative
+  // once TOTP enrollment is already done, in the availableMethods list below.
+  const hasEnrolled = !!(userRecord && userRecord.mfa && userRecord.mfa.totp && userRecord.mfa.totp.enabled);
 
   if (!mfaRequired && !hasEnrolled) return await issueSession(username, env, origin);
 
@@ -1652,7 +1661,7 @@ async function completeLoginOrChallengeMfa(env, origin, username, accessLevel, l
   const availableMethods = [];
   if (hasEnrolled) {
     if (userRecord.mfa.totp && userRecord.mfa.totp.enabled) availableMethods.push('totp');
-    if (userRecord.mfa.email && userRecord.mfa.email.enabled) availableMethods.push('email');
+    if (emailFactorAvailable(env, userRecord)) availableMethods.push('email');
     const hasUnusedBackupCodes = Array.isArray(userRecord.mfa.backupCodes) &&
       userRecord.mfa.backupCodes.some(function (c) { return !c.usedAt; });
     if (hasUnusedBackupCodes) availableMethods.push('backup');
@@ -1752,10 +1761,10 @@ async function handleLoginMfaEmailSend(request, env, origin) {
   const fileState = await readUsersFile(env);
   const userRecord = findUserByUsername(fileState.users, username);
   if (!userRecord) return json({ message: 'Account not found.' }, 404, origin);
-  if (!userRecord.mfa || !userRecord.mfa.email || !userRecord.mfa.email.enabled) {
-    return json({ message: 'Email code is not enabled on this account.' }, 400, origin);
-  }
   if (!userRecord.email) return json({ message: 'This account has no email on file.' }, 400, origin);
+  if (!emailFactorAvailable(env, userRecord)) {
+    return json({ message: 'Email code is not available right now.' }, 400, origin);
+  }
 
   const sendCheck = await checkEmailOtpSendAllowed(env, usernameLower);
   if (!sendCheck.allowed) {
@@ -2035,9 +2044,8 @@ async function handleMfaTotpDisable(request, env, origin, username) {
   if (computedHash !== target.hash) return json({ message: 'Password is incorrect.' }, 401, origin);
 
   const accessLevel = await resolveAccessLevel(env, username);
-  const emailEnabled = !!(target.mfa && target.mfa.email && target.mfa.email.enabled);
-  if (accessLevel === 'super_admin' && !emailEnabled) {
-    return json({ message: 'Super Admin accounts must always have at least one MFA method enabled — turn on email as a backup first, or set up a new authenticator before disabling this one.' }, 400, origin);
+  if (accessLevel === 'super_admin' && !emailFactorAvailable(env, target)) {
+    return json({ message: 'Super Admin accounts must always have at least one MFA method available — add an email to this account for the email fallback, or set up a new authenticator before disabling this one.' }, 400, origin);
   }
   const result = await mutateUsersFile(env, function (users) {
     const u = findUserByUsername(users, username);
@@ -2079,40 +2087,6 @@ async function handleMfaBackupCodesRegenerate(request, env, origin, username) {
   return json({ backupCodes: backupCodes }, 200, origin);
 }
 
-// Covers both /me/mfa/email/enable and /me/mfa/email/disable - password is
-// required either direction, for one simple consistent rule rather than two
-// slightly different ones.
-async function handleMfaEmailToggle(request, env, origin, username, enable) {
-  let body;
-  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
-  const password = (body.password || '').toString();
-  const fileState = await readUsersFile(env);
-  const target = findUserByUsername(fileState.users, username);
-  if (!target || !target.hash) return json({ message: 'Account not found.' }, 404, origin);
-  const computedHash = await pbkdf2Hex(password, target.salt);
-  if (computedHash !== target.hash) return json({ message: 'Password is incorrect.' }, 401, origin);
-
-  if (enable && !target.email) {
-    return json({ message: 'This account has no email on file — add one on the Users page first.' }, 400, origin);
-  }
-  if (!enable) {
-    const accessLevel = await resolveAccessLevel(env, username);
-    const totpEnabled = !!(target.mfa && target.mfa.totp && target.mfa.totp.enabled);
-    if (accessLevel === 'super_admin' && !totpEnabled) {
-      return json({ message: 'Super Admin accounts must always have at least one MFA method enabled — set up an authenticator app first.' }, 400, origin);
-    }
-  }
-  const result = await mutateUsersFile(env, function (users) {
-    const u = findUserByUsername(users, username);
-    if (!u) return null;
-    u.mfa = u.mfa || {};
-    u.mfa.email = { enabled: !!enable };
-    return { users: users };
-  });
-  if (result === 'not-found' || !result.ok) return json({ message: 'Could not update — please try again.' }, 409, origin);
-  await appendMfaAuditLog(env, { actor: username, action: enable ? 'email_mfa_enabled' : 'email_mfa_disabled', target: username, before: !enable, after: !!enable });
-  return json({ enabled: !!enable }, 200, origin);
-}
 
 async function handleListUsers(env, origin) {
   const fileState = await readUsersFile(env);
@@ -2168,15 +2142,21 @@ async function handleListOrgContacts(env, origin, organization) {
 function mfaSummaryForUser(u) {
   const mfa = u.mfa || {};
   const totpEnabled = !!(mfa.totp && mfa.totp.enabled);
-  const emailEnabled = !!(mfa.email && mfa.email.enabled);
+  // Email is never a per-user toggle (see emailFactorAvailable) - it's
+  // "available" for display purposes whenever there's an email on file,
+  // same condition the real login-time gate checks other than the
+  // RESEND_API_KEY half (not worth threading env through every caller of
+  // this summary just for a status line - the actual send/verify routes
+  // enforce that part for real).
+  const emailAvailable = !!u.email;
   const methods = [];
   if (totpEnabled) methods.push('totp');
-  if (emailEnabled) methods.push('email');
+  if (emailAvailable) methods.push('email');
   const backupCodesRemaining = Array.isArray(mfa.backupCodes)
     ? mfa.backupCodes.filter(function (c) { return !c.usedAt; }).length
     : 0;
   return {
-    mfaEnabled: totpEnabled || emailEnabled,
+    mfaEnabled: totpEnabled,
     mfaMethods: methods,
     backupCodesRemaining: backupCodesRemaining,
     mfaEnrolledAt: mfa.enrolledAt || null
