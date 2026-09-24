@@ -158,6 +158,31 @@
   .attachRow .attachMeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
   .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
 
+  .reviewCommentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .reviewCommentRow{ padding:8px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
+  .reviewCommentRow.legacyComment{ background:#fdf3e2; border-color:#f0d9a8; }
+  .reviewCommentRow .commentMeta{ font-size:10.5px; color:var(--label); font-weight:700; margin-bottom:3px; }
+  .reviewCommentRow .commentText{ white-space:pre-wrap; overflow-wrap:anywhere; }
+  .commentEditedTag{ font-weight:400; font-style:italic; }
+  .commentEditLink{ font-family:inherit; font-size:10.5px; font-weight:700; cursor:pointer;
+    background:none; border:none; padding:0; margin-left:6px; color:var(--brand); text-decoration:none; }
+  .commentEditLink:hover{ text-decoration:underline; }
+  .commentEditInput{ margin-top:4px !important; font-size:12.5px !important; padding:6px 8px !important; }
+  .commentEditBtns{ display:flex; gap:8px; margin-top:6px; }
+  .commentEditBtns button{ font-family:inherit; font-size:11.5px; font-weight:700; cursor:pointer;
+    border-radius:6px; padding:6px 12px; white-space:nowrap; }
+  .commentSaveBtn{ color:#fff; background:var(--brand); border:none; }
+  .commentSaveBtn:hover{ background:var(--brand-dark); }
+  .commentSaveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .commentCancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .commentCancelBtn:hover{ background:#f4f5f8; }
+  .addCommentRow{ display:flex; gap:8px; margin-top:4px; }
+  .addCommentRow input{ flex:1 1 auto; margin:0 !important; }
+  .addCommentRow button{ flex:0 0 auto; font-family:inherit; font-size:12.5px; font-weight:700; cursor:pointer;
+    border-radius:6px; padding:9px 16px; color:#fff; background:var(--brand); border:none; white-space:nowrap; }
+  .addCommentRow button:hover{ background:var(--brand-dark); }
+  .addCommentRow button:disabled{ background:#9fb0d8; cursor:wait; }
+
   /* Per-part file chips (Files column on RFQ line tables) - deliberately not
      .quietLink (that's a bordered/padded button and looks like stacked
      buttons overlapping when several files sit in one narrow table cell). */
@@ -322,11 +347,6 @@
       </div>
 
       <div class="modalSection">
-        <h3>Notes / Comments <span style="font-weight:400;">(optional)</span></h3>
-        <textarea id="f_notes" rows="3" style="display:block; width:100%; font-family:inherit; font-size:14px; padding:9px 10px; border:1px solid var(--line); border-radius:6px;"></textarea>
-      </div>
-
-      <div class="modalSection">
         <h3>Part Number(s) <span style="font-weight:400;">(optional — you can leave this blank and fill it in later)</span></h3>
         <div class="linesWrap">
           <table class="linesTable">
@@ -361,6 +381,16 @@
             <div class="modalError" id="attachError" style="margin-top:6px;"></div>
           </div>
         </div>
+      </div>
+
+      <div class="modalSection" id="notesWrap">
+        <h3>Notes / Comments <span style="font-weight:400;">(optional — Dessimate and the Customer can both add notes here)</span></h3>
+        <div id="reviewCommentsList" class="reviewCommentsList"></div>
+        <div class="addCommentRow" id="addCommentRow" style="display:none;">
+          <input type="text" id="f_newComment" placeholder="Add a note…">
+          <button type="button" id="addCommentBtn">Add Note</button>
+        </div>
+        <p class="modalSectionHint" id="addCommentHint" style="display:none;">Save this RFQ first before adding a note.</p>
       </div>
 
       <div class="modalSection" id="dessimateQuoteSection" style="display:none;">
@@ -450,6 +480,15 @@
     <div class="modalSection" id="customerViewQuoteSection">
       <h3>Dessimate Quote</h3>
       <div id="customerViewQuoteBody"></div>
+    </div>
+
+    <div class="modalSection">
+      <h3>Notes / Comments <span style="font-weight:400;">(optional — Dessimate and you can both add notes here)</span></h3>
+      <div id="customerViewCommentsList" class="reviewCommentsList"></div>
+      <div class="addCommentRow" id="customerViewAddCommentRow">
+        <input type="text" id="f_newCustomerViewComment" placeholder="Add a note…">
+        <button type="button" id="addCustomerViewCommentBtn">Add Note</button>
+      </div>
     </div>
 
     <div class="modalBtns">
@@ -1630,11 +1669,12 @@
     renderAttachmentsList();
     lineRows = [];
     document.getElementById('f_sharedWithCustomers_list').innerHTML = sharedWithCustomersChecklistOptions([]);
-    document.getElementById('f_notes').value = '';
     document.getElementById('f_rfqNumber').value = '';
     document.getElementById('f_rfqDate').value = '';
     document.getElementById('dessimateQuoteSection').style.display = 'none';
     renderLines();
+    staffComments.setState([]);
+    staffComments.render();
   }
 
   function openAddModal(){
@@ -1666,10 +1706,11 @@
     document.getElementById('modalSub').textContent = 'RFQ Number can be changed any time.';
     document.getElementById('f_rfqNumber').value = rfq.rfqNumber;
     document.getElementById('f_rfqDate').value = rfq.rfqDate || '';
-    document.getElementById('f_notes').value = rfq.notes || '';
     document.getElementById('f_sharedWithCustomers_list').innerHTML = sharedWithCustomersChecklistOptions(rfq.sharedWithCustomers || []);
     renderLines();
     renderDessimateQuotePanel(rfq);
+    staffComments.setState(rfq.comments);
+    staffComments.render();
     document.getElementById('rfqModalOverlay').classList.add('open');
   }
   function closeModal(){ document.getElementById('rfqModalOverlay').classList.remove('open'); }
@@ -1693,7 +1734,6 @@
     var baseFields = {
       rfqNumber: document.getElementById('f_rfqNumber').value.trim(),
       rfqDate: document.getElementById('f_rfqDate').value,
-      notes: document.getElementById('f_notes').value.trim(),
       lines: linesForCreate,
       sharedWithCustomers: getSelectedSharedWithCustomers()
     };
@@ -1834,12 +1874,178 @@
       });
     }
 
+    customerViewComments.setState(rfq.comments);
+    customerViewComments.render();
+
     document.getElementById('customerViewModalOverlay').classList.add('open');
   }
   function closeCustomerViewModal(){ document.getElementById('customerViewModalOverlay').classList.remove('open'); }
   document.getElementById('customerViewCloseBtn').addEventListener('click', closeCustomerViewModal);
   document.getElementById('customerViewModalOverlay').addEventListener('click', function(e){
     if (e.target.id === 'customerViewModalOverlay') closeCustomerViewModal();
+  });
+  // -----------------------------------------------------------------------------
+
+  // ---- Notes/Comments thread -----------------------------------------------
+  // Same pattern as the Dessimate RFQ module's own comment thread (RFQ.html) -
+  // append-only via its own endpoint (never the form's own Save). Team
+  // Member+ can edit any comment; a Customer can edit only their own -
+  // matches handleEditCustomerRfqComment's permission check server-side. A
+  // pinned, unstamped "legacy" entry is shown first if the RFQ still has an
+  // old free-text `notes` value from before this feature existed (frozen,
+  // not editable, not part of the real thread) - staff-only, since a
+  // Customer never received that field to begin with (see scopeCustomerRfqs).
+  function createCommentsThread(opts){
+    var state = [];
+    var editingCommentId = null;
+    function listEl(){ return document.getElementById(opts.listElId); }
+
+    function render(){
+      var session = getSession();
+      var myUsername = (session && session.username) || '';
+      var legacyNotes = opts.getLegacyNotes ? opts.getLegacyNotes() : '';
+      var legacyHtml = legacyNotes
+        ? '<div class="reviewCommentRow legacyComment"><div class="commentMeta">Earlier note <span class="commentEditedTag">(no author/date on record)</span></div><div class="commentText">' + escapeHtml(legacyNotes) + '</div></div>'
+        : '';
+      if (!state.length && !legacyNotes) {
+        listEl().innerHTML = '<div class="attachEmpty">No notes yet.</div>';
+      } else {
+        listEl().innerHTML = legacyHtml + state.map(function(c){
+          var canEditThis = opts.canEdit(c, myUsername);
+          if (editingCommentId === c.id) {
+            return '<div class="reviewCommentRow">' +
+              '<div class="commentMeta">' + escapeHtml(c.authorUsername || 'Unknown') + ' — ' + escapeHtml(fmtDateMDY((c.createdAt || '').slice(0, 10))) + '</div>' +
+              '<textarea class="commentEditInput" data-comment-edit-id="' + escapeHtml(c.id) + '" rows="2">' + escapeHtml(c.text) + '</textarea>' +
+              '<div class="commentEditBtns">' +
+                '<button type="button" class="commentSaveBtn" data-comment-save="' + escapeHtml(c.id) + '">Save</button>' +
+                '<button type="button" class="commentCancelBtn" data-comment-cancel>Cancel</button>' +
+              '</div></div>';
+          }
+          return '<div class="reviewCommentRow">' +
+            '<div class="commentMeta">' + escapeHtml(c.authorUsername || 'Unknown') + ' — ' + escapeHtml(fmtDateMDY((c.createdAt || '').slice(0, 10))) +
+              (c.editedAt ? ' <span class="commentEditedTag">(edited)</span>' : '') +
+              (canEditThis ? ' <button type="button" class="commentEditLink" data-comment-edit="' + escapeHtml(c.id) + '">Edit</button>' : '') +
+            '</div>' +
+            '<div class="commentText">' + escapeHtml(c.text) + '</div>' +
+            '</div>';
+        }).join('');
+      }
+
+      listEl().querySelectorAll('[data-comment-edit]').forEach(function(btn){
+        btn.addEventListener('click', function(){ editingCommentId = this.getAttribute('data-comment-edit'); render(); });
+      });
+      listEl().querySelectorAll('[data-comment-cancel]').forEach(function(btn){
+        btn.addEventListener('click', function(){ editingCommentId = null; render(); });
+      });
+      listEl().querySelectorAll('[data-comment-save]').forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          var commentId = this.getAttribute('data-comment-save');
+          var textarea = listEl().querySelector('[data-comment-edit-id="' + commentId + '"]');
+          var newText = textarea.value.trim();
+          if (!newText) { alert('Comment text is required.'); return; }
+          var rfqId = opts.getRfqId();
+          if (!rfqId) return;
+          btn.disabled = true; btn.textContent = 'Saving…';
+          try {
+            var res = await apiFetch('customer-rfqs/' + encodeURIComponent(rfqId) + '/comments/' + encodeURIComponent(commentId), {
+              method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: newText })
+            });
+            var data = {}; try { data = await res.json(); } catch(e){}
+            if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+            state = Array.isArray(data.comments) ? data.comments : [];
+            editingCommentId = null;
+            render();
+            if (opts.onSaved) opts.onSaved(data);
+          } catch (err) {
+            alert('Could not save this note (' + (err && err.message ? err.message : err) + ').');
+            btn.disabled = false; btn.textContent = 'Save';
+          }
+        });
+      });
+
+      if (opts.applyVisibility) opts.applyVisibility();
+    }
+
+    function setState(comments){ state = Array.isArray(comments) ? comments : []; editingCommentId = null; }
+
+    async function addComment(text){
+      var rfqId = opts.getRfqId();
+      if (!text || !rfqId) return;
+      var res = await apiFetch('customer-rfqs/' + encodeURIComponent(rfqId) + '/comments', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text })
+      });
+      var data = {}; try { data = await res.json(); } catch(e){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      state = Array.isArray(data.comments) ? data.comments : [];
+      render();
+      if (opts.onSaved) opts.onSaved(data);
+    }
+
+    return { render: render, setState: setState, addComment: addComment };
+  }
+
+  // Staff Add/Edit Customer RFQ modal's thread - add is staff-only (a
+  // Customer never opens this modal, only the read-mostly view below), edit
+  // follows the usual Team-Member-edits-any / everyone-else-edits-own-only
+  // split.
+  var staffComments = createCommentsThread({
+    listElId: 'reviewCommentsList',
+    getRfqId: function(){ return editingId; },
+    getLegacyNotes: function(){ var rfq = editingId && lastRfqs.find(function(x){ return x.id === editingId; }); return rfq ? rfq.notes : ''; },
+    canEdit: function(c, myUsername){ return !!editingId && (canManageRfqRecords() || c.authorUsername === myUsername); },
+    applyVisibility: function(){
+      var canComment = canManageRfqRecords() && !!editingId;
+      document.getElementById('addCommentRow').style.display = canComment ? 'flex' : 'none';
+      document.getElementById('addCommentHint').style.display = (!editingId && canManageRfqRecords()) ? '' : 'none';
+    },
+    onSaved: function(data){ var idx = lastRfqs.findIndex(function(x){ return x.id === editingId; }); if (idx !== -1) lastRfqs[idx] = data; }
+  });
+  document.getElementById('f_newComment').addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('addCommentBtn').click(); }
+  });
+  document.getElementById('addCommentBtn').addEventListener('click', async function(){
+    var btn = this;
+    var input = document.getElementById('f_newComment');
+    var text = input.value.trim();
+    if (!text || !editingId) return;
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      await staffComments.addComment(text);
+      input.value = '';
+    } catch (err) {
+      alert('Could not add this note (' + (err && err.message ? err.message : err) + ').');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Add Note';
+    }
+  });
+
+  // Customer view modal's thread - this modal only ever opens for the
+  // signed-in Customer themselves (never staff), so "can edit" collapses to
+  // "is my own comment" with no Team-Member-edits-any branch to check.
+  var customerViewComments = createCommentsThread({
+    listElId: 'customerViewCommentsList',
+    getRfqId: function(){ return customerViewRfqId; },
+    getLegacyNotes: function(){ return ''; }, // legacy notes were always staff-only - see scopeCustomerRfqs
+    canEdit: function(c, myUsername){ return c.authorUsername === myUsername; },
+    onSaved: function(data){ var idx = lastRfqs.findIndex(function(x){ return x.id === customerViewRfqId; }); if (idx !== -1) lastRfqs[idx] = data; }
+  });
+  document.getElementById('f_newCustomerViewComment').addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('addCustomerViewCommentBtn').click(); }
+  });
+  document.getElementById('addCustomerViewCommentBtn').addEventListener('click', async function(){
+    var btn = this;
+    var input = document.getElementById('f_newCustomerViewComment');
+    var text = input.value.trim();
+    if (!text || !customerViewRfqId) return;
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      await customerViewComments.addComment(text);
+      input.value = '';
+    } catch (err) {
+      alert('Could not add this note (' + (err && err.message ? err.message : err) + ').');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Add Note';
+    }
   });
   // -----------------------------------------------------------------------------
 

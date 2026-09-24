@@ -228,6 +228,14 @@
  *                                       - admin or above required; submits/updates the "Dessimate
  *                                        Quote" back to the Customer - invisible to that Customer
  *                                        login until called with submit:true.
+ *   POST   /customer-rfqs/<id>/comments
+ *                                       - team_member or above, OR a Customer on a Customer RFQ
+ *                                        shared with them; appends a Notes/Comments thread entry -
+ *                                        same pattern as /rfqs/<id>/comments (Rev2.29), see
+ *                                        handleAddCustomerRfqComment.
+ *   PUT    /customer-rfqs/<id>/comments/<commentId>
+ *                                       - team_member or above can edit any comment; a Customer can
+ *                                        edit only their own - see handleEditCustomerRfqComment.
  *   GET    /change-requests            - any signed-in user; scoped by role (team_member or above
  *                                        sees every CR; a Supplier login sees only CRs where it's
  *                                        the named supplierOrg, in either direction).
@@ -863,6 +871,24 @@ export default {
         const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         return await handleUpdateCustomerRfqQuote(request, env, origin, id, auth.username);
+      }
+
+      // Notes/Comments thread (same Rev2.29 pattern as /rfqs/<id>/comments) -
+      // checked before the generic '/customer-rfqs/' block below, same
+      // "specific route before generic prefix" ordering used throughout.
+      if (/^\/customer-rfqs\/[^/]+\/comments$/.test(url.pathname) && request.method === 'POST') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleAddCustomerRfqComment(request, env, origin, id, auth.accessLevel, auth.username);
+      }
+      if (/^\/customer-rfqs\/[^/]+\/comments\/[^/]+$/.test(url.pathname) && request.method === 'PUT') {
+        const parts = url.pathname.split('/');
+        const id = decodeURIComponent(parts[2]);
+        const commentId = decodeURIComponent(parts[4]);
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleEditCustomerRfqComment(request, env, origin, id, commentId, auth.accessLevel, auth.username);
       }
 
       if (url.pathname.startsWith('/customer-rfqs/')) {
@@ -4873,20 +4899,31 @@ function sanitizeCustomerRfq(o) {
     id: o.id,
     rfqNumber: o.rfqNumber,
     rfqDate: o.rfqDate || '',
+    // The old single free-text `notes` field is frozen/staff-only now (see
+    // validateCustomerRfqFields, which no longer accepts it) - superseded
+    // by the `comments` thread below, same Rev2.29 pattern as the Dessimate
+    // RFQ module. Kept here only so whatever was already written before
+    // this change isn't lost; the frontend renders it as an unattributed
+    // legacy entry pinned above the real thread, staff-only (see
+    // scopeCustomerRfqs - a Customer login never sees this field).
     notes: o.notes || '',
     lines: lines,
     dessimateAttachments: sanitizeOrgDocList(o.dessimateAttachments),
     sharedWithCustomers: sharedWithCustomers,
     dessimateQuote: sanitizeCustomerRfqQuote(o.dessimateQuote),
+    comments: sanitizeRfqComments(o.comments),
     createdAt: o.createdAt || null
   };
 }
 
 // A Customer login sees only RFQs it's actually been shared with, never
-// the RFQ's own internal `notes` (staff-only), and only `dessimateQuote`
-// once it's actually been submitted - before that a "no quote yet" shape,
-// same structure either way so the frontend doesn't need a separate
-// branch. A Supplier login has no role in this module at all.
+// the RFQ's own internal legacy `notes` (staff-only, frozen - see
+// sanitizeCustomerRfq), and only `dessimateQuote` once it's actually been
+// submitted - before that a "no quote yet" shape, same structure either
+// way so the frontend doesn't need a separate branch. `comments` (the real
+// Notes/Comments thread) passes through untouched - a Customer is meant to
+// see and post to it, same as a Supplier already does on the Dessimate RFQ
+// side. A Supplier login has no role in this module at all.
 function scopeCustomerRfqs(rfqs, accessLevel, organization) {
   if (accessLevel === 'customer') {
     const visible = rfqs.filter(function (o) { return organization && o.sharedWithCustomers.indexOf(organization) !== -1; });
@@ -4928,7 +4965,6 @@ function validateCustomerRfqFields(body) {
     : [];
   return {
     rfqDate: (body.rfqDate || '').toString().trim(),
-    notes: (body.notes || '').toString().trim(),
     lines: lines,
     sharedWithCustomers: sharedWithCustomers
   };
@@ -5006,6 +5042,84 @@ async function handleDeleteCustomerRfq(env, origin, id) {
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   return json({ ok: true }, 200, origin);
+}
+
+// Notes/Comments thread - same Rev2.29 pattern as handleAddRfqComment on
+// the Dessimate RFQ side, reusing the same sanitizeRfqComment(s) shape
+// (nothing RFQ-specific about a comment entry). Team Member+ can comment on
+// any Customer RFQ; a Customer can comment only on one shared with their
+// own organization. Returns the full updated record (the frontend reads
+// `.comments` off it).
+async function handleAddCustomerRfqComment(request, env, origin, id, accessLevel, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const text = (body.text || '').toString().trim();
+  if (!text) return json({ message: 'Comment text is required.' }, 400, origin);
+
+  const isCustomer = accessLevel === 'customer';
+  let callerOrg = '';
+  if (isCustomer) {
+    callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Customer organization.' }, 403, origin);
+  }
+
+  const comment = { id: cryptoRandomId(), authorUsername: username || '', text: text, createdAt: new Date().toISOString() };
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    if (isCustomer && (!Array.isArray(target.sharedWithCustomers) || target.sharedWithCustomers.indexOf(callerOrg) === -1)) return null;
+    target.comments = Array.isArray(target.comments) ? target.comments : [];
+    target.comments.push(comment);
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeCustomerRfq(saved), 200, origin);
+}
+
+// Edits one existing comment's text in place - same permission split as
+// handleEditRfqComment: Team Member+ can edit any comment on any Customer
+// RFQ; a Customer can edit only their OWN comment, and only on a Customer
+// RFQ shared with their own organization.
+async function handleEditCustomerRfqComment(request, env, origin, id, commentId, accessLevel, username) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const text = (body.text || '').toString().trim();
+  if (!text) return json({ message: 'Comment text is required.' }, 400, origin);
+
+  const isStaff = accessLevel === 'team_member' || accessLevel === 'admin' || accessLevel === 'super_admin';
+  const isCustomer = accessLevel === 'customer';
+  let callerOrg = '';
+  if (isCustomer) {
+    callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Customer organization.' }, 403, origin);
+  }
+
+  let saved = null;
+  let forbidden = false;
+  const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
+    const target = items.find(function (o) { return o.id === id; });
+    if (!target) return null;
+    if (isCustomer && (!Array.isArray(target.sharedWithCustomers) || target.sharedWithCustomers.indexOf(callerOrg) === -1)) return null;
+    const comments = Array.isArray(target.comments) ? target.comments : [];
+    const comment = comments.find(function (c) { return c.id === commentId; });
+    if (!comment) return null;
+    if (!isStaff && comment.authorUsername !== username) { forbidden = true; return null; }
+    comment.text = text;
+    comment.editedAt = new Date().toISOString();
+    target.comments = comments;
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+
+  if (forbidden) return json({ message: 'You can only edit your own comments.' }, 403, origin);
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizeCustomerRfq(saved), 200, origin);
 }
 
 // Used by isContentsPathAllowedForExternal to gate a Customer's raw
