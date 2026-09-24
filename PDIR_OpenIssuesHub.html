@@ -118,6 +118,12 @@
       <p>Open production/quality issues tracked against a Customer's parts &mdash; Dessimate documents and manages each issue, the Customer can view and add notes.</p>
       <div class="tileGo">Open Customer Open Issues &rarr;</div>
     </a>
+    <a class="tile" id="tileSupplierOpenIssues" href="PDIR_SupplierOpenIssues.html" style="display:none;">
+      <div class="tileIcon">OI</div>
+      <h2>Supplier Open Issues List</h2>
+      <p>Open production/quality issues tracked against a Supplier's parts &mdash; Dessimate documents and manages each issue, the Supplier can view and add notes.</p>
+      <div class="tileGo">Open Supplier Open Issues &rarr;</div>
+    </a>
     <div class="tile tileDisabled" id="tileDessimateOpenIssues" style="display:none;">
       <div class="tileIcon">OI</div>
       <h2>Dessimate Open Issues List</h2>
@@ -260,13 +266,16 @@
 
   // Customer Open Issues List is visible to staff + Customer (a Customer
   // can view + comment on issues naming their org - see
-  // PDIR_CustomerOpenIssues.html). Dessimate Open Issues List is a future
-  // module for internal-only issues, not tied to any Customer - only staff
-  // reach this hub at all today for that reason, so the "Coming soon" tile
-  // is shown to whoever can see the live tile, as a preview of what's next.
+  // PDIR_CustomerOpenIssues.html). Supplier Open Issues List is visible to
+  // staff + Supplier the same way (see PDIR_SupplierOpenIssues.html).
+  // Dessimate Open Issues List is a future module for internal-only
+  // issues, not tied to any Customer/Supplier - only staff reach this hub
+  // at all today for that reason, so the "Coming soon" tile is shown to
+  // whoever can see the live tiles, as a preview of what's next.
   function applyTileVisibility(accessLevel){
     var isStaff = accessLevel === 'team_member' || accessLevel === 'admin' || accessLevel === 'super_admin';
     document.getElementById('tileCustomerOpenIssues').style.display = (isStaff || accessLevel === 'customer') ? '' : 'none';
+    document.getElementById('tileSupplierOpenIssues').style.display = (isStaff || accessLevel === 'supplier') ? '' : 'none';
     document.getElementById('tileDessimateOpenIssues').style.display = isStaff ? '' : 'none';
     document.getElementById('loadingState').style.display = 'none';
     document.getElementById('tilesWrap').style.display = 'grid';

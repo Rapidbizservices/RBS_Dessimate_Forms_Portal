@@ -1,0 +1,2027 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2b4ea3">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<script>if ('serviceWorker' in navigator) { window.addEventListener('load', function(){ navigator.serviceWorker.register('sw.js').catch(function(){}); }); }</script>
+<title>Supplier Open Issues List &mdash; DSCM</title>
+<link rel="stylesheet" href="office-viewer.css">
+<link rel="stylesheet" href="confirm-dialog.css">
+<link rel="stylesheet" href="sortable-table.css">
+<script>if (window.top !== window.self) { document.documentElement.setAttribute('data-embedded', '1'); }</script>
+<style>
+  :root{
+    --brand:#2b4ea3;
+    --brand-dark:#1c3877;
+    --ink:#1c1c1e;
+    --label:#5b5f66;
+    --line:#dde0e6;
+    --bg:#f4f5f8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--ink);
+    font-family:Arial,Helvetica,sans-serif; display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{ width:100%; max-width:1320px; }
+
+  .header{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  .header-left{ display:flex; align-items:center; gap:12px; }
+  .header-left img{ width:44px; height:auto; }
+  .header-left h1{ font-size:19px; margin:0; }
+  .header-left .sub{ font-size:12.5px; color:var(--label); margin:2px 0 0; }
+
+  .headerBtns{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .homeBtn, .addBtn, .excelBtn{
+    font-family:inherit; font-size:14.5px; font-weight:700; text-decoration:none;
+    border-radius:8px; padding:11px 20px; cursor:pointer; white-space:nowrap; display:inline-block; border:none;
+  }
+  .homeBtn{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .homeBtn:hover{ background:#eef1fa; }
+  html[data-embedded] .homeBtn{ display:none !important; }
+  html[data-embedded] #ghConnectBtn{ display:none !important; }
+  .addBtn{ color:#fff; background:#1f9254; }
+  .addBtn:hover{ background:#187b46; }
+  .excelBtn{ color:#fff; background:#1d6f42; }
+  .excelBtn:hover{ background:#16572f; }
+  .excelBtn:disabled{ opacity:.6; cursor:wait; }
+
+  .ghbar{ display:flex; align-items:center; justify-content:flex-end; gap:8px;
+    font-size:12.5px; margin:10px 0 18px; }
+  #ghStatus.gh-ok{ color:#187b46; font-weight:600; }
+  #ghStatus.gh-off{ color:#a06a1c; font-weight:600; }
+  #ghConnectBtn{ font-family:inherit; font-size:12px; color:var(--brand); background:#eef1fa;
+    border:1px solid #cdd6ee; border-radius:6px; padding:5px 10px; cursor:pointer; }
+  #ghConnectBtn:hover{ background:#e2e8f9; }
+
+  /* Login wall */
+  .authOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.6);
+    z-index:2000; align-items:center; justify-content:center; padding:20px; }
+  .authOverlay.open{ display:flex; }
+  .authCard{ background:#fff; border-radius:12px; padding:28px 30px; width:100%; max-width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .authCard h2{ font-size:16px; border:none; padding:0; margin:0 0 4px; color:var(--ink); }
+  .authCard .authSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .authCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .authCard input{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .authCard button{ width:100%; font-family:inherit; font-size:14.5px; font-weight:700; color:#fff;
+    background:var(--brand); border:none; border-radius:8px; padding:11px; cursor:pointer; margin-top:4px; }
+  .authCard button:hover{ background:var(--brand-dark); }
+  .authCard button:disabled{ background:#9fb0d8; cursor:wait; }
+  .authError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin-top:10px; }
+  .authNote{ font-size:11.5px; color:var(--label); background:#f7f8fb; border:1px solid var(--line);
+    border-radius:6px; padding:8px 10px; margin:0 0 16px; line-height:1.45; }
+  .authAttempts{ font-size:12px; color:var(--label); min-height:14px; margin-top:4px; }
+
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
+  .toolbarFilters{ display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  .toolbarFilter{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--label); }
+  .toolbarFilter .clearFilterLink{ font-family:inherit; font-size:12px; font-weight:600; color:var(--brand);
+    background:none; border:none; padding:0; cursor:pointer; text-decoration:none; white-space:nowrap; }
+  .toolbarFilter .clearFilterLink:hover{ text-decoration:underline; }
+  .toolbarFilter select{ font-family:inherit; font-size:12.5px; padding:7px 10px; border:1px solid var(--line);
+    border-radius:6px; background:#fff; color:var(--ink); cursor:pointer; max-width:220px; }
+  .partFilterDropdown{ position:relative; }
+  .partFilterToggle{ font-family:inherit; font-size:12.5px; padding:7px 12px; border:1px solid var(--line);
+    border-radius:6px; background:#fff; color:var(--ink); cursor:pointer; min-width:170px; max-width:260px;
+    display:flex; align-items:center; justify-content:space-between; gap:8px; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  .partFilterToggle:hover{ border-color:var(--brand); }
+  .partFilterToggle .caret{ font-size:10px; color:var(--label); flex:0 0 auto; }
+  .partFilterPanel{ position:absolute; top:calc(100% + 6px); right:0; z-index:50; background:#fff;
+    border:1px solid var(--line); border-radius:8px; box-shadow:0 10px 30px rgba(20,22,28,.15);
+    padding:10px; width:300px; }
+  .partFilterList{ max-height:220px; overflow-y:auto; }
+  .partFilterList label{ display:flex; align-items:flex-start; gap:8px; font-size:12.5px; font-weight:400;
+    color:var(--ink); padding:5px 4px; cursor:pointer; border-radius:4px; }
+  .partFilterList label:hover{ background:#f4f5f8; }
+  .partFilterList input[type=checkbox]{ width:auto; margin:3px 0 0; flex:0 0 auto; }
+  .partFilterLabelText{ min-width:0; overflow-wrap:anywhere; }
+  .partFilterHint{ display:block; color:var(--label); font-weight:400; font-size:11px; }
+  .partFilterEmpty{ font-size:12px; color:var(--label); font-style:italic; padding:6px 4px; }
+  .partFilterPanelBtns{ display:flex; justify-content:flex-end; margin-top:8px; padding-top:8px;
+    border-top:1px solid var(--line); }
+
+  .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; overflow-x:auto; }
+  table.issueTable{ width:100%; border-collapse:collapse; font-size:12.5px; min-width:1400px; }
+  table.issueTable th{ background:#eef1f7; color:var(--label); font-size:11px; text-transform:uppercase;
+    letter-spacing:.02em; text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.issueTable td{ padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.issueTable tr:last-child td{ border-bottom:none; }
+  .issueNumberLink{ font-family:inherit; font-size:inherit; font-weight:700; white-space:nowrap;
+    color:var(--brand); background:none; border:none; padding:0; cursor:pointer; text-decoration:none; }
+  .issueNumberLink:hover{ text-decoration:underline; }
+  .partNumberLink{ color:var(--brand); text-decoration:none; }
+  .partNumberLink:hover{ text-decoration:underline; }
+  .cellClamp{ max-width:180px; overflow:hidden; text-overflow:ellipsis; display:-webkit-box;
+    -webkit-line-clamp:3; -webkit-box-orient:vertical; }
+  .cellClamp.short{ -webkit-line-clamp:2; max-width:140px; }
+  .picThumb{ width:56px; height:56px; object-fit:cover; border-radius:6px; border:1px solid var(--line); cursor:pointer; display:block; }
+  .noPic{ color:var(--label); font-style:italic; font-size:11.5px; }
+  .notesCell{ max-width:520px; display:flex; flex-direction:column; gap:4px; }
+  .notesCell .noteLine{ font-size:11px; line-height:1.35; }
+  .notesCell .noteLine .noteMeta{ color:var(--label); font-weight:700; }
+  .notesCell .noteMore{ font-size:11px; color:var(--label); font-style:italic; }
+  .statusPill{ display:inline-block; font-size:11px; font-weight:700; border-radius:5px; padding:3px 8px; white-space:nowrap; }
+  .statusPill.open{ color:#1c3877; background:#e8ecfa; }
+  .statusPill.closed{ color:#187b46; background:#e5f4ec; }
+  .rowActions{ display:flex; flex-direction:column; gap:6px; white-space:nowrap; }
+  .rowActions button{ font-family:inherit; font-size:12px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:6px 10px; white-space:nowrap; }
+  .deleteBtn{ color:#b23b3b; background:#fff; border:1px solid #e3b3b3; }
+  .deleteBtn:hover{ background:#fbeaea; border-color:#b23b3b; }
+
+  .state{ padding:34px 18px; text-align:center; color:var(--label); font-size:13.5px; }
+  .state.error{ color:#b23b3b; }
+
+  footer{ margin-top:24px; font-size:11.5px; color:#9a9ea6; text-align:center; }
+
+  /* Add/Edit modal */
+  .modalOverlay{ display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:1500; align-items:center; justify-content:center; padding:20px; }
+  .modalOverlay.open{ display:flex; }
+  .modalCard{ background:#fff; border-radius:12px; padding:26px 28px; width:100%; max-width:920px;
+    max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:left; }
+  .modalCard h2{ font-size:17px; margin:0 0 4px; color:var(--ink); }
+  .modalCard .modalSub{ font-size:12.5px; color:var(--label); margin:0 0 18px; }
+  .modalCard label{ display:block; font-size:12px; color:var(--label); font-weight:600; margin-bottom:12px; }
+  .modalCard input, .modalCard select, .modalCard textarea{ display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px;
+    padding:9px 10px; border:1px solid var(--line); border-radius:6px; }
+  .modalCard input:disabled, .modalCard select:disabled, .modalCard textarea:disabled{ background:#f4f5f8; color:#6a6e75; }
+  .modalGrid2{ display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+  .rootCauseGroup{ display:flex; gap:0 14px; align-items:stretch; }
+  .rootCauseGroupLeft{ flex:1 1 0; min-width:0; display:flex; flex-direction:column; }
+  .rootCauseGroupRight{ flex:1 1 0; min-width:0; display:flex; flex-direction:column; }
+  .rootCauseGroupRight textarea{ flex:1 1 auto; min-height:0; }
+
+  .numberBanner{ display:flex; gap:20px; flex-wrap:wrap; background:#f7f8fb; border:1px solid var(--line);
+    border-radius:8px; padding:12px 14px; margin-bottom:16px; font-size:12.5px; color:var(--label); }
+  .numberField{ flex:1 1 220px; min-width:200px; }
+  .numberField label{ display:block; margin-bottom:4px; }
+  .numberFieldRow{ display:flex; gap:8px; align-items:center; }
+  .numberFieldRow input{ flex:1 1 auto; min-width:0; font-variant-numeric:tabular-nums; }
+  .numberFieldRow input[readonly]{ background:#eef1f5; color:var(--ink); font-weight:700; }
+  .numberFieldRow button{ flex:0 0 auto; font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    border-radius:6px; padding:7px 10px; white-space:nowrap; color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  .numberFieldRow button:hover{ background:#eef1fa; }
+  .numberFieldRow button:disabled{ opacity:.5; cursor:default; background:#fff; }
+
+  .modalSection{ margin:18px 0 4px; }
+  .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
+  .modalSectionHint{ font-size:12px; color:var(--label); margin:2px 0 8px; }
+  .supplierSectionNote{ font-size:12px; color:var(--brand); font-weight:600; margin:2px 0 8px; }
+
+  .radioGroup, .checkGroup{ display:flex; gap:16px; flex-wrap:wrap; margin-top:5px; }
+  .radioGroup label, .checkGroup label{ display:flex; align-items:center; gap:6px; font-size:13px; font-weight:400;
+    color:var(--ink); margin:0; cursor:pointer; }
+  .radioGroup input[type=radio], .checkGroup input[type=checkbox]{ width:auto; margin:0; }
+
+  .partsWrap{ display:flex; flex-direction:column; gap:8px; margin-top:5px; }
+  .partRow{ display:flex; gap:8px; align-items:center; }
+  .partRow select{ flex:1 1 auto; margin:0; }
+  .partRow button{ flex:0 0 auto; font-family:inherit; font-size:11px; font-weight:700; color:#b23b3b; background:#fff;
+    border:1px solid #e3b3b3; border-radius:6px; padding:8px 10px; cursor:pointer; white-space:nowrap; }
+  .partRow button:hover{ background:#fbeaea; }
+  .addLineBtn{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand); background:#fff;
+    border:1px solid var(--line); border-radius:7px; padding:7px 14px; cursor:pointer; margin-top:10px; }
+  .addLineBtn:hover{ background:#eef1fa; }
+  .addLineBtn:disabled{ opacity:.5; cursor:default; }
+
+  /* Champion/Responsible picker - a closed-by-default dropdown (button +
+     popover panel), same interaction pattern as Customer Open Issues, but
+     sourced from GET /users (Dessimate team) + GET /org-contacts (the
+     assigned Supplier org's own login accounts) instead of the
+     Organization Contacts directory - see the script below. */
+  .championDropdown{ position:relative; margin-top:5px; }
+  .championToggle{ font-family:inherit; font-size:13px; font-weight:400; padding:9px 10px;
+    border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--ink); cursor:pointer;
+    width:100%; text-align:left; display:flex; align-items:center; justify-content:space-between; gap:8px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .championToggle:hover{ border-color:var(--brand); }
+  .championToggle:disabled{ background:#f4f5f8; color:#6a6e75; cursor:default; }
+  .championToggle .caret{ font-size:10px; color:var(--label); flex:0 0 auto; }
+  .championPanel{ position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:50; background:#fff;
+    border:1px solid var(--line); border-radius:8px; box-shadow:0 10px 30px rgba(20,22,28,.15);
+    padding:9px 10px; max-height:220px; overflow-y:auto; }
+  .championGroupLabel{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.02em;
+    color:var(--label); margin:8px 0 4px; }
+  .championGroupLabel:first-child{ margin-top:0; }
+  .championPanel label{ display:flex; align-items:center; gap:8px; font-size:13px; font-weight:400;
+    color:var(--ink); margin:0 0 7px; cursor:pointer; }
+  .championPanel label:last-child{ margin-bottom:0; }
+  .championPanel input[type=checkbox]{ width:auto; margin:0; }
+  .championPanel .emptyNote{ color:var(--label); font-style:italic; font-size:12.5px; }
+
+  .docCell{ font-size:12px; color:var(--label); }
+  .attachCount{ font-weight:400; font-size:12.5px; color:var(--label); }
+  .docRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    padding:9px 0; font-size:12.5px; }
+  .docRow .docMain{ flex:1 1 auto; min-width:0; }
+  .docRow input[type=file]{ font-size:11.5px; margin-top:2px; }
+  .attachmentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .attachRow{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:2px 12px;
+    padding:7px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
+  .attachRow .attachName{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .attachRow .attachName.pending{ color:#a06a1c; }
+  .attachRow .attachLinks{ display:flex; gap:10px; flex:0 0 auto; }
+  .attachRow .attachLinks button{ font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
+    background:none; border:none; padding:0; color:var(--brand); text-decoration:none; }
+  .attachRow .attachLinks button:hover{ text-decoration:underline; }
+  .attachRow .attachLinks .removeLink{ color:#b23b3b; }
+  .attachRow .attachMeta{ flex-basis:100%; font-size:10.5px; color:var(--label); }
+  .attachRow .attachCommentInput{ flex-basis:100%; margin:4px 0 0 !important; padding:6px 8px !important;
+    font-size:12px !important; }
+  .attachEmpty{ color:var(--label); font-style:italic; font-size:12.5px; }
+
+  .picSlot{ margin-top:6px; }
+
+  .reviewCommentsList{ display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .reviewCommentRow{ padding:8px 10px; background:#f7f8fb; border:1px solid var(--line); border-radius:6px; font-size:12.5px; }
+  .reviewCommentRow .commentMeta{ font-size:10.5px; color:var(--label); font-weight:700; margin-bottom:3px; }
+  .reviewCommentRow .commentText{ white-space:pre-wrap; overflow-wrap:anywhere; }
+  .commentEditedTag{ font-weight:400; font-style:italic; }
+  .commentEditLink{ font-family:inherit; font-size:10.5px; font-weight:700; cursor:pointer;
+    background:none; border:none; padding:0; margin-left:6px; color:var(--brand); text-decoration:none; }
+  .commentEditLink:hover{ text-decoration:underline; }
+  .commentEditInput{ margin-top:4px !important; font-size:12.5px !important; padding:6px 8px !important; }
+  .commentEditBtns{ display:flex; gap:8px; margin-top:6px; }
+  .commentEditBtns button{ font-family:inherit; font-size:11.5px; font-weight:700; cursor:pointer;
+    border-radius:6px; padding:6px 12px; white-space:nowrap; }
+  .commentSaveBtn{ color:#fff; background:var(--brand); border:none; }
+  .commentSaveBtn:hover{ background:var(--brand-dark); }
+  .commentSaveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .commentCancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .commentCancelBtn:hover{ background:#f4f5f8; }
+  .addCommentRow{ display:flex; gap:8px; margin-top:4px; }
+  .addCommentRow input{ flex:1 1 auto; margin:0 !important; }
+  .addCommentRow button{ flex:0 0 auto; font-family:inherit; font-size:12.5px; font-weight:700; cursor:pointer;
+    border-radius:6px; padding:9px 16px; color:#fff; background:var(--brand); border:none; white-space:nowrap; }
+  .addCommentRow button:hover{ background:var(--brand-dark); }
+  .addCommentRow button:disabled{ background:#9fb0d8; cursor:wait; }
+
+  .modalError{ font-size:12.5px; color:#b23b3b; font-weight:600; min-height:16px; margin:10px 0 4px; }
+  .modalBtns{ display:flex; gap:10px; margin-top:10px; }
+  .modalBtns button{ flex:1 1 auto; font-family:inherit; font-size:14.5px; font-weight:700; border-radius:8px;
+    padding:11px; cursor:pointer; }
+  .saveBtn{ color:#fff; background:var(--brand); border:none; }
+  .saveBtn:hover{ background:var(--brand-dark); }
+  .saveBtn:disabled{ background:#9fb0d8; cursor:wait; }
+  .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
+  .cancelBtn:hover{ background:#f4f5f8; }
+
+  /* In-page document viewer */
+  .viewerOverlay{
+    display:none; position:fixed; inset:0; background:rgba(20,22,28,.55);
+    z-index:2200; padding:22px; align-items:center; justify-content:center;
+  }
+  .viewerOverlay.open{ display:flex; }
+  .viewerPanel{
+    background:#fff; border-radius:10px; width:100%; max-width:980px; height:100%;
+    display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .viewerBar{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:12px 16px; border-bottom:1px solid var(--line); }
+  .viewerTitle{ font-size:14px; font-weight:700; overflow-wrap:anywhere; }
+  .viewerBtns{ display:flex; gap:8px; flex:0 0 auto; }
+  .viewerBtns a, .viewerBtns button{
+    font-family:inherit; font-size:13px; font-weight:600; text-decoration:none; cursor:pointer;
+    border-radius:6px; padding:7px 14px; white-space:nowrap;
+  }
+  #docViewerDownload{ color:var(--brand); background:#fff; border:1px solid var(--brand); }
+  #docViewerDownload:hover{ background:#eef1fa; }
+  #docViewerClose{ color:#fff; background:#5b5f66; border:1px solid #5b5f66; }
+  #docViewerClose:hover{ background:#3f4248; }
+  .viewerBody{ flex:1 1 auto; position:relative; background:#525659; }
+  .viewerBody iframe, .viewerBody img, .viewerBody video{ position:absolute; inset:0; width:100%; height:100%; border:0; object-fit:contain; background:#525659; }
+  .viewerBody .viewerState{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:13.5px; text-align:center; padding:20px; flex-direction:column; gap:10px;
+  }
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <div class="header-left">
+      <img src="logo.jpg" alt="Dessimate">
+      <div>
+        <h1>Supplier Open Issues List</h1>
+        <p class="sub">Open production/quality issues tracked against a Supplier's parts &mdash; Dessimate documents and manages each issue; the Supplier can view their own and add notes.</p>
+      </div>
+    </div>
+    <div class="headerBtns">
+      <a class="homeBtn" href="index.html">Home</a>
+      <a class="homeBtn" href="PDIR_OpenIssuesHub.html">Open Issues Hub</a>
+      <a class="homeBtn" href="Instructions.html">Instructions</a>
+      <button type="button" class="excelBtn" id="downloadExcelBtn" style="display:none;">Download Excel</button>
+      <button type="button" class="addBtn" id="addIssueBtn" style="display:none;">Add an Open Issue</button>
+    </div>
+  </div>
+
+  <div class="ghbar">
+    <span id="ghStatus">Checking sign-in&hellip;</span>
+    <button type="button" id="ghConnectBtn">Log out</button>
+  </div>
+
+  <div class="toolbar">
+    <h2 id="toolbarTitle">Supplier Open Issues</h2>
+    <div class="toolbarFilters">
+      <div class="toolbarFilter" id="supplierFilterWrap" style="display:none;">
+        <span>Filter by Supplier:</span>
+        <select id="supplierFilterSelect">
+          <option value="">All Suppliers</option>
+        </select>
+      </div>
+      <div class="toolbarFilter">
+        <span>Filter by Part:</span>
+        <div class="partFilterDropdown" id="partFilterDropdown">
+          <button type="button" class="partFilterToggle" id="partFilterToggleBtn">
+            <span id="partFilterToggleLabel">All Parts</span><span class="caret">&#9662;</span>
+          </button>
+          <div class="partFilterPanel" id="partFilterPanel" style="display:none;">
+            <div class="partFilterList" id="partFilterList"></div>
+            <div class="partFilterPanelBtns">
+              <button type="button" class="clearFilterLink" id="clearPartFilterBtn" style="display:none;">Clear all</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div id="loadingState" class="state">Loading&hellip;</div>
+    <div id="errorState" class="state error" style="display:none;"></div>
+    <div id="emptyState" class="state" style="display:none;">No open issues yet.</div>
+    <table class="issueTable" id="issueTable" style="display:none;">
+      <thead id="issueTableHead">
+        <tr>
+          <th data-sort-key="issueNumber">Issue #</th>
+          <th data-sort-key="status">Status</th>
+          <th>Part Number(s)</th>
+          <th data-sort-key="issueTitle">Issue Title</th>
+          <th>Issue Picture</th>
+          <th>Root Cause</th>
+          <th>Interim C/M</th>
+          <th>Perm C/M</th>
+          <th>Next Action</th>
+          <th>Champion/Responsible</th>
+          <th>Notes/Comments</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="issueTableBody"></tbody>
+    </table>
+  </div>
+
+  <footer>Dessimate &middot; DSCM &middot; Supplier Open Issues List &middot; <span id="appVersionStamp">DSCM v2.1 &middot; Built September 2026</span></footer>
+</div>
+
+<div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>Sign-In</h2>
+    <p class="authSub">Sign in with the username and password you were given to use the DSCM system.</p>
+    <p class="authNote">Please check the username and password provided by your Dessimate contact. Your account will be locked after 3 unsuccessful login attempts.</p>
+    <form id="authForm">
+      <label>Username
+        <input type="text" id="authUsername" autocomplete="username" autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="authPassword" autocomplete="current-password">
+      </label>
+      <button type="submit" id="authSubmitBtn">Log In</button>
+      <div class="authError" id="authError"></div>
+      <div class="authAttempts" id="authAttempts"></div>
+    </form>
+  </div>
+</div>
+
+<div class="modalOverlay" id="issueModalOverlay">
+  <div class="modalCard">
+    <h2 id="modalTitle">Add an Open Issue</h2>
+    <p class="modalSub" id="modalSub">Issue Number is optional — leave blank to assign automatically, or type your own.</p>
+    <form id="issueForm">
+      <div class="numberBanner" id="numberBanner">
+        <div class="numberField">
+          <label for="f_issueNumber">Issue Number <span style="font-weight:400;">(optional — leave blank to auto-assign)</span></label>
+          <div class="numberFieldRow">
+            <input type="text" id="f_issueNumber" placeholder="assigned on Save">
+            <button type="button" id="useSystemIssueBtn">Use System Number</button>
+          </div>
+        </div>
+        <div class="numberField">
+          <label for="f_status">Status</label>
+          <select id="f_status">
+            <option value="open">Open</option>
+            <option value="closed">Closed</option>
+          </select>
+        </div>
+      </div>
+
+      <label>Issue Title <span style="font-weight:400;">(short summary — shown in the list view)</span>
+        <input type="text" id="f_issueTitle" placeholder="Short summary of the issue">
+      </label>
+
+      <div class="modalGrid2">
+        <label>Supplier Organization
+          <select id="f_supplierOrg" required></select>
+        </label>
+        <label>Champion / Responsible
+          <div class="championDropdown" id="championDropdown">
+            <button type="button" class="championToggle" id="championToggleBtn">
+              <span id="championToggleLabel">None selected</span><span class="caret">&#9662;</span>
+            </button>
+            <div class="championPanel" id="championPanel" style="display:none;">
+              <div id="f_championResponsible_list"></div>
+            </div>
+          </div>
+        </label>
+      </div>
+
+      <div class="modalSection" style="margin-top:0;">
+        <h3 style="border-top:none; padding-top:0;">Applicable Part Number(s) <span style="font-weight:400;">(up to 5, optional)</span></h3>
+        <div class="partsWrap" id="partNumbersWrap"></div>
+        <button type="button" class="addLineBtn" id="addPartBtn">+ Add Part Number</button>
+      </div>
+
+      <div class="modalGrid2">
+        <label>Issue Description
+          <textarea id="f_issueDescription" rows="2"></textarea>
+        </label>
+        <label>Interim C/M <span style="font-weight:400;">(Interim Corrective Measure)</span>
+          <textarea id="f_interimCM" rows="2"></textarea>
+        </label>
+      </div>
+
+      <div class="modalSection">
+        <h3>Issue Picture</h3>
+        <div class="picSlot" id="picSlotWrap"></div>
+      </div>
+
+      <div class="rootCauseGroup">
+        <div class="rootCauseGroupLeft">
+          <label>Root Cause
+            <textarea id="f_rootCause" rows="2"></textarea>
+          </label>
+          <label>Perm C/M <span style="font-weight:400;">(Permanent Corrective Measure)</span>
+            <textarea id="f_permCM" rows="2"></textarea>
+          </label>
+        </div>
+        <label class="rootCauseGroupRight">Next Action
+          <textarea id="f_nextAction" rows="2"></textarea>
+        </label>
+      </div>
+
+      <div class="modalSection">
+        <h3>Attachments <span class="attachCount" id="attachCount">(0 / 20)</span></h3>
+        <p class="modalSectionHint">Supporting documents for this issue &mdash; up to 20.</p>
+        <div id="attachmentsList" class="attachmentsList"></div>
+        <div class="docRow">
+          <div class="docMain">
+            <input type="file" id="attachmentsDocInput" multiple>
+            <div class="modalError" id="attachError" style="margin-top:6px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modalSection" id="notesWrap">
+        <h3>Notes / Comments</h3>
+        <p class="supplierSectionNote" id="supplierSectionNote" style="display:none;">You can view this issue and add notes below.</p>
+        <div id="reviewCommentsList" class="reviewCommentsList"></div>
+        <div class="addCommentRow" id="addCommentRow" style="display:none;">
+          <input type="text" id="f_newComment" placeholder="Add a note…">
+          <button type="button" id="addCommentBtn">Add Note</button>
+        </div>
+        <p class="modalSectionHint" id="addCommentHint" style="display:none;">Save this issue first before adding a note.</p>
+      </div>
+
+      <div class="modalError" id="modalError"></div>
+      <div class="modalBtns" id="modalBtnsWrap">
+        <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="docViewerOverlay" class="viewerOverlay">
+  <div class="viewerPanel">
+    <div class="viewerBar">
+      <div class="viewerTitle" id="docViewerTitle">Document</div>
+      <div class="viewerBtns">
+        <a id="docViewerDownload" href="#" style="display:none;">Download</a>
+        <button type="button" id="docViewerClose">Close</button>
+      </div>
+    </div>
+    <div class="viewerBody">
+      <div id="docViewerState" class="viewerState">Loading&hellip;</div>
+      <iframe id="docViewerFrame" title="Document preview" style="display:none;"></iframe>
+      <img id="docViewerImg" alt="Document preview" style="display:none;">
+      <video id="docViewerVideo" controls style="display:none;"></video>
+      <div id="docViewerOffice" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<script src="office-viewer.js"></script>
+<script src="confirm-dialog.js"></script>
+<script src="sortable-table.js"></script>
+<script src="mfa-login.js"></script>
+<script>
+(function(){
+  // ---- Backend (staff/supplier login + GitHub proxy) --------------------------------
+  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var SESSION_KEY = 'dessimate_session';
+  (function stampAppVersion(){
+    fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
+      if (!cfg || !cfg.version) return;
+      var el = document.getElementById('appVersionStamp');
+      if (el) el.textContent = 'DSCM v' + cfg.version + (cfg.builtLabel ? ' · ' + cfg.builtLabel : '');
+    }).catch(function(){});
+  })();
+
+  function getSession(){
+    try{
+      var raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.token || !s.expiresAt || s.expiresAt <= Date.now()) return null;
+      return s;
+    }catch(e){ return null; }
+  }
+  function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  // Staff-only end to end, except a Supplier login can view issues
+  // assigned to their own org (server-side scoped - see
+  // worker/README.md) and add to the Notes/Comments thread. No Customer
+  // role in this module at all.
+  var currentAccessLevel = null;
+  var currentOrganization = '';
+  function canManageAll(){ return currentAccessLevel === 'team_member' || currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
+  function isSupplierUser(){ return currentAccessLevel === 'supplier'; }
+  async function resolveMe(){
+    var session = getSession();
+    if (!session) { currentAccessLevel = null; currentOrganization = ''; return; }
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+      if (res.ok) {
+        var data = await res.json();
+        currentAccessLevel = data.accessLevel || 'team_member';
+        currentOrganization = data.organization || '';
+      }
+    } catch (e) { console.error('Could not resolve access level', e); }
+  }
+  function applyAccessLevelUI(){
+    var addBtn = document.getElementById('addIssueBtn');
+    if (addBtn) addBtn.style.display = canManageAll() ? '' : 'none';
+    // Download Excel is available to anyone who can see this list at all
+    // (staff or a Supplier viewing their own org's issues) - it just
+    // exports whatever rows loadIssues() already scoped server-side.
+    var excelBtn = document.getElementById('downloadExcelBtn');
+    if (excelBtn) excelBtn.style.display = (canManageAll() || isSupplierUser()) ? '' : 'none';
+    document.getElementById('toolbarTitle').textContent = isSupplierUser() ? 'Open Issues Assigned To My Organization' : 'Supplier Open Issues';
+    // The Filter by Supplier dropdown only makes sense for staff (who see
+    // every org's issues at once) - a Supplier login is already
+    // server-side scoped to just their own org, so it would only ever
+    // show one choice.
+    document.getElementById('supplierFilterWrap').style.display = canManageAll() ? 'flex' : 'none';
+  }
+
+  async function apiFetch(path, opts){
+    opts = opts || {};
+    var headers = opts.headers || {};
+    var session = getSession();
+    if (session) headers['Authorization'] = 'Bearer ' + session.token;
+    var res = await fetch(WORKER_BASE_URL + '/' + path, { method: opts.method || 'GET', headers: headers, body: opts.body });
+    if (res.status === 401 && path !== 'login') {
+      clearSession();
+      showAuthOverlay();
+      throw new Error('Your session has expired — please log in again.');
+    }
+    return res;
+  }
+  function workerContentsPath(fullPath){
+    return 'contents/' + fullPath.split('/').map(encodeURIComponent).join('/');
+  }
+  function bytesToBase64(bytes){
+    var binary = '', chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+  function base64ToBytes(b64){
+    var bin = atob((b64 || '').replace(/\s+/g, ''));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  function docFileExt(filename){
+    var m = /\.[a-zA-Z0-9]+$/.exec(filename || '');
+    return m ? m[0] : '';
+  }
+  async function ghGetSha(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status);
+    var data = await res.json();
+    return data.sha;
+  }
+  async function ghGetFileBytes(fullPath){
+    var res = await apiFetch(workerContentsPath(fullPath));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Server error ' + res.status + ' while loading ' + fullPath + '.');
+    var data = await res.json();
+    return base64ToBytes(data.content || '');
+  }
+  async function ghPutFile(fullPath, bytes, commitMessage){
+    var sha = await ghGetSha(fullPath);
+    var body = { message: commitMessage || ('Update ' + fullPath), content: bytesToBase64(bytes) };
+    if (sha) body.sha = sha;
+    var res = await apiFetch(workerContentsPath(fullPath), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+      throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+    }
+    return await res.json();
+  }
+  var OPEN_ISSUE_DOC_FOLDER = 'supplier_open_issue_docs';
+  var ATTACHMENTS_MAX = 20;
+  var PART_NUMBERS_MAX = 5;
+  function buildDocPath(issueId, folder, filename, idx){
+    var safeName = (filename || 'file').replace(/[\\/]/g, '_');
+    return OPEN_ISSUE_DOC_FOLDER + '/' + issueId + '/' + folder + '/' + Date.now() + '-' + idx + '-' + safeName;
+  }
+  function readFileAsBytes(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onerror = function(){ reject(new Error('Could not read "' + file.name + '".')); };
+      reader.onload = function(){ resolve(new Uint8Array(reader.result)); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Login wall -----------------------------------------------------
+  var pendingAfterAuth = null;
+
+  function refreshGhStatus(){
+    var statusEl = document.getElementById('ghStatus');
+    var btn = document.getElementById('ghConnectBtn');
+    if (!statusEl || !btn) return;
+    var session = getSession();
+    if (session) {
+      statusEl.textContent = 'Welcome, ' + session.username;
+      statusEl.className = 'gh-ok';
+      btn.textContent = 'Log out';
+    } else {
+      statusEl.textContent = 'Not signed in';
+      statusEl.className = 'gh-off';
+      btn.textContent = 'Log out';
+    }
+  }
+  function showAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.add('open');
+    refreshGhStatus();
+  }
+  function hideAuthOverlay(){
+    var overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.classList.remove('open');
+    refreshGhStatus();
+  }
+  function requireAuthThen(fn){
+    if (getSession()) { hideAuthOverlay(); fn(); }
+    else { pendingAfterAuth = fn; showAuthOverlay(); }
+  }
+
+  var authForm = document.getElementById('authForm');
+  if (authForm) {
+    authForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var username = document.getElementById('authUsername').value.trim();
+      var password = document.getElementById('authPassword').value;
+      var errEl = document.getElementById('authError');
+      var attemptsEl = document.getElementById('authAttempts');
+      var btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = ''; attemptsEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Logging in…';
+      try {
+        var res = await fetch(WORKER_BASE_URL + '/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        });
+        var data = await res.json();
+        if (!res.ok) {
+          var loginErr = new Error(data.message || ('HTTP ' + res.status));
+          loginErr.attemptsRemaining = data.attemptsRemaining;
+          throw loginErr;
+        }
+        document.getElementById('authPassword').value = '';
+        if (data.mfaRequired) {
+          DscmMfaLogin.start(data, { baseUrl: WORKER_BASE_URL, onSuccess: function (session) {
+            setSession(session);
+            hideAuthOverlay();
+            var fn = pendingAfterAuth; pendingAfterAuth = null;
+            if (fn) fn();
+          } });
+          return;
+        }
+        setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+        hideAuthOverlay();
+        var fn = pendingAfterAuth; pendingAfterAuth = null;
+        if (fn) fn();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err && err.message ? err.message : 'Could not log in — check the backend is reachable.';
+        attemptsEl.textContent = (err && typeof err.attemptsRemaining === 'number' && err.attemptsRemaining > 0)
+          ? 'Sign-in attempt ' + (3 - err.attemptsRemaining) + ' of 3 — this account locks after 3 failed attempts.'
+          : '';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Log In';
+      }
+    });
+  }
+  document.getElementById('ghConnectBtn').addEventListener('click', function(){
+    clearSession();
+    showAuthOverlay();
+  });
+  refreshGhStatus();
+  // -----------------------------------------------------------------------------
+
+  // ---- In-page document viewer -----------------------------------------------
+  var docViewerObjectUrl = null;
+  function closeDocViewer(){
+    document.getElementById('docViewerOverlay').classList.remove('open');
+    document.getElementById('docViewerFrame').src = 'about:blank';
+    document.getElementById('docViewerFrame').style.display = 'none';
+    document.getElementById('docViewerImg').src = '';
+    document.getElementById('docViewerImg').style.display = 'none';
+    var docViewerVideoEl = document.getElementById('docViewerVideo');
+    docViewerVideoEl.pause(); docViewerVideoEl.removeAttribute('src'); docViewerVideoEl.load(); docViewerVideoEl.style.display = 'none';
+    document.getElementById('docViewerOffice').style.display = 'none';
+    document.getElementById('docViewerOffice').innerHTML = '';
+    document.getElementById('docViewerDownload').style.display = 'none';
+    if (docViewerObjectUrl) { URL.revokeObjectURL(docViewerObjectUrl); docViewerObjectUrl = null; }
+  }
+  document.getElementById('docViewerClose').addEventListener('click', closeDocViewer);
+  document.getElementById('docViewerOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'docViewerOverlay') closeDocViewer();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && document.getElementById('docViewerOverlay').classList.contains('open')) closeDocViewer();
+  });
+  function isInlineViewable(mimeType, filename){
+    var ext = docFileExt(filename).toLowerCase();
+    if (mimeType === 'application/pdf' || ext === '.pdf') return 'pdf';
+    if ((mimeType && mimeType.indexOf('image/') === 0) || /\.(jpe?g|png)$/.test(ext)) return 'image';
+    if ((mimeType && mimeType.indexOf('video/') === 0) || /\.(mp4|m4v|webm|ogv)$/.test(ext)) return 'video';
+    var officeKind = window.OfficeViewer && window.OfficeViewer.isOfficeExt(filename, mimeType);
+    if (officeKind) return officeKind;
+    return null;
+  }
+  async function openDocViewer(source){
+    var overlay = document.getElementById('docViewerOverlay');
+    var stateEl = document.getElementById('docViewerState');
+    var frame = document.getElementById('docViewerFrame');
+    var img = document.getElementById('docViewerImg');
+    var video = document.getElementById('docViewerVideo');
+    var office = document.getElementById('docViewerOffice');
+    var downloadBtn = document.getElementById('docViewerDownload');
+    document.getElementById('docViewerTitle').textContent = source.filename || 'Document';
+    frame.style.display = 'none'; img.style.display = 'none'; video.style.display = 'none'; office.style.display = 'none'; office.innerHTML = ''; downloadBtn.style.display = 'none';
+    stateEl.style.display = 'flex'; stateEl.textContent = 'Loading…';
+    overlay.classList.add('open');
+    try {
+      var bytes = source.bytes;
+      if (!bytes) {
+        bytes = await ghGetFileBytes(source.path);
+        if (!bytes) throw new Error('File not found.');
+      }
+      var kind = isInlineViewable(source.mimeType, source.filename);
+      if (!kind) {
+        stateEl.textContent = "This file type can't be previewed here — use Download instead.";
+        return;
+      }
+      if (kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
+        office.style.display = 'block';
+        await window.OfficeViewer.render(kind, office, bytes);
+        stateEl.style.display = 'none';
+        var officeBlob = new Blob([bytes], { type: source.mimeType || 'application/octet-stream' });
+        if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+        docViewerObjectUrl = URL.createObjectURL(officeBlob);
+        downloadBtn.href = docViewerObjectUrl;
+        downloadBtn.download = source.filename || 'file';
+        downloadBtn.style.display = 'inline-block';
+        return;
+      }
+      var blob = new Blob([bytes], { type: source.mimeType || (kind === 'pdf' ? 'application/pdf' : (kind === 'video' ? 'video/mp4' : 'image/jpeg')) });
+      if (docViewerObjectUrl) URL.revokeObjectURL(docViewerObjectUrl);
+      docViewerObjectUrl = URL.createObjectURL(blob);
+      if (kind === 'pdf') { frame.src = docViewerObjectUrl; frame.style.display = 'block'; }
+      else if (kind === 'video') { video.src = docViewerObjectUrl; video.style.display = 'block'; }
+      else { img.src = docViewerObjectUrl; img.style.display = 'block'; }
+      stateEl.style.display = 'none';
+      downloadBtn.href = docViewerObjectUrl;
+      downloadBtn.download = source.filename || 'file';
+      downloadBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      stateEl.textContent = 'Could not load this file for preview (' + (e && e.message ? e.message : e) + ').';
+    }
+  }
+  // -----------------------------------------------------------------------------
+
+  function escapeHtml(s){
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function fmtDateMDY(s){
+    var str = (s == null ? '' : String(s)).trim();
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    if (m) return m[2] + '/' + m[3] + '/' + m[1];
+    if (str) {
+      var d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+      }
+    }
+    return str;
+  }
+  function attachMetaHtml(x, cls){
+    if (!x) return '';
+    if (x.kind === 'pending') {
+      var session = getSession();
+      return '<div class="' + cls + '">Will upload as ' + escapeHtml((session && session.username) || 'you') + '</div>';
+    }
+    var doc = x.kind === 'existing' ? x.doc : x;
+    if (!doc || (!doc.uploadedBy && !doc.uploadedAt)) return '';
+    var when = doc.uploadedAt ? fmtDateMDY(doc.uploadedAt) : '';
+    return '<div class="' + cls + '">Uploaded by ' + escapeHtml(doc.uploadedBy || 'Unknown') + (when ? ' on ' + when : '') + '</div>';
+  }
+  function stampUpload(){
+    var session = getSession();
+    return { uploadedBy: (session && session.username) || '', uploadedAt: new Date().toISOString() };
+  }
+  var OPEN_ISSUE_STATUS_LABELS = { open: 'Open', closed: 'Closed' };
+  function statusPillHtml(status){
+    var key = status === 'closed' ? 'closed' : 'open';
+    return '<span class="statusPill ' + key + '">' + OPEN_ISSUE_STATUS_LABELS[key] + '</span>';
+  }
+  // Issue # is a bare number (no letter prefix) - see reserveSupplierOpenIssueNumber.
+  function listTitleText(issue){
+    if (issue.issueTitle) return issue.issueTitle;
+    var desc = issue.issueDescription || '';
+    return desc.length > 80 ? desc.slice(0, 79) + '…' : desc;
+  }
+
+  // ---- Supplier / Parts dropdowns --------------------------------------------
+  var lastOrgs = [];
+  var lastParts = [];
+  var lastDessimatePeople = []; // {username, name} - GET /users, open to any signed-in user
+  async function loadDropdownData(){
+    try {
+      var orgRes = await apiFetch('organizations');
+      var orgData = orgRes.ok ? await orgRes.json() : { organizations: [] };
+      lastOrgs = Array.isArray(orgData.organizations) ? orgData.organizations : [];
+    } catch (e) { console.error('Could not load organizations', e); lastOrgs = []; }
+    try {
+      var partRes = await apiFetch('parts');
+      var partData = partRes.ok ? await partRes.json() : { parts: [] };
+      lastParts = Array.isArray(partData.parts) ? partData.parts : [];
+    } catch (e) { console.error('Could not load parts', e); lastParts = []; }
+    try {
+      var usersRes = await apiFetch('users');
+      var usersData = usersRes.ok ? await usersRes.json() : { people: [] };
+      lastDessimatePeople = Array.isArray(usersData.people) ? usersData.people : [];
+    } catch (e) { console.error('Could not load Dessimate team members', e); lastDessimatePeople = []; }
+  }
+  // Same Supplier list Parts' own supplier checklist draws from
+  // (relationship === 'Supplier' on Organizations) - see PDIR_Parts.html's
+  // suppliersList().
+  function suppliersList(){ return lastOrgs.filter(function(o){ return o.relationship === 'Supplier'; }); }
+
+  // ---- Champion / Responsible picker ------------------------------------------
+  // Reuses the existing point-of-contact pattern already built for PDIR
+  // Sign-off, rather than the Organization Contacts directory Customer Open
+  // Issues' picker draws from: a dropdown of Dessimate team members (GET
+  // /users -> lastDessimatePeople, same directory the Dessimate Sign-off's
+  // own dropdown in PDIR_Form_Filler.html uses) plus a dropdown of the
+  // assigned Supplier org's own contacts (GET /org-contacts, the same
+  // lookup PDIR Sign-off's "Prepared By" dropdown uses). Both sources are
+  // login accounts, so the value stored per champion is the username (not a
+  // display name) - championDisplayName resolves a username to a friendly
+  // name wherever one is known.
+  // /org-contacts is staff-only server-side (requireRole team_member+), so
+  // a Supplier login (read-only here - canManageAll() is false) never
+  // calls it; the picker just lists the issue's already-stored usernames as
+  // disabled, unfetched entries for that role instead of trying to load the
+  // full roster.
+  var orgContactsCache = {}; // orgName -> [{username,name}] | [] (not found / forbidden)
+  var championNameByUsername = {}; // username -> name, merged from every source seen so far
+  function indexPeopleForNames(list){
+    (list || []).forEach(function(p){ if (p && p.username && p.name) championNameByUsername[p.username] = p.name; });
+  }
+  async function fetchOrgContacts(orgName){
+    if (!orgName) return [];
+    if (orgContactsCache[orgName]) return orgContactsCache[orgName];
+    try {
+      var res = await apiFetch('org-contacts?organization=' + encodeURIComponent(orgName));
+      if (!res.ok) { orgContactsCache[orgName] = []; return []; }
+      var data = await res.json();
+      var contacts = Array.isArray(data.contacts) ? data.contacts : [];
+      orgContactsCache[orgName] = contacts;
+      indexPeopleForNames(contacts);
+      return contacts;
+    } catch (e) { console.error('Could not load org contacts for ' + orgName, e); orgContactsCache[orgName] = []; return []; }
+  }
+  function championDisplayName(username){ return championNameByUsername[username] || username; }
+
+  function closeChampionPanel(){ document.getElementById('championPanel').style.display = 'none'; }
+  function updateChampionToggleLabel(values){
+    var labelEl = document.getElementById('championToggleLabel');
+    labelEl.textContent = values.length ? values.map(championDisplayName).join(', ') : 'None selected';
+  }
+  // Re-renders the panel's checkbox groups AND the toggle button's label
+  // together. Async (unlike Customer Open Issues' synchronous version)
+  // since the Supplier-org group needs a live /org-contacts fetch.
+  async function renderChampionPicker(currentValues){
+    var values = Array.isArray(currentValues) ? currentValues.filter(Boolean) : [];
+    updateChampionToggleLabel(values);
+    document.getElementById('championToggleBtn').disabled = !canManageAll();
+    var listEl = document.getElementById('f_championResponsible_list');
+
+    if (!canManageAll()) {
+      // Read-only (Supplier) view - just show who's assigned, no fetch.
+      if (!values.length) {
+        listEl.innerHTML = '<div class="emptyNote">No one assigned yet.</div>';
+      } else {
+        listEl.innerHTML = '<div class="championGroupLabel">Assigned</div>' + values.map(function(u){
+          return '<label><input type="checkbox" value="' + escapeHtml(u) + '" checked disabled> ' + escapeHtml(championDisplayName(u)) + '</label>';
+        }).join('');
+      }
+      return;
+    }
+
+    listEl.innerHTML = '<div class="emptyNote">Loading contacts…</div>';
+    indexPeopleForNames(lastDessimatePeople);
+    var supplierOrgName = document.getElementById('f_supplierOrg').value;
+    var supplierContacts = supplierOrgName ? await fetchOrgContacts(supplierOrgName) : [];
+
+    var groups = [];
+    groups.push({ label: 'Dessimate', names: lastDessimatePeople.map(function(p){ return p.username; }) });
+    if (supplierOrgName) groups.push({ label: supplierOrgName, names: supplierContacts.map(function(c){ return c.username; }) });
+
+    // A previously-picked username not in either group above (contact
+    // deactivated, or the Supplier Organization changed since) stays
+    // checkable and checked rather than silently dropping off the record.
+    var known = {};
+    groups.forEach(function(g){ g.names.forEach(function(n){ known[n] = true; }); });
+    var leftover = values.filter(function(v){ return !known[v]; });
+    if (leftover.length) groups.push({ label: 'Other', names: leftover });
+
+    if (!groups.some(function(g){ return g.names.length; })) {
+      listEl.innerHTML = '<div class="emptyNote">No contacts on file yet' + (supplierOrgName ? ' for ' + escapeHtml(supplierOrgName) : '') + '.</div>';
+      return;
+    }
+    listEl.innerHTML = groups.filter(function(g){ return g.names.length; }).map(function(g){
+      return '<div class="championGroupLabel">' + escapeHtml(g.label) + '</div>' + g.names.map(function(u){
+        var checked = values.indexOf(u) !== -1 ? ' checked' : '';
+        return '<label><input type="checkbox" value="' + escapeHtml(u) + '"' + checked + '> ' + escapeHtml(championDisplayName(u)) + '</label>';
+      }).join('');
+    }).join('');
+    listEl.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+      cb.addEventListener('change', function(){ updateChampionToggleLabel(getSelectedChampions()); });
+    });
+  }
+  function getSelectedChampions(){
+    return Array.prototype.slice.call(document.querySelectorAll('#f_championResponsible_list input[type=checkbox]:checked'))
+      .map(function(el){ return el.value; })
+      .filter(Boolean);
+  }
+  document.getElementById('championToggleBtn').addEventListener('click', function(e){
+    e.stopPropagation();
+    var panel = document.getElementById('championPanel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  });
+  document.addEventListener('click', function(e){
+    var dropdown = document.getElementById('championDropdown');
+    if (dropdown && !dropdown.contains(e.target)) closeChampionPanel();
+  });
+  // Changing the Supplier Organization swaps which org's contacts show as
+  // the second group - re-render, but keep whatever's already checked.
+  document.getElementById('f_supplierOrg').addEventListener('change', function(){
+    renderChampionPicker(getSelectedChampions());
+  });
+  // -----------------------------------------------------------------------------
+  function supplierOrgOptions(currentValue){
+    var matching = suppliersList();
+    var html = '<option value="">— Select Supplier —</option>' + matching.map(function(o){
+      var sel = (o.name === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(o.name) + '"' + sel + '>' + escapeHtml(o.name) + '</option>';
+    }).join('');
+    if (currentValue && !matching.some(function(o){ return o.name === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Organizations list)</option>';
+    }
+    return html;
+  }
+  function partOptions(currentValue){
+    var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
+      var sel = (p.partNumber === currentValue) ? ' selected' : '';
+      return '<option value="' + escapeHtml(p.partNumber) + '"' + sel + '>' + escapeHtml(p.partNumber) + '</option>';
+    }).join('');
+    if (currentValue && !lastParts.some(function(p){ return p.partNumber === currentValue; })) {
+      html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Parts list)</option>';
+    }
+    return html;
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- List table --------------------------------------------------------------
+  var lastIssues = [];
+  var issueSortState = { key: null, dir: 1 };
+  window.SortableTable.makeSortableHeaders(document.getElementById('issueTableHead'), issueSortState, renderTable);
+
+  // ---- Filter by Supplier (staff only, single-select) - narrows the list
+  // to one assigned org at a time. Purely a display convenience; the real
+  // access boundary is enforced server-side by scopeSupplierOpenIssues
+  // regardless of this filter's state.
+  var selectedSupplierFilter = '';
+  function populateSupplierFilterOptions(){
+    var selectEl = document.getElementById('supplierFilterSelect');
+    if (!canManageAll()) return;
+    var orgs = {};
+    lastIssues.forEach(function(issue){ if (issue.supplierOrg) orgs[issue.supplierOrg] = true; });
+    var sortedOrgs = Object.keys(orgs).sort(function(a, b){ return a.localeCompare(b); });
+    var keep = selectedSupplierFilter;
+    selectEl.innerHTML = '<option value="">All Suppliers</option>' + sortedOrgs.map(function(o){
+      var sel = (o === keep) ? ' selected' : '';
+      return '<option value="' + escapeHtml(o) + '"' + sel + '>' + escapeHtml(o) + '</option>';
+    }).join('');
+    selectEl.value = keep;
+  }
+  document.getElementById('supplierFilterSelect').addEventListener('change', function(){
+    selectedSupplierFilter = this.value;
+    renderTable();
+  });
+
+  // ---- Filter by Part Number (multi-select) - persists across navigation
+  // (localStorage), same pattern as Customer Open Issues.
+  var PART_FILTER_STORAGE_KEY = 'dscm_supplierOpenIssues_partFilters';
+  var selectedPartFilters = [];
+  try {
+    var storedPartFilters = JSON.parse(localStorage.getItem(PART_FILTER_STORAGE_KEY) || '[]');
+    if (Array.isArray(storedPartFilters)) selectedPartFilters = storedPartFilters.filter(function(v){ return typeof v === 'string' && v; });
+  } catch (e) {}
+
+  function savePartFilters(){
+    try { localStorage.setItem(PART_FILTER_STORAGE_KEY, JSON.stringify(selectedPartFilters)); } catch (e) {}
+  }
+  function updatePartFilterToggleLabel(){
+    var labelEl = document.getElementById('partFilterToggleLabel');
+    if (!selectedPartFilters.length) labelEl.textContent = 'All Parts';
+    else if (selectedPartFilters.length === 1) labelEl.textContent = selectedPartFilters[0];
+    else labelEl.textContent = selectedPartFilters.length + ' parts selected';
+  }
+  function partNameHint(partNumber){
+    var part = lastParts.find(function(p){ return p.partNumber === partNumber; });
+    if (!part || !part.name) return '';
+    return part.name.trim().split(/\s+/).slice(0, 3).join(' ');
+  }
+  function populatePartFilterOptions(){
+    var listEl = document.getElementById('partFilterList');
+    var parts = {};
+    lastIssues.forEach(function(issue){ (issue.partNumbers || []).forEach(function(p){ if (p) parts[p] = true; }); });
+    selectedPartFilters.forEach(function(p){ parts[p] = true; });
+    var sortedParts = Object.keys(parts).sort(function(a, b){ return a.localeCompare(b, undefined, { numeric: true }); });
+    if (!sortedParts.length) {
+      listEl.innerHTML = '<div class="partFilterEmpty">No part numbers on any issue yet.</div>';
+    } else {
+      listEl.innerHTML = sortedParts.map(function(p){
+        var checked = selectedPartFilters.indexOf(p) !== -1 ? ' checked' : '';
+        var hint = partNameHint(p);
+        var labelText = escapeHtml(p) + (hint ? ' <span class="partFilterHint">' + escapeHtml(hint) + '</span>' : '');
+        return '<label><input type="checkbox" value="' + escapeHtml(p) + '"' + checked + '><span class="partFilterLabelText">' + labelText + '</span></label>';
+      }).join('');
+      listEl.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+        cb.addEventListener('change', function(){
+          var val = this.value;
+          var idx = selectedPartFilters.indexOf(val);
+          if (this.checked && idx === -1) selectedPartFilters.push(val);
+          else if (!this.checked && idx !== -1) selectedPartFilters.splice(idx, 1);
+          savePartFilters();
+          updatePartFilterToggleLabel();
+          renderTable();
+        });
+      });
+    }
+    document.getElementById('clearPartFilterBtn').style.display = selectedPartFilters.length ? 'inline' : 'none';
+    updatePartFilterToggleLabel();
+  }
+  document.getElementById('partFilterToggleBtn').addEventListener('click', function(e){
+    e.stopPropagation();
+    var panel = document.getElementById('partFilterPanel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  });
+  document.getElementById('clearPartFilterBtn').addEventListener('click', function(){
+    selectedPartFilters = [];
+    savePartFilters();
+    renderTable();
+  });
+  document.addEventListener('click', function(e){
+    var dropdown = document.getElementById('partFilterDropdown');
+    if (dropdown && !dropdown.contains(e.target)) document.getElementById('partFilterPanel').style.display = 'none';
+  });
+
+  async function loadIssues(){
+    var loadingEl = document.getElementById('loadingState');
+    var errorEl = document.getElementById('errorState');
+    var emptyEl = document.getElementById('emptyState');
+    var tableEl = document.getElementById('issueTable');
+    loadingEl.style.display = 'block'; errorEl.style.display = 'none'; emptyEl.style.display = 'none'; tableEl.style.display = 'none';
+    try {
+      var res = await apiFetch('supplier-open-issues');
+      if (!res.ok) {
+        var txt = ''; try { txt = (await res.json()).message || ''; } catch(e){}
+        throw new Error('HTTP ' + res.status + (txt ? ' — ' + txt : ''));
+      }
+      var data = await res.json();
+      lastIssues = Array.isArray(data.openIssues) ? data.openIssues : [];
+      indexPeopleForNames(lastDessimatePeople);
+      // For staff viewing every org at once, prefetch each distinct
+      // supplierOrg's contacts up front so the table/export can show
+      // friendly champion names instead of raw usernames. A Supplier login
+      // can't call /org-contacts (staff-only server-side) - its own
+      // champion usernames just render as-is for that role.
+      if (canManageAll()) {
+        var orgsToFetch = {};
+        lastIssues.forEach(function(issue){ if (issue.supplierOrg) orgsToFetch[issue.supplierOrg] = true; });
+        await Promise.all(Object.keys(orgsToFetch).map(fetchOrgContacts));
+      }
+      loadingEl.style.display = 'none';
+      renderTable();
+    } catch (err) {
+      console.error(err);
+      loadingEl.style.display = 'none';
+      errorEl.style.display = 'block';
+      errorEl.textContent = 'Could not load open issues (' + err.message + ').';
+    }
+  }
+
+  function notesCellHtml(comments){
+    var list = Array.isArray(comments) ? comments : [];
+    if (!list.length) return '<div class="notesCell"><span class="noPic">No notes yet.</span></div>';
+    var latest = list[list.length - 1];
+    var html = '<div class="noteLine"><span class="noteMeta">' + escapeHtml(fmtDateMDY((latest.createdAt || '').slice(0, 10))) + ' — ' + escapeHtml(latest.authorUsername || 'Unknown') + ':</span> ' + escapeHtml(latest.text) + (latest.editedAt ? ' <span class="noteMore">(edited)</span>' : '') + '</div>';
+    if (list.length > 1) {
+      html += '<div class="noteMore">+' + (list.length - 1) + ' more…</div>';
+    }
+    return '<div class="notesCell">' + html + '</div>';
+  }
+
+  function renderTable(){
+    var tableEl = document.getElementById('issueTable');
+    var bodyEl = document.getElementById('issueTableBody');
+    var emptyEl = document.getElementById('emptyState');
+    populateSupplierFilterOptions();
+    populatePartFilterOptions();
+    var filteredIssues = lastIssues;
+    if (selectedSupplierFilter) filteredIssues = filteredIssues.filter(function(issue){ return issue.supplierOrg === selectedSupplierFilter; });
+    if (selectedPartFilters.length) {
+      filteredIssues = filteredIssues.filter(function(issue){
+        var issueParts = issue.partNumbers || [];
+        return selectedPartFilters.some(function(p){ return issueParts.indexOf(p) !== -1; });
+      });
+    }
+    if (!filteredIssues.length) {
+      emptyEl.style.display = 'block'; tableEl.style.display = 'none';
+      emptyEl.textContent = (selectedSupplierFilter || selectedPartFilters.length)
+        ? 'No open issues match the selected filters.'
+        : (isSupplierUser() ? 'No open issues assigned to your organization yet.' : 'No open issues yet. Click Add an Open Issue above to add the first one.');
+      return;
+    }
+    emptyEl.style.display = 'none'; tableEl.style.display = 'table';
+
+    var defaultOrder = filteredIssues.slice().sort(function(a, b){ return String(a.issueNumber || '').localeCompare(String(b.issueNumber || ''), undefined, { numeric: true }); });
+    var sorted = window.SortableTable.sortItems(defaultOrder, issueSortState, function(issue, key){ return issue[key]; });
+    window.SortableTable.updateSortIndicators(document.getElementById('issueTableHead'), issueSortState);
+
+    bodyEl.innerHTML = sorted.map(function(issue){
+      var picHtml = (issue.issuePicture && issue.issuePicture.path)
+        ? '<img class="picThumb" src="" data-pic-thumb="' + escapeHtml(issue.id) + '" alt="Issue picture">'
+        : '<span class="noPic">No picture</span>';
+      return '<tr>' +
+        '<td><button type="button" class="issueNumberLink" data-edit="' + escapeHtml(issue.id) + '" title="' + escapeHtml(issue.issueNumber) + '">' + escapeHtml(issue.issueNumber) + '</button></td>' +
+        '<td>' + statusPillHtml(issue.status) + '</td>' +
+        '<td>' + escapeHtml((issue.partNumbers || []).join(', ')) + '</td>' +
+        '<td><div class="cellClamp" title="' + escapeHtml(issue.issueTitle || issue.issueDescription) + '">' + escapeHtml(listTitleText(issue)) + '</div></td>' +
+        '<td>' + picHtml + '</td>' +
+        '<td><div class="cellClamp short" title="' + escapeHtml(issue.rootCause) + '">' + escapeHtml(issue.rootCause) + '</div></td>' +
+        '<td><div class="cellClamp short" title="' + escapeHtml(issue.interimCM) + '">' + escapeHtml(issue.interimCM) + '</div></td>' +
+        '<td><div class="cellClamp short" title="' + escapeHtml(issue.permCM) + '">' + escapeHtml(issue.permCM) + '</div></td>' +
+        '<td><div class="cellClamp short" title="' + escapeHtml(issue.nextAction) + '">' + escapeHtml(issue.nextAction) + '</div></td>' +
+        '<td>' + escapeHtml((issue.championResponsible || []).map(championDisplayName).join(', ')) + '</td>' +
+        '<td>' + notesCellHtml(issue.comments) + '</td>' +
+        '<td>' + (canManageAll() ? '<div class="rowActions"><button type="button" class="deleteBtn" data-delete="' + escapeHtml(issue.id) + '">Delete</button></div>' : '') + '</td>' +
+        '</tr>';
+    }).join('');
+
+    sorted.forEach(function(issue){
+      if (!issue.issuePicture || !issue.issuePicture.path) return;
+      var img = bodyEl.querySelector('[data-pic-thumb="' + CSS.escape(issue.id) + '"]');
+      if (!img) return;
+      ghGetFileBytes(issue.issuePicture.path).then(function(bytes){
+        if (!bytes) return;
+        var blob = new Blob([bytes], { type: issue.issuePicture.mimeType || 'image/jpeg' });
+        img.src = URL.createObjectURL(blob);
+      }).catch(function(){});
+      img.addEventListener('click', function(){
+        openDocViewer({ filename: issue.issuePicture.filename, mimeType: issue.issuePicture.mimeType, path: issue.issuePicture.path });
+      });
+    });
+
+    bodyEl.querySelectorAll('[data-edit]').forEach(function(btn){
+      btn.addEventListener('click', function(){ requireAuthThen(function(){ openEditModal(this.getAttribute('data-edit')); }.bind(this)); });
+    });
+    bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
+      btn.addEventListener('click', function(){ deleteIssue(this.getAttribute('data-delete')); });
+    });
+  }
+
+  async function deleteIssue(id){
+    var issue = lastIssues.find(function(x){ return x.id === id; });
+    if (!(await confirmDialog('Remove Open Issue ' + (issue ? issue.issueNumber : '') + '? This can\'t be undone.'))) return;
+    requireAuthThen(async function(){
+      try {
+        var res = await apiFetch('supplier-open-issues/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!res.ok) { var d = {}; try { d = await res.json(); } catch(e){} throw new Error(d.message || ('HTTP ' + res.status)); }
+        await loadIssues();
+      } catch (err) {
+        alert('Could not delete this open issue (' + (err && err.message ? err.message : err) + ').');
+      }
+    });
+  }
+  // -----------------------------------------------------------------------------
+
+  // ---- Add / Edit modal --------------------------------------------------------
+  var editingId = null;
+  var partNumberRows = [];
+  var attachmentsState = [];
+  var picState = null; // null | {kind:'pending',bytes,filename,mimeType} | {kind:'existing',doc:{...}}
+  var reviewCommentsState = [];
+  var editingCommentId = null;
+
+  function renderPartNumbers(){
+    var wrap = document.getElementById('partNumbersWrap');
+    wrap.innerHTML = partNumberRows.map(function(pn, idx){
+      return '<div class="partRow" data-part-idx="' + idx + '">' +
+        '<select data-part-select>' + partOptions(pn) + '</select>' +
+        '<button type="button" data-part-remove="' + idx + '">Remove</button>' +
+        '</div>';
+    }).join('');
+    wrap.querySelectorAll('[data-part-idx]').forEach(function(row){
+      var idx = parseInt(row.getAttribute('data-part-idx'), 10);
+      row.querySelector('[data-part-select]').addEventListener('change', function(){ partNumberRows[idx] = this.value; });
+    });
+    wrap.querySelectorAll('[data-part-remove]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        partNumberRows.splice(parseInt(this.getAttribute('data-part-remove'), 10), 1);
+        renderPartNumbers();
+      });
+    });
+    document.getElementById('addPartBtn').disabled = partNumberRows.length >= PART_NUMBERS_MAX || !canManageAll();
+  }
+  document.getElementById('addPartBtn').addEventListener('click', function(){
+    if (partNumberRows.length >= PART_NUMBERS_MAX) return;
+    partNumberRows.push('');
+    renderPartNumbers();
+  });
+
+  function activeAttachmentCount(){ return attachmentsState.length; }
+  function renderAttachmentsList(){
+    var listEl = document.getElementById('attachmentsList');
+    var countEl = document.getElementById('attachCount');
+    var inputEl = document.getElementById('attachmentsDocInput');
+    var count = activeAttachmentCount();
+    countEl.textContent = '(' + count + ' / ' + ATTACHMENTS_MAX + ')';
+    if (!count) {
+      listEl.innerHTML = '<div class="attachEmpty">No files attached.</div>';
+    } else {
+      listEl.innerHTML = attachmentsState.map(function(entry, idx){
+        var name = entry.kind === 'pending' ? entry.filename : entry.doc.filename;
+        var comment = entry.kind === 'pending' ? (entry.comment || '') : (entry.doc.comment || '');
+        var nameClass = entry.kind === 'pending' ? 'attachName pending' : 'attachName';
+        var label = entry.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+        var viewBtn = entry.kind === 'pending'
+          ? '<button type="button" data-preview-idx="' + idx + '">Preview</button>'
+          : '<button type="button" data-view-idx="' + idx + '">View</button>';
+        var removeLinkHtml = canManageAll() ? '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' : '';
+        return '<div class="attachRow">' +
+          '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+          '<div class="attachLinks">' + viewBtn + removeLinkHtml +
+          '</div>' + attachMetaHtml(entry, 'attachMeta') +
+          '<input type="text" class="attachCommentInput" data-comment-idx="' + idx + '" placeholder="What is this attachment about?" value="' + escapeHtml(comment) + '">' +
+          '</div>';
+      }).join('');
+    }
+    inputEl.disabled = count >= ATTACHMENTS_MAX || !canManageAll();
+    inputEl.title = count >= ATTACHMENTS_MAX ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached.' : '';
+
+    listEl.querySelectorAll('[data-comment-idx]').forEach(function(input){
+      input.disabled = !canManageAll();
+      input.addEventListener('input', function(){
+        var entry = attachmentsState[Number(input.getAttribute('data-comment-idx'))];
+        if (!entry) return;
+        if (entry.kind === 'pending') entry.comment = input.value;
+        else entry.doc.comment = input.value;
+      });
+    });
+    listEl.querySelectorAll('[data-preview-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-preview-idx'))];
+        if (entry) openDocViewer({ filename: entry.filename, mimeType: entry.mimeType, bytes: entry.bytes });
+      });
+    });
+    listEl.querySelectorAll('[data-view-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var entry = attachmentsState[Number(btn.getAttribute('data-view-idx'))];
+        if (entry) openDocViewer({ filename: entry.doc.filename, mimeType: entry.doc.mimeType, path: entry.doc.path });
+      });
+    });
+    listEl.querySelectorAll('[data-remove-idx]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var idx = Number(btn.getAttribute('data-remove-idx'));
+        var entry = attachmentsState[idx];
+        var name = entry ? (entry.kind === 'pending' ? entry.filename : entry.doc.filename) : 'this file';
+        if (!(await confirmDialog('Remove "' + name + '"?'))) return;
+        attachmentsState.splice(idx, 1);
+        renderAttachmentsList();
+      });
+    });
+  }
+  document.getElementById('attachmentsDocInput').addEventListener('change', async function(){
+    var files = this.files ? Array.from(this.files) : [];
+    this.value = '';
+    if (!files.length) return;
+    var errEl = document.getElementById('attachError');
+    errEl.textContent = '';
+    var room = ATTACHMENTS_MAX - activeAttachmentCount();
+    if (files.length > room) {
+      errEl.textContent = room <= 0
+        ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached — remove one before adding another.'
+        : 'Only ' + room + ' more file' + (room === 1 ? '' : 's') + ' can be added (limit ' + ATTACHMENTS_MAX + ').';
+      files = files.slice(0, Math.max(room, 0));
+    }
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      try {
+        var bytes = await readFileAsBytes(file);
+        attachmentsState.push({ kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' });
+      } catch (e) {
+        alert('Could not read "' + file.name + '": ' + (e && e.message ? e.message : e));
+      }
+    }
+    renderAttachmentsList();
+  });
+
+  function renderPicSlot(){
+    var wrap = document.getElementById('picSlotWrap');
+    if (!picState) {
+      wrap.innerHTML = '<div class="attachEmpty">No picture attached.</div>' +
+        (canManageAll() ? '<input type="file" accept="image/png,image/jpeg" id="picInput" style="margin-top:8px;">' : '');
+      var input = document.getElementById('picInput');
+      if (input) input.addEventListener('change', async function(){
+        var file = this.files && this.files[0];
+        this.value = '';
+        if (!file) return;
+        if (file.type !== 'image/png' && file.type !== 'image/jpeg') { alert('Please choose a PNG or JPG image.'); return; }
+        try {
+          var bytes = await readFileAsBytes(file);
+          picState = { kind: 'pending', bytes: bytes, filename: file.name, mimeType: file.type || 'application/octet-stream' };
+          renderPicSlot();
+        } catch (e2) {
+          alert('Could not read "' + file.name + '": ' + (e2 && e2.message ? e2.message : e2));
+        }
+      });
+      return;
+    }
+    var name = picState.kind === 'pending' ? picState.filename : picState.doc.filename;
+    var nameClass = picState.kind === 'pending' ? 'attachName pending' : 'attachName';
+    var label = picState.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
+    var removeLinkHtml = canManageAll() ? '<span class="removeLink" style="cursor:pointer;" data-pic-remove>Remove</span>' : '';
+    wrap.innerHTML = '<div class="attachRow">' +
+      '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
+      '<div class="attachLinks"><button type="button" id="picViewBtn">View</button>' + removeLinkHtml + '</div>' +
+      attachMetaHtml(picState, 'attachMeta') + '</div>';
+    document.getElementById('picViewBtn').addEventListener('click', function(){
+      if (picState.kind === 'pending') openDocViewer({ filename: picState.filename, mimeType: picState.mimeType, bytes: picState.bytes });
+      else openDocViewer({ filename: picState.doc.filename, mimeType: picState.doc.mimeType, path: picState.doc.path });
+    });
+    var removeBtn = wrap.querySelector('[data-pic-remove]');
+    if (removeBtn) removeBtn.addEventListener('click', async function(){
+      if (!(await confirmDialog('Remove this picture?'))) return;
+      picState = null;
+      renderPicSlot();
+    });
+  }
+
+  function renderReviewComments(){
+    var listEl = document.getElementById('reviewCommentsList');
+    var session = getSession();
+    var myUsername = (session && session.username) || '';
+    if (!reviewCommentsState.length) {
+      listEl.innerHTML = '<div class="attachEmpty">No notes yet.</div>';
+    } else {
+      listEl.innerHTML = reviewCommentsState.map(function(c){
+        var canEditThis = !!editingId && (canManageAll() || c.authorUsername === myUsername);
+        if (editingCommentId === c.id) {
+          return '<div class="reviewCommentRow">' +
+            '<div class="commentMeta">' + escapeHtml(c.authorUsername || 'Unknown') + ' — ' + escapeHtml(fmtDateMDY((c.createdAt || '').slice(0, 10))) + '</div>' +
+            '<textarea class="commentEditInput" data-comment-edit-id="' + escapeHtml(c.id) + '" rows="2">' + escapeHtml(c.text) + '</textarea>' +
+            '<div class="commentEditBtns">' +
+              '<button type="button" class="commentSaveBtn" data-comment-save="' + escapeHtml(c.id) + '">Save</button>' +
+              '<button type="button" class="commentCancelBtn" data-comment-cancel>Cancel</button>' +
+            '</div></div>';
+        }
+        return '<div class="reviewCommentRow">' +
+          '<div class="commentMeta">' + escapeHtml(c.authorUsername || 'Unknown') + ' — ' + escapeHtml(fmtDateMDY((c.createdAt || '').slice(0, 10))) +
+            (c.editedAt ? ' <span class="commentEditedTag">(edited)</span>' : '') +
+            (canEditThis ? ' <button type="button" class="commentEditLink" data-comment-edit="' + escapeHtml(c.id) + '">Edit</button>' : '') +
+          '</div>' +
+          '<div class="commentText">' + escapeHtml(c.text) + '</div>' +
+          '</div>';
+      }).join('');
+
+      listEl.querySelectorAll('[data-comment-edit]').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          editingCommentId = this.getAttribute('data-comment-edit');
+          renderReviewComments();
+        });
+      });
+      listEl.querySelectorAll('[data-comment-cancel]').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          editingCommentId = null;
+          renderReviewComments();
+        });
+      });
+      listEl.querySelectorAll('[data-comment-save]').forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          var commentId = this.getAttribute('data-comment-save');
+          var textarea = listEl.querySelector('[data-comment-edit-id="' + commentId + '"]');
+          var newText = textarea.value.trim();
+          if (!newText) { alert('Comment text is required.'); return; }
+          btn.disabled = true; btn.textContent = 'Saving…';
+          try {
+            var res = await apiFetch('supplier-open-issues/' + encodeURIComponent(editingId) + '/comments/' + encodeURIComponent(commentId), {
+              method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: newText })
+            });
+            var data = {}; try { data = await res.json(); } catch(e){}
+            if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+            reviewCommentsState = Array.isArray(data.comments) ? data.comments : [];
+            editingCommentId = null;
+            renderReviewComments();
+            var idx = lastIssues.findIndex(function(x){ return x.id === editingId; });
+            if (idx !== -1) lastIssues[idx] = data;
+          } catch (err) {
+            alert('Could not save this note (' + (err && err.message ? err.message : err) + ').');
+            btn.disabled = false; btn.textContent = 'Save';
+          }
+        });
+      });
+    }
+    var canComment = (canManageAll() || isSupplierUser()) && !!editingId;
+    document.getElementById('addCommentRow').style.display = canComment ? 'flex' : 'none';
+    document.getElementById('addCommentHint').style.display = (!editingId && (canManageAll() || isSupplierUser())) ? '' : 'none';
+    document.getElementById('supplierSectionNote').style.display = isSupplierUser() ? '' : 'none';
+  }
+  document.getElementById('f_newComment').addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('addCommentBtn').click(); }
+  });
+  document.getElementById('addCommentBtn').addEventListener('click', async function(){
+    var btn = this;
+    var input = document.getElementById('f_newComment');
+    var text = input.value.trim();
+    if (!text || !editingId) return;
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      var res = await apiFetch('supplier-open-issues/' + encodeURIComponent(editingId) + '/comments', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text })
+      });
+      var data = {}; try { data = await res.json(); } catch(e){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      reviewCommentsState = Array.isArray(data.comments) ? data.comments : [];
+      input.value = '';
+      renderReviewComments();
+      var idx = lastIssues.findIndex(function(x){ return x.id === editingId; });
+      if (idx !== -1) lastIssues[idx] = data;
+    } catch (err) {
+      alert('Could not add this note (' + (err && err.message ? err.message : err) + ').');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Add Note';
+    }
+  });
+
+  function setNumberFieldEditable(editable){
+    var input = document.getElementById('f_issueNumber');
+    input.readOnly = !editable;
+    document.getElementById('useSystemIssueBtn').style.display = editable ? '' : 'none';
+  }
+  document.getElementById('useSystemIssueBtn').addEventListener('click', async function(){
+    var btn = this;
+    btn.disabled = true;
+    try {
+      var res = await apiFetch('supplier-open-issues/peek-number');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      document.getElementById('f_issueNumber').value = data.issueNumber;
+    } catch (e) {
+      alert('Could not look up the next system Issue Number (' + (e && e.message ? e.message : e) + ').');
+    } finally { btn.disabled = false; }
+  });
+
+  function applyRoleUIForModal(){
+    setNumberFieldEditable(canManageAll());
+    var allInputs = document.querySelectorAll('#issueForm input, #issueForm select, #issueForm textarea');
+    allInputs.forEach(function(el){
+      if (el.id === 'f_issueNumber' || el.id === 'f_newComment') return;
+      el.disabled = !canManageAll();
+    });
+    document.getElementById('modalSaveBtn').style.display = canManageAll() ? '' : 'none';
+    renderPartNumbers();
+    renderAttachmentsList();
+    renderPicSlot();
+    renderReviewComments();
+  }
+
+  function resetForm(){
+    document.getElementById('issueForm').reset();
+    document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
+    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions('');
+    document.getElementById('f_issueNumber').value = '';
+    partNumberRows = [];
+    attachmentsState = [];
+    picState = null;
+    reviewCommentsState = [];
+    editingCommentId = null;
+    closeChampionPanel();
+    renderChampionPicker([]);
+    setNumberFieldEditable(true);
+    applyRoleUIForModal();
+  }
+
+  function openAddModal(){
+    editingId = null;
+    resetForm();
+    document.getElementById('modalTitle').textContent = 'Add an Open Issue';
+    document.getElementById('modalSub').textContent = 'Issue Number is optional — leave blank to assign automatically, or type your own.';
+    document.getElementById('issueModalOverlay').classList.add('open');
+  }
+  function openEditModal(id){
+    var issue = lastIssues.find(function(x){ return x.id === id; });
+    if (!issue) return;
+    editingId = id;
+    document.getElementById('issueForm').reset();
+    document.getElementById('modalError').textContent = '';
+    document.getElementById('attachError').textContent = '';
+
+    document.getElementById('modalTitle').textContent = (canManageAll() ? 'Edit ' : 'View ') + 'Open Issue ' + issue.issueNumber;
+    document.getElementById('modalSub').textContent = canManageAll() ? 'Issue Number can be corrected any time.' : 'You can view this issue and add notes below.';
+    document.getElementById('f_issueNumber').value = issue.issueNumber;
+    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions(issue.supplierOrg || '');
+    closeChampionPanel();
+    renderChampionPicker(issue.championResponsible || []);
+    document.getElementById('f_status').value = issue.status === 'closed' ? 'closed' : 'open';
+
+    partNumberRows = (issue.partNumbers || []).slice();
+    document.getElementById('f_issueTitle').value = issue.issueTitle || '';
+    document.getElementById('f_issueDescription').value = issue.issueDescription || '';
+    picState = issue.issuePicture ? { kind: 'existing', doc: issue.issuePicture } : null;
+    document.getElementById('f_rootCause').value = issue.rootCause || '';
+    document.getElementById('f_nextAction').value = issue.nextAction || '';
+    document.getElementById('f_interimCM').value = issue.interimCM || '';
+    document.getElementById('f_permCM').value = issue.permCM || '';
+    attachmentsState = (issue.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    reviewCommentsState = Array.isArray(issue.comments) ? issue.comments : [];
+    editingCommentId = null;
+
+    setNumberFieldEditable(canManageAll());
+    applyRoleUIForModal();
+    document.getElementById('issueModalOverlay').classList.add('open');
+  }
+  function closeModal(){ document.getElementById('issueModalOverlay').classList.remove('open'); }
+  document.getElementById('addIssueBtn').addEventListener('click', function(){
+    requireAuthThen(async function(){ await loadDropdownData(); openAddModal(); });
+  });
+  document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+  document.getElementById('issueModalOverlay').addEventListener('click', function(e){
+    if (e.target.id === 'issueModalOverlay') closeModal();
+  });
+
+  async function saveIssue(){
+    var baseFields = {
+      supplierOrg: document.getElementById('f_supplierOrg').value,
+      partNumbers: partNumberRows.filter(Boolean),
+      issueTitle: document.getElementById('f_issueTitle').value.trim(),
+      issueDescription: document.getElementById('f_issueDescription').value.trim(),
+      rootCause: document.getElementById('f_rootCause').value.trim(),
+      interimCM: document.getElementById('f_interimCM').value.trim(),
+      permCM: document.getElementById('f_permCM').value.trim(),
+      nextAction: document.getElementById('f_nextAction').value.trim(),
+      championResponsible: getSelectedChampions(),
+      status: document.getElementById('f_status').value
+    };
+    if (!baseFields.supplierOrg) throw new Error('Select a Supplier Organization.');
+
+    var issueId = editingId;
+    if (!issueId) {
+      var createFields = Object.assign({}, baseFields);
+      createFields.issueNumber = document.getElementById('f_issueNumber').value.trim();
+      var createRes = await apiFetch('supplier-open-issues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createFields) });
+      var createData = {}; try { createData = await createRes.json(); } catch(e){}
+      if (!createRes.ok) throw new Error(createData.message || ('HTTP ' + createRes.status));
+      issueId = createData.id;
+      editingId = issueId;
+      // Reflect the system-assigned Issue Number (when the field was left
+      // blank) back into the form before the finalize-PUT below, which
+      // requires a non-empty issueNumber on every save.
+      document.getElementById('f_issueNumber').value = createData.issueNumber;
+    }
+
+    var attachmentsPayload = [];
+    for (var ai = 0; ai < attachmentsState.length; ai++) {
+      var attEntry = attachmentsState[ai];
+      if (attEntry.kind === 'existing') {
+        attachmentsPayload.push(attEntry.doc);
+      } else {
+        var attPath = buildDocPath(issueId, 'attachments', attEntry.filename, ai);
+        await ghPutFile(attPath, attEntry.bytes, 'Upload attachment for Open Issue ' + issueId);
+        attachmentsPayload.push(Object.assign({ path: attPath, filename: attEntry.filename, mimeType: attEntry.mimeType, size: attEntry.bytes.length, comment: attEntry.comment || '' }, stampUpload()));
+      }
+    }
+    baseFields.attachments = attachmentsPayload;
+
+    if (picState && picState.kind === 'existing') {
+      baseFields.issuePicture = picState.doc;
+    } else if (picState && picState.kind === 'pending') {
+      var picPath = buildDocPath(issueId, 'picture', picState.filename, 0);
+      await ghPutFile(picPath, picState.bytes, 'Upload issue picture for Open Issue ' + issueId);
+      baseFields.issuePicture = Object.assign({ path: picPath, filename: picState.filename, mimeType: picState.mimeType, size: picState.bytes.length }, stampUpload());
+    } else {
+      baseFields.issuePicture = null;
+    }
+    baseFields.issueNumber = document.getElementById('f_issueNumber').value.trim();
+
+    var putRes = await apiFetch('supplier-open-issues/' + encodeURIComponent(issueId), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(baseFields)
+    });
+    var putData = {}; try { putData = await putRes.json(); } catch(e){}
+    if (!putRes.ok) throw new Error(putData.message || ('HTTP ' + putRes.status));
+
+    attachmentsState = (putData.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
+    renderAttachmentsList();
+    picState = putData.issuePicture ? { kind: 'existing', doc: putData.issuePicture } : null;
+    renderPicSlot();
+    reviewCommentsState = Array.isArray(putData.comments) ? putData.comments : reviewCommentsState;
+    renderReviewComments();
+
+    return putData;
+  }
+
+  document.getElementById('issueForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var errEl = document.getElementById('modalError');
+    var saveBtn = document.getElementById('modalSaveBtn');
+    errEl.textContent = '';
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      await saveIssue();
+      closeModal();
+      await loadIssues();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not save this open issue.';
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+  // -----------------------------------------------------------------------------
+
+  // ---- Download Excel ----------------------------------------------------------
+  var JSZIP_CDN = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+  function loadScriptOnce(src){
+    return new Promise(function(resolve, reject){
+      var existing = document.querySelector('script[data-src="' + src + '"]');
+      if (existing) { existing.addEventListener('load', resolve); if (existing.getAttribute('data-loaded')) resolve(); return; }
+      var s = document.createElement('script');
+      s.src = src; s.setAttribute('data-src', src);
+      s.onload = function(){ s.setAttribute('data-loaded', '1'); resolve(); };
+      s.onerror = function(){ reject(new Error('Could not load ' + src + '.')); };
+      document.head.appendChild(s);
+    });
+  }
+  function xlColLetter(n){
+    var s = '';
+    while (n > 0) { var rem = (n - 1) % 26; s = String.fromCharCode(65 + rem) + s; n = Math.floor((n - 1) / 26); }
+    return s;
+  }
+  function xmlEscape(s){
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;' }[c];
+    });
+  }
+  function xlInlineStrCell(ref, text, styleIdx){
+    return '<c r="' + ref + '" t="inlineStr" s="' + styleIdx + '"><is><t xml:space="preserve">' + xmlEscape(text) + '</t></is></c>';
+  }
+  function xlNumberCell(ref, num, styleIdx){
+    var v = (typeof num === 'number' && isFinite(num)) ? num : 0;
+    return '<c r="' + ref + '" s="' + styleIdx + '"><v>' + v + '</v></c>';
+  }
+  function truncateForExport(str, max){
+    var s = (str || '').toString();
+    return s.length > max ? s.slice(0, max - 1) + '…' : s;
+  }
+
+  var XLSX_COLUMNS = [
+    { header: 'Issue #', width: 12, key: 'issueNumber' },
+    { header: 'Status', width: 11, key: 'status', statusStyled: true },
+    { header: 'Supplier Organization', width: 24, key: 'supplierOrg' },
+    { header: 'Part Number(s)', width: 20, key: 'partNumbers' },
+    { header: 'Issue Title', width: 26, key: 'issueTitle', wrap: true },
+    { header: 'Issue Description', width: 34, key: 'issueDescription', wrap: true },
+    { header: 'Root Cause', width: 28, key: 'rootCause', wrap: true },
+    { header: 'Interim C/M', width: 28, key: 'interimCM', wrap: true },
+    { header: 'Perm C/M', width: 28, key: 'permCM', wrap: true },
+    { header: 'Next Action', width: 26, key: 'nextAction', wrap: true },
+    { header: 'Champion/Responsible', width: 20, key: 'championResponsible' },
+    { header: 'Attachments', width: 11, key: 'attachmentCount', numeric: true },
+    { header: 'Has Picture', width: 15, key: 'hasPicture', isPicture: true },
+    { header: 'Notes Count', width: 11, key: 'notesCount', numeric: true },
+    { header: 'Latest Note', width: 36, key: 'latestNote', wrap: true }
+  ];
+  var XLSX_PICTURE_COL_INDEX = XLSX_COLUMNS.findIndex(function(c){ return c.isPicture; });
+  function issueToExportRow(issue){
+    var comments = Array.isArray(issue.comments) ? issue.comments : [];
+    var latest = comments.length ? comments[comments.length - 1] : null;
+    return {
+      issueNumber: issue.issueNumber,
+      status: issue.status === 'closed' ? 'Closed' : 'Open',
+      supplierOrg: issue.supplierOrg || '',
+      partNumbers: (issue.partNumbers || []).join(', '),
+      issueTitle: truncateForExport(issue.issueTitle, 300),
+      issueDescription: truncateForExport(issue.issueDescription, 300),
+      rootCause: truncateForExport(issue.rootCause, 300),
+      interimCM: truncateForExport(issue.interimCM, 300),
+      permCM: truncateForExport(issue.permCM, 300),
+      nextAction: truncateForExport(issue.nextAction, 300),
+      championResponsible: (issue.championResponsible || []).map(championDisplayName).join(', '),
+      attachmentCount: (issue.attachments || []).length,
+      hasPicture: (issue.issuePicture && issue.issuePicture.path) ? '' : 'No',
+      notesCount: comments.length,
+      latestNote: latest ? (fmtDateMDY((latest.createdAt || '').slice(0, 10)) + ' — ' + (latest.authorUsername || 'Unknown') + ': ' + truncateForExport(latest.text, 200)) : ''
+    };
+  }
+
+  function groupIssuesByPartNumber(issues){
+    var groups = {};
+    var order = [];
+    var noPart = [];
+    issues.forEach(function(issue){
+      var parts = (issue.partNumbers || []).filter(Boolean);
+      if (!parts.length) { noPart.push(issue); return; }
+      parts.forEach(function(p){
+        if (!groups[p]) { groups[p] = []; order.push(p); }
+        groups[p].push(issue);
+      });
+    });
+    order.sort(function(a, b){ return a.localeCompare(b, undefined, { numeric: true }); });
+    var result = order.map(function(p){ return { name: p, issues: groups[p] }; });
+    if (noPart.length) result.push({ name: 'No Part Number', issues: noPart });
+    if (!result.length) result.push({ name: 'Open Issues', issues: [] });
+    return result;
+  }
+  function sanitizeSheetName(name, used){
+    var s = (name || 'Sheet').toString().replace(/[\\/?*[\]:]/g, '_').trim();
+    if (!s) s = 'Sheet';
+    if (s.length > 31) s = s.slice(0, 31);
+    var base = s, n = 2;
+    while (used[s]) {
+      var suffix = ' (' + n + ')';
+      s = base.slice(0, 31 - suffix.length) + suffix;
+      n++;
+    }
+    used[s] = true;
+    return s;
+  }
+
+  var XLSX_PIC_PX = 84;
+  var XLSX_PIC_EMU = XLSX_PIC_PX * 9525;
+
+  async function buildOpenIssuesXlsxBytes(issues){
+    await loadScriptOnce(JSZIP_CDN);
+    var zip = new window.JSZip();
+    var colCount = XLSX_COLUMNS.length;
+    var lastCol = xlColLetter(colCount);
+    var groups = groupIssuesByPartNumber(issues);
+    var usedNames = {};
+    var sheetEntries = [];
+    var drawingCount = 0;
+    var mediaCount = 0;
+
+    for (var gi = 0; gi < groups.length; gi++) {
+      var group = groups[gi];
+      var groupIssues = group.issues;
+      var sheetIndex = gi + 1;
+      var firstDataRow = 4;
+      var lastRow = firstDataRow + Math.max(groupIssues.length, 1) - 1;
+
+      var rows = [];
+      rows.push('<row r="1" ht="26" customHeight="1">' + xlInlineStrCell('A1', 'Supplier Open Issues List — ' + group.name, 1) + '</row>');
+      var subtitle = 'Generated ' + fmtDateMDY(new Date().toISOString().slice(0, 10)) + '  ·  ' + groupIssues.length + ' issue' + (groupIssues.length === 1 ? '' : 's');
+      rows.push('<row r="2" ht="18" customHeight="1">' + xlInlineStrCell('A2', subtitle, 2) + '</row>');
+      rows.push('<row r="3" ht="30" customHeight="1">' + XLSX_COLUMNS.map(function(col, i){ return xlInlineStrCell(xlColLetter(i + 1) + '3', col.header, 3); }).join('') + '</row>');
+
+      var drawingRels = [];
+      var drawingPics = [];
+      var picRidCounter = 0;
+
+      for (var ri = 0; ri < groupIssues.length; ri++) {
+        var issue = groupIssues[ri];
+        var rowNum = firstDataRow + ri;
+        var values = issueToExportRow(issue);
+        var cells = XLSX_COLUMNS.map(function(col, i){
+          var ref = xlColLetter(i + 1) + rowNum;
+          var raw = values[col.key];
+          if (col.statusStyled) return xlInlineStrCell(ref, raw, issue.status === 'closed' ? 8 : 7);
+          if (col.numeric) return xlNumberCell(ref, raw, 5);
+          return xlInlineStrCell(ref, raw, col.wrap ? 4 : 6);
+        }).join('');
+        rows.push('<row r="' + rowNum + '" ht="64" customHeight="1">' + cells + '</row>');
+
+        if (issue.issuePicture && issue.issuePicture.path) {
+          var picBytes = null;
+          try { picBytes = await ghGetFileBytes(issue.issuePicture.path); } catch (e) { console.error('Could not load issue picture for export', e); }
+          if (picBytes) {
+            mediaCount++;
+            var mimeType = issue.issuePicture.mimeType || 'image/jpeg';
+            var ext = mimeType.indexOf('png') !== -1 ? 'png' : 'jpeg';
+            var mediaName = 'image' + mediaCount + '.' + ext;
+            zip.file('xl/media/' + mediaName, picBytes);
+            picRidCounter++;
+            var picRid = 'rId' + picRidCounter;
+            drawingRels.push('<Relationship Id="' + picRid + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/' + mediaName + '"/>');
+            drawingPics.push(
+              '<xdr:oneCellAnchor>' +
+              '<xdr:from><xdr:col>' + XLSX_PICTURE_COL_INDEX + '</xdr:col><xdr:colOff>4000</xdr:colOff><xdr:row>' + (rowNum - 1) + '</xdr:row><xdr:rowOff>4000</xdr:rowOff></xdr:from>' +
+              '<xdr:ext cx="' + XLSX_PIC_EMU + '" cy="' + XLSX_PIC_EMU + '"/>' +
+              '<xdr:pic>' +
+              '<xdr:nvPicPr><xdr:cNvPr id="' + (picRidCounter + 1) + '" name="Picture ' + picRidCounter + '"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>' +
+              '<xdr:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="' + picRid + '"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>' +
+              '<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + XLSX_PIC_EMU + '" cy="' + XLSX_PIC_EMU + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>' +
+              '</xdr:pic>' +
+              '<xdr:clientData/>' +
+              '</xdr:oneCellAnchor>'
+            );
+          }
+        }
+      }
+
+      var sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<dimension ref="A1:' + lastCol + lastRow + '"/>' +
+        '<sheetViews><sheetView tabSelected="' + (gi === 0 ? '1' : '0') + '" workbookViewId="0"><pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A4" sqref="A4"/></sheetView></sheetViews>' +
+        '<sheetFormatPr defaultRowHeight="15"/>' +
+        '<cols>' + XLSX_COLUMNS.map(function(col, i){ return '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + col.width + '" customWidth="1"/>'; }).join('') + '</cols>' +
+        '<sheetData>' + rows.join('') + '</sheetData>' +
+        (groupIssues.length ? '<autoFilter ref="A3:' + lastCol + lastRow + '"/>' : '') +
+        '<mergeCells count="2"><mergeCell ref="A1:' + lastCol + '1"/><mergeCell ref="A2:' + lastCol + '2"/></mergeCells>';
+
+      if (drawingPics.length) {
+        drawingCount++;
+        var drawingXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+          drawingPics.join('') +
+          '</xdr:wsDr>';
+        zip.file('xl/drawings/drawing' + drawingCount + '.xml', drawingXml);
+        zip.file('xl/drawings/_rels/drawing' + drawingCount + '.xml.rels',
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + drawingRels.join('') + '</Relationships>');
+        sheetXml += '<drawing r:id="rId1"/>';
+        zip.file('xl/worksheets/_rels/sheet' + sheetIndex + '.xml.rels',
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing' + drawingCount + '.xml"/>' +
+          '</Relationships>');
+      }
+      sheetXml += '</worksheet>';
+
+      zip.file('xl/worksheets/sheet' + sheetIndex + '.xml', sheetXml);
+      sheetEntries.push({ sheetId: sheetIndex, rId: 'rId' + sheetIndex, name: sanitizeSheetName(group.name, usedNames) });
+    }
+
+    var stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<fonts count="6">' +
+        '<font><sz val="11"/><name val="Calibri"/></font>' +
+        '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>' +
+        '<font><b/><sz val="16"/><color rgb="FF2B4EA3"/><name val="Calibri"/></font>' +
+        '<font><i/><sz val="10"/><color rgb="FF5B5F66"/><name val="Calibri"/></font>' +
+        '<font><b/><sz val="11"/><color rgb="FF8A6D00"/><name val="Calibri"/></font>' +
+        '<font><b/><sz val="11"/><color rgb="FF187B46"/><name val="Calibri"/></font>' +
+      '</fonts>' +
+      '<fills count="5">' +
+        '<fill><patternFill patternType="none"/></fill>' +
+        '<fill><patternFill patternType="gray125"/></fill>' +
+        '<fill><patternFill patternType="solid"><fgColor rgb="FF2B4EA3"/><bgColor indexed="64"/></patternFill></fill>' +
+        '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF6CC"/><bgColor indexed="64"/></patternFill></fill>' +
+        '<fill><patternFill patternType="solid"><fgColor rgb="FFE5F4EC"/><bgColor indexed="64"/></patternFill></fill>' +
+      '</fills>' +
+      '<borders count="2">' +
+        '<border><left/><right/><top/><bottom/><diagonal/></border>' +
+        '<border><left style="thin"><color rgb="FFDDE0E6"/></left><right style="thin"><color rgb="FFDDE0E6"/></right><top style="thin"><color rgb="FFDDE0E6"/></top><bottom style="thin"><color rgb="FFDDE0E6"/></bottom><diagonal/></border>' +
+      '</borders>' +
+      '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+      '<cellXfs count="9">' +
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+        '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"><alignment vertical="center"/></xf>' +
+        '<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"><alignment vertical="center"/></xf>' +
+        '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"><alignment horizontal="left" vertical="top" wrapText="1"/></xf>' +
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"><alignment horizontal="center" vertical="top"/></xf>' +
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"><alignment horizontal="left" vertical="top"/></xf>' +
+        '<xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"><alignment horizontal="center" vertical="center"/></xf>' +
+        '<xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"><alignment horizontal="center" vertical="center"/></xf>' +
+      '</cellXfs>' +
+      '</styleSheet>';
+
+    var workbookXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+      '<sheets>' + sheetEntries.map(function(s){ return '<sheet name="' + xmlEscape(s.name) + '" sheetId="' + s.sheetId + '" r:id="' + s.rId + '"/>'; }).join('') + '</sheets>' +
+      '</workbook>';
+
+    var stylesRid = 'rId' + (sheetEntries.length + 1);
+    var workbookRelsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      sheetEntries.map(function(s){ return '<Relationship Id="' + s.rId + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + s.sheetId + '.xml"/>'; }).join('') +
+      '<Relationship Id="' + stylesRid + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+      '</Relationships>';
+
+    var rootRelsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+      '</Relationships>';
+
+    var contentTypesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+      '<Default Extension="xml" ContentType="application/xml"/>' +
+      '<Default Extension="jpeg" ContentType="image/jpeg"/>' +
+      '<Default Extension="png" ContentType="image/png"/>' +
+      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+      sheetEntries.map(function(s){ return '<Override PartName="/xl/worksheets/sheet' + s.sheetId + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'; }).join('') +
+      (function(){ var out = ''; for (var d = 1; d <= drawingCount; d++) out += '<Override PartName="/xl/drawings/drawing' + d + '.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'; return out; })() +
+      '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+      '</Types>';
+
+    zip.file('[Content_Types].xml', contentTypesXml);
+    zip.file('_rels/.rels', rootRelsXml);
+    zip.file('xl/workbook.xml', workbookXml);
+    zip.file('xl/_rels/workbook.xml.rels', workbookRelsXml);
+    zip.file('xl/styles.xml', stylesXml);
+
+    return await zip.generateAsync({ type: 'uint8array' });
+  }
+
+  document.getElementById('downloadExcelBtn').addEventListener('click', async function(){
+    var btn = this;
+    var originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Preparing…';
+    try {
+      var bytes = await buildOpenIssuesXlsxBytes(lastIssues);
+      var blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'Supplier Open Issues List - ' + new Date().toISOString().slice(0, 10) + '.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+    } catch (err) {
+      alert('Could not generate the Excel file (' + (err && err.message ? err.message : err) + ').');
+    } finally {
+      btn.disabled = false; btn.textContent = originalText;
+    }
+  });
+  // -----------------------------------------------------------------------------
+
+  requireAuthThen(async function(){ await resolveMe(); applyAccessLevelUI(); await loadDropdownData(); await loadIssues(); });
+})();
+</script>
