@@ -2021,18 +2021,26 @@ async function createPasswordlessEnrollToken(env, username) {
   const token = generatePasswordlessEnrollToken();
   const nowMs = Date.now();
   await mutateJsonObjectFile(env, PASSWORDLESS_ENROLL_TOKENS_FILE_PATH, {}, function (obj) {
-    obj[token] = { username: username, createdAt: nowMs, expiresAt: nowMs + PASSWORDLESS_ENROLL_TOKEN_TTL_HOURS * 3600 * 1000, usedAt: null };
+    // pendingSecretEnc/pendingSecretIv (set by handlePasswordlessEnrollStart
+    // below) stage a freshly generated TOTP secret against the TOKEN, not
+    // the account - this is what lets a re-enrollment link exist alongside
+    // a still-working old secret until the moment it's actually confirmed.
+    // See the module comment above PASSWORDLESS_ENROLL_TOKENS_FILE_PATH.
+    obj[token] = {
+      username: username, createdAt: nowMs, expiresAt: nowMs + PASSWORDLESS_ENROLL_TOKEN_TTL_HOURS * 3600 * 1000, usedAt: null,
+      pendingSecretEnc: null, pendingSecretIv: null
+    };
     return { obj: obj };
   });
   return token;
 }
-// Returns the username for a still-valid (unused, unexpired) token, or null.
-async function resolveValidPasswordlessEnrollToken(env, token) {
+// Returns the still-valid (unused, unexpired) token's full entry, or null.
+async function resolveValidPasswordlessEnrollTokenEntry(env, token) {
   if (!token) return null;
   const state = await readJsonObjectFile(env, PASSWORDLESS_ENROLL_TOKENS_FILE_PATH, {});
   const entry = state.obj[token];
   if (!entry || entry.usedAt || entry.expiresAt < Date.now()) return null;
-  return entry.username;
+  return entry;
 }
 async function consumePasswordlessEnrollToken(env, token) {
   await mutateJsonObjectFile(env, PASSWORDLESS_ENROLL_TOKENS_FILE_PATH, {}, function (obj) {
@@ -2057,32 +2065,58 @@ async function handleAdminCreatePasswordlessEnrollLink(env, origin, id, adminUse
 }
 
 // Public - the token itself is the credential (nobody is signed in yet).
-// Same step shape as handleLoginMfaEnroll ('start' then 'confirm'), reusing
-// handleMfaTotpEnroll for the QR/secret generation, but ends at ok:true
-// rather than issuing a session - enrolling isn't logging in, and this
-// deliberately never generates backup codes (see the module comment above).
+// Same step shape as handleLoginMfaEnroll ('start' then 'confirm'), but does
+// NOT reuse handleMfaTotpEnroll: that function (a) refuses to run at all
+// once an account already has TOTP enabled, and (b) even when it does run,
+// it overwrites u.mfa.totp on the 'start' step itself, before any code is
+// ever confirmed. Neither is safe here - this link IS the account's
+// re-enrollment path when a device is lost (see the module comment above
+// PASSWORDLESS_ENROLL_TOKENS_FILE_PATH: "not a password reset, since these
+// accounts have no password"), and merely generating/opening a link must
+// never disturb a still-working old secret before the new one is actually
+// confirmed (an admin who generates a link by mistake, or a user who never
+// finishes, must not get locked out). So the freshly generated secret is
+// staged on the TOKEN itself (pendingSecretEnc/Iv) at 'start', and only
+// swapped into u.mfa.totp - fully replacing whatever was there, first-time
+// or re-enrollment alike - at the moment 'confirm' actually succeeds.
+// Deliberately never generates backup codes (see the module comment above).
+async function handlePasswordlessEnrollStart(env, origin, token, entry) {
+  // Idempotent: reloading the enrollment page (or scanning, then coming
+  // back) must show the SAME QR code, not silently mint a new one that
+  // invalidates whatever the user already scanned.
+  if (entry.pendingSecretEnc) {
+    const secretBase32 = await decryptTotpSecret(env, entry.pendingSecretEnc, entry.pendingSecretIv);
+    return json({ otpauthUri: buildOtpauthUri(secretBase32, entry.username), secret: secretBase32 }, 200, origin);
+  }
+  const secretBase32 = generateTotpSecret();
+  const enc = await encryptTotpSecret(env, secretBase32);
+  await mutateJsonObjectFile(env, PASSWORDLESS_ENROLL_TOKENS_FILE_PATH, {}, function (obj) {
+    const e = obj[token];
+    if (e && !e.usedAt) { e.pendingSecretEnc = enc.secretEnc; e.pendingSecretIv = enc.secretIv; }
+    return { obj: obj };
+  });
+  return json({ otpauthUri: buildOtpauthUri(secretBase32, entry.username), secret: secretBase32 }, 200, origin);
+}
+
 async function handlePasswordlessEnroll(request, env, origin) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const token = (body.token || '').toString();
-  const username = await resolveValidPasswordlessEnrollToken(env, token);
-  if (!username) return json({ message: 'This enrollment link is invalid, expired, or already used — ask your admin for a new one.' }, 400, origin);
+  const entry = await resolveValidPasswordlessEnrollTokenEntry(env, token);
+  if (!entry) return json({ message: 'This enrollment link is invalid, expired, or already used — ask your admin for a new one.' }, 400, origin);
+  const username = entry.username;
   const step = (body.step || 'start').toString();
   const usernameLower = username.toLowerCase();
 
-  if (step === 'start') return await handleMfaTotpEnroll(env, origin, username);
+  if (step === 'start') return await handlePasswordlessEnrollStart(env, origin, token, entry);
 
   if (step === 'confirm') {
     const code = (body.code || '').toString();
     if (await isMfaVerifyLocked(env, usernameLower)) {
       return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
     }
-    const fileState = await readUsersFile(env);
-    const target = findUserByUsername(fileState.users, username);
-    if (!target || !target.mfa || !target.mfa.totp || !target.mfa.totp.secretEnc) {
-      return json({ message: 'Start enrollment first.' }, 400, origin);
-    }
-    const secretBase32 = await decryptTotpSecret(env, target.mfa.totp.secretEnc, target.mfa.totp.secretIv);
+    if (!entry.pendingSecretEnc) return json({ message: 'Start enrollment first.' }, 400, origin);
+    const secretBase32 = await decryptTotpSecret(env, entry.pendingSecretEnc, entry.pendingSecretIv);
     const matchedStep = await verifyTotpCode(secretBase32, code, null);
     if (matchedStep === null) {
       const attempt = await recordFailedMfaVerify(env, usernameLower);
@@ -2090,13 +2124,15 @@ async function handlePasswordlessEnroll(request, env, origin) {
       return json({ message: 'Incorrect code — please try again.' }, 400, origin);
     }
     const nowIso = new Date().toISOString();
+    // Full replace, not a merge - a re-enrollment's old secretEnc/secretIv
+    // (and lastUsedStep, tied to that old secret) are discarded entirely,
+    // so codes from a lost/old device stop working the instant this commits.
     const result = await mutateUsersFile(env, function (users) {
       const u = findUserByUsername(users, username);
-      if (!u || !u.mfa || !u.mfa.totp) return null;
-      u.mfa.totp.enabled = true;
-      u.mfa.totp.confirmedAt = nowIso;
-      u.mfa.totp.lastUsedStep = matchedStep;
-      u.mfa.enrolledAt = u.mfa.enrolledAt || nowIso;
+      if (!u) return null;
+      u.mfa = u.mfa || {};
+      u.mfa.totp = { enabled: true, secretEnc: entry.pendingSecretEnc, secretIv: entry.pendingSecretIv, confirmedAt: nowIso, lastUsedStep: matchedStep };
+      u.mfa.enrolledAt = nowIso;
       return { users: users };
     });
     if (result === 'not-found' || !result.ok) return json({ message: 'Could not confirm — please try again.' }, 409, origin);
