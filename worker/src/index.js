@@ -117,6 +117,27 @@
  * ROUTES
  *   GET    /health                    - no auth; quick "is this deployed" check
  *   POST   /login                     - { username, password } -> { token, username, expiresAt }
+ *   POST   /login/start               - no auth; { username } -> { mode }. mode is 'password'
+ *                                        (unflagged/unknown/inactive - the normal form proceeds
+ *                                        exactly as always), 'passwordless_not_enrolled',
+ *                                        'passwordless_locked', or 'passwordless_totp_required'
+ *                                        (+ pendingToken) for a passwordLoginDisabled account -
+ *                                        see the module comment near
+ *                                        PASSWORDLESS_ENROLL_TOKENS_FILE_PATH. Never leaks
+ *                                        whether an unflagged username exists.
+ *   POST   /login/passwordless/totp   - no auth; { pendingToken, code } -> verifies the
+ *                                        authenticator app code (factor 1 of 2), then auto-sends
+ *                                        the email code and returns a stage-2 pendingToken.
+ *   POST   /login/passwordless/email/resend - no auth; { pendingToken (stage 2) } -> re-sends
+ *                                        the email code, rate-limited like the normal MFA
+ *                                        email fallback.
+ *   POST   /login/passwordless/email/verify - no auth; { pendingToken (stage 2), code } ->
+ *                                        verifies the email code (factor 2 of 2) and only then
+ *                                        issues a real session -> { token, username, expiresAt }.
+ *   POST   /passwordless/enroll       - no auth; { token, step: 'start'|'confirm', code } - the
+ *                                        one-time admin-issued enrollment link's own TOTP
+ *                                        enroll/confirm flow (see
+ *                                        POST /admin/users/<id>/passwordless-enroll-link below).
  *   GET    /users                     - no auth; -> { usernames: [...] }, active team-member
  *                                        logins only. Never salts/hashes. Kept for any page
  *                                        that just wants a plain "who can sign in" list.
@@ -138,6 +159,10 @@
  *   DELETE /admin/users/<id>          - super_admin required; remove one (file ids only - a
  *                                        not-yet-migrated legacy id can't be deleted this way;
  *                                        edit it and turn off Active instead).
+ *   POST   /admin/users/<id>/passwordless-enroll-link - super_admin required; mints a 48-hour
+ *                                        single-use token for a passwordLoginDisabled account
+ *                                        that hasn't enrolled its authenticator app yet -
+ *                                        -> { token, expiresInHours }.
  *   POST   /admin/import-legacy       - super_admin required; pulls any STAFF_USERS-secret
  *                                        logins not already in the file into the file,
  *                                        unchanged otherwise, so they show up as editable rows.
@@ -492,6 +517,25 @@ export default {
         return await handleLoginMfaEnroll(request, env, origin);
       }
 
+      // ---- Passwordless login (flagged accounts) - see the module comment
+      // near PASSWORDLESS_ENROLL_TOKENS_FILE_PATH. All public - nobody has a
+      // session yet at any of these steps.
+      if (url.pathname === '/login/start' && request.method === 'POST') {
+        return await handleLoginStart(request, env, origin);
+      }
+      if (url.pathname === '/login/passwordless/totp' && request.method === 'POST') {
+        return await handleLoginPasswordlessTotp(request, env, origin);
+      }
+      if (url.pathname === '/login/passwordless/email/resend' && request.method === 'POST') {
+        return await handleLoginPasswordlessEmailResend(request, env, origin);
+      }
+      if (url.pathname === '/login/passwordless/email/verify' && request.method === 'POST') {
+        return await handleLoginPasswordlessEmailVerify(request, env, origin);
+      }
+      if (url.pathname === '/passwordless/enroll' && request.method === 'POST') {
+        return await handlePasswordlessEnroll(request, env, origin);
+      }
+
       if (url.pathname === '/users' && request.method === 'GET') {
         return await handleListUsers(env, origin);
       }
@@ -576,6 +620,13 @@ export default {
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         if (request.method === 'GET') return await handleAdminListUsers(env, origin);
         if (request.method === 'POST') return await handleAdminCreateUser(request, env, origin);
+      }
+
+      if (/^\/admin\/users\/[^/]+\/passwordless-enroll-link$/.test(url.pathname) && request.method === 'POST') {
+        const auth = await requireRole(request, env, ['super_admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        const userId = decodeURIComponent(url.pathname.split('/')[3]);
+        return await handleAdminCreatePasswordlessEnrollLink(env, origin, userId, auth.username);
       }
 
       if (url.pathname.startsWith('/admin/users/')) {
@@ -1655,6 +1706,14 @@ async function handleLogin(request, env, origin) {
     // relationship gating here.
     if (!fileMatch.username || !fileMatch.hash) return badCreds();
     if (fileMatch.active === false) return json({ message: 'This account has been deactivated.' }, 401, origin);
+    // Defense in depth: a passwordLoginDisabled account must never
+    // authenticate via a password, no matter what a client sends here - the
+    // real entry point is POST /login/start (see handleLoginStart). This
+    // doesn't count as a lockable failed attempt (it's not a guessing
+    // attack surface the way a wrong password is), and reads identically
+    // to "Invalid username or password" so nothing about this gate leaks
+    // through /login itself.
+    if (fileMatch.passwordLoginDisabled) return badCreds();
     const accessLevel = await resolveAccessLevel(env, fileMatch.username);
     const lockable = accessLevel !== 'super_admin';
     if (lockable && await isLoginLocked(env, usernameLower)) return lockedOut();
@@ -1914,6 +1973,316 @@ async function handleLoginMfaEnroll(request, env, origin) {
 
   return json({ message: 'Unknown step.' }, 400, origin);
 }
+
+// ---- Passwordless login (flagged accounts) --------------------------------
+// An account with passwordLoginDisabled=true has no password at all (see
+// handleAdminCreateUser/handleAdminUpdateUser - salt/hash stay null) and
+// signs in with genuine two-factor instead: an authenticator app code AND
+// an emailed code, BOTH required together - never an either/or choice the
+// way the normal password+MFA flow's 2nd factor is. No password field is
+// ever part of this flow, at any step:
+//   POST /login/start                     - public; username only, decides
+//                                            whether this account needs the
+//                                            normal password field at all.
+//   POST /login/passwordless/totp         - public; verifies the
+//                                            authenticator code, then sends
+//                                            the email code automatically.
+//   POST /login/passwordless/email/resend - public; re-sends the email code
+//                                            (rate-limited the same as the
+//                                            normal MFA email fallback).
+//   POST /login/passwordless/email/verify - public; verifies the email
+//                                            code and, only then, issues a
+//                                            real session.
+// Enrollment (since these accounts never reach the normal post-password MFA
+// setup screen) is a separate, admin-initiated, single-use link:
+//   POST /admin/users/<id>/passwordless-enroll-link - super_admin; mints a
+//                                            48-hour single-use token for a
+//                                            flagged account.
+//   POST /passwordless/enroll             - public; the token itself is the
+//                                            credential (nobody is signed in
+//                                            yet) - same TOTP enroll/confirm
+//                                            shape as handleLoginMfaEnroll,
+//                                            but deliberately never issues
+//                                            backup codes (a backup code
+//                                            would be a way to bypass the
+//                                            "both factors required"
+//                                            guarantee, since this flow's
+//                                            own login routes only ever
+//                                            accept a TOTP code here).
+const PASSWORDLESS_ENROLL_TOKENS_FILE_PATH = 'data/passwordless_enroll_tokens.json';
+const PASSWORDLESS_ENROLL_TOKEN_TTL_HOURS = 48;
+const PASSWORDLESS_PENDING_TOKEN_TTL_SECONDS = 10 * 60; // stage 1: username submitted, TOTP not yet verified
+const PASSWORDLESS_STAGE2_TOKEN_TTL_SECONDS = 10 * 60;  // stage 2: TOTP verified, email code not yet verified
+
+function generatePasswordlessEnrollToken() {
+  return hexEncode(crypto.getRandomValues(new Uint8Array(24))); // 48 hex chars, unguessable
+}
+async function createPasswordlessEnrollToken(env, username) {
+  const token = generatePasswordlessEnrollToken();
+  const nowMs = Date.now();
+  await mutateJsonObjectFile(env, PASSWORDLESS_ENROLL_TOKENS_FILE_PATH, {}, function (obj) {
+    obj[token] = { username: username, createdAt: nowMs, expiresAt: nowMs + PASSWORDLESS_ENROLL_TOKEN_TTL_HOURS * 3600 * 1000, usedAt: null };
+    return { obj: obj };
+  });
+  return token;
+}
+// Returns the username for a still-valid (unused, unexpired) token, or null.
+async function resolveValidPasswordlessEnrollToken(env, token) {
+  if (!token) return null;
+  const state = await readJsonObjectFile(env, PASSWORDLESS_ENROLL_TOKENS_FILE_PATH, {});
+  const entry = state.obj[token];
+  if (!entry || entry.usedAt || entry.expiresAt < Date.now()) return null;
+  return entry.username;
+}
+async function consumePasswordlessEnrollToken(env, token) {
+  await mutateJsonObjectFile(env, PASSWORDLESS_ENROLL_TOKENS_FILE_PATH, {}, function (obj) {
+    const entry = obj[token];
+    if (entry) entry.usedAt = new Date().toISOString();
+    return { obj: obj };
+  });
+}
+
+// super_admin gate: only ever generated for an account that's actually
+// flagged, and only once it has a username to enroll against.
+async function handleAdminCreatePasswordlessEnrollLink(env, origin, id, adminUsername) {
+  if (id.indexOf('legacy:') === 0) return json({ message: 'Save this person into the new list first.' }, 400, origin);
+  const fileState = await readUsersFile(env);
+  const target = fileState.users.find(function (u) { return u.id === id; });
+  if (!target) return json({ message: 'Not found.' }, 404, origin);
+  if (!target.username) return json({ message: 'Give this person a login (username) first.' }, 400, origin);
+  if (!target.passwordLoginDisabled) return json({ message: 'Turn on "No password login" for this account first.' }, 400, origin);
+  const token = await createPasswordlessEnrollToken(env, target.username);
+  await appendMfaAuditLog(env, { actor: adminUsername, action: 'passwordless_enroll_link_created', target: target.username, before: null, after: null });
+  return json({ token: token, expiresInHours: PASSWORDLESS_ENROLL_TOKEN_TTL_HOURS }, 200, origin);
+}
+
+// Public - the token itself is the credential (nobody is signed in yet).
+// Same step shape as handleLoginMfaEnroll ('start' then 'confirm'), reusing
+// handleMfaTotpEnroll for the QR/secret generation, but ends at ok:true
+// rather than issuing a session - enrolling isn't logging in, and this
+// deliberately never generates backup codes (see the module comment above).
+async function handlePasswordlessEnroll(request, env, origin) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const token = (body.token || '').toString();
+  const username = await resolveValidPasswordlessEnrollToken(env, token);
+  if (!username) return json({ message: 'This enrollment link is invalid, expired, or already used — ask your admin for a new one.' }, 400, origin);
+  const step = (body.step || 'start').toString();
+  const usernameLower = username.toLowerCase();
+
+  if (step === 'start') return await handleMfaTotpEnroll(env, origin, username);
+
+  if (step === 'confirm') {
+    const code = (body.code || '').toString();
+    if (await isMfaVerifyLocked(env, usernameLower)) {
+      return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
+    }
+    const fileState = await readUsersFile(env);
+    const target = findUserByUsername(fileState.users, username);
+    if (!target || !target.mfa || !target.mfa.totp || !target.mfa.totp.secretEnc) {
+      return json({ message: 'Start enrollment first.' }, 400, origin);
+    }
+    const secretBase32 = await decryptTotpSecret(env, target.mfa.totp.secretEnc, target.mfa.totp.secretIv);
+    const matchedStep = await verifyTotpCode(secretBase32, code, null);
+    if (matchedStep === null) {
+      const attempt = await recordFailedMfaVerify(env, usernameLower);
+      if (attempt.justLocked) return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
+      return json({ message: 'Incorrect code — please try again.' }, 400, origin);
+    }
+    const nowIso = new Date().toISOString();
+    const result = await mutateUsersFile(env, function (users) {
+      const u = findUserByUsername(users, username);
+      if (!u || !u.mfa || !u.mfa.totp) return null;
+      u.mfa.totp.enabled = true;
+      u.mfa.totp.confirmedAt = nowIso;
+      u.mfa.totp.lastUsedStep = matchedStep;
+      u.mfa.enrolledAt = u.mfa.enrolledAt || nowIso;
+      return { users: users };
+    });
+    if (result === 'not-found' || !result.ok) return json({ message: 'Could not confirm — please try again.' }, 409, origin);
+    await consumePasswordlessEnrollToken(env, token);
+    await clearFailedMfaVerify(env, usernameLower);
+    await appendMfaAuditLog(env, { actor: username, action: 'passwordless_totp_enrolled', target: username, before: null, after: 'totp_enabled' });
+    return json({ ok: true }, 200, origin);
+  }
+
+  return json({ message: 'Unknown step.' }, 400, origin);
+}
+
+// Public - username only, no password anywhere. Decides which login path a
+// username needs: an unknown username, an inactive account, or a normal
+// (unflagged) account all resolve to the same 'password' mode, so nothing
+// here leaks whether a given username exists - an unknown username looks
+// identical to a normal account that just isn't flagged.
+async function handleLoginStart(request, env, origin) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const username = (body.username || '').toString().trim();
+  if (!username) return json({ message: 'Enter your username.' }, 400, origin);
+  const usernameLower = username.toLowerCase();
+
+  const fileState = await readUsersFile(env);
+  const userRecord = findUserByUsername(fileState.users, username);
+  if (!userRecord || !userRecord.passwordLoginDisabled || userRecord.active === false) {
+    return json({ mode: 'password' }, 200, origin);
+  }
+
+  const hasEnrolled = !!(userRecord.mfa && userRecord.mfa.totp && userRecord.mfa.totp.enabled);
+  if (!hasEnrolled) {
+    return json({
+      mode: 'passwordless_not_enrolled',
+      message: 'This account signs in with an authenticator app, which hasn’t been set up yet. Contact your Dessimate admin for an enrollment link.'
+    }, 200, origin);
+  }
+
+  const accessLevel = await resolveAccessLevel(env, username);
+  if (accessLevel !== 'super_admin' && await isMfaVerifyLocked(env, usernameLower)) {
+    return json({ mode: 'passwordless_locked', message: MFA_VERIFY_LOCKOUT_MESSAGE }, 200, origin);
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const pendingToken = await signToken({ u: username, purpose: 'passwordless_totp', exp: nowSec + PASSWORDLESS_PENDING_TOKEN_TTL_SECONDS }, env.MFA_SECRET);
+  return json({ mode: 'passwordless_totp_required', pendingToken: pendingToken }, 200, origin);
+}
+
+// Same MFA_SECRET-signed short-lived token pattern as verifyMfaPendingToken,
+// with its own `purpose` values so a passwordless-flow token can never be
+// mistaken for/replayed as a password-flow MFA token or a real session,
+// even if some other check were missed.
+async function verifyPasswordlessPendingToken(env, token, expectedPurpose) {
+  const payload = await verifyToken(token, env.MFA_SECRET);
+  if (!payload || payload.purpose !== expectedPurpose || !payload.u) return null;
+  return payload.u;
+}
+
+// Verifies the authenticator app code (factor 1 of 2). On success, sends
+// the email code automatically (factor 2's delivery) and returns a
+// stage-2 pending token - email code verification below refuses to run
+// without one, so factor 2 can never be checked before factor 1 passes.
+async function handleLoginPasswordlessTotp(request, env, origin) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const username = await verifyPasswordlessPendingToken(env, (body.pendingToken || '').toString(), 'passwordless_totp');
+  if (!username) return json({ message: 'Your sign-in session has expired — please start again.' }, 401, origin);
+  const code = (body.code || '').toString();
+  const usernameLower = username.toLowerCase();
+  const accessLevel = await resolveAccessLevel(env, username);
+
+  if (accessLevel !== 'super_admin' && await isMfaVerifyLocked(env, usernameLower)) {
+    return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
+  }
+
+  const fileState = await readUsersFile(env);
+  const userRecord = findUserByUsername(fileState.users, username);
+  if (!userRecord || !userRecord.passwordLoginDisabled) return json({ message: 'Account not found.' }, 404, origin);
+  if (!userRecord.mfa || !userRecord.mfa.totp || !userRecord.mfa.totp.enabled) {
+    return json({ message: 'Authenticator app is not enabled on this account.' }, 400, origin);
+  }
+
+  const secretBase32 = await decryptTotpSecret(env, userRecord.mfa.totp.secretEnc, userRecord.mfa.totp.secretIv);
+  const matchedStep = await verifyTotpCode(secretBase32, code, userRecord.mfa.totp.lastUsedStep);
+  if (matchedStep === null) {
+    if (accessLevel !== 'super_admin') {
+      const attempt = await recordFailedMfaVerify(env, usernameLower);
+      if (attempt.justLocked) return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
+    }
+    return json({ message: 'Incorrect code — please try again.' }, 400, origin);
+  }
+  await mutateUsersFile(env, function (users) {
+    const u = findUserByUsername(users, username);
+    if (!u || !u.mfa || !u.mfa.totp) return null;
+    u.mfa.totp.lastUsedStep = matchedStep;
+    return { users: users };
+  });
+
+  if (!userRecord.email) return json({ message: 'This account has no email on file — contact your admin.' }, 400, origin);
+  if (!emailFactorAvailable(env, userRecord)) return json({ message: 'Email delivery is not available right now — contact your admin.' }, 400, origin);
+
+  // A send-rate-limit hit here doesn't fail the whole step - a code from an
+  // earlier request in this window is very likely still valid/unexpired
+  // (MFA_EMAIL_OTP_TTL_SECONDS well exceeds MFA_EMAIL_OTP_MIN_RESEND_SECONDS),
+  // so the flow just moves on to the code-entry step either way; an explicit
+  // resend (handleLoginPasswordlessEmailResend) is where the wait-time
+  // message actually surfaces.
+  const sendCheck = await checkEmailOtpSendAllowed(env, usernameLower);
+  if (sendCheck.allowed) {
+    const code2 = generateEmailOtpCode();
+    const hashed = await hashEmailOtpCode(code2);
+    await recordEmailOtpSend(env, usernameLower, hashed.hash, hashed.salt);
+    await sendEmail(env, userRecord.email, 'Your DSCM sign-in code',
+      '<p>Your DSCM sign-in code is <strong>' + code2 + '</strong>. It expires in 10 minutes. If you didn’t request this, you can ignore it.</p>');
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const stage2Token = await signToken({ u: username, purpose: 'passwordless_2fa', exp: nowSec + PASSWORDLESS_STAGE2_TOKEN_TTL_SECONDS }, env.MFA_SECRET);
+  return json({ totpVerified: true, pendingToken: stage2Token }, 200, origin);
+}
+
+// Requires the stage-2 token (proof the authenticator code already passed) -
+// re-sends the email code, same rate limiting as the normal MFA email
+// fallback (checkEmailOtpSendAllowed).
+async function handleLoginPasswordlessEmailResend(request, env, origin) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const username = await verifyPasswordlessPendingToken(env, (body.pendingToken || '').toString(), 'passwordless_2fa');
+  if (!username) return json({ message: 'Your sign-in session has expired — please start again.' }, 401, origin);
+  const usernameLower = username.toLowerCase();
+  const fileState = await readUsersFile(env);
+  const userRecord = findUserByUsername(fileState.users, username);
+  if (!userRecord || !userRecord.email || !emailFactorAvailable(env, userRecord)) {
+    return json({ message: 'Email code is not available right now.' }, 400, origin);
+  }
+  const sendCheck = await checkEmailOtpSendAllowed(env, usernameLower);
+  if (!sendCheck.allowed) {
+    return json({ message: 'Please wait before requesting another code.', retryAfterSeconds: sendCheck.retryAfterSeconds }, 429, origin);
+  }
+  const code = generateEmailOtpCode();
+  const hashed = await hashEmailOtpCode(code);
+  await recordEmailOtpSend(env, usernameLower, hashed.hash, hashed.salt);
+  await sendEmail(env, userRecord.email, 'Your DSCM sign-in code',
+    '<p>Your DSCM sign-in code is <strong>' + code + '</strong>. It expires in 10 minutes. If you didn’t request this, you can ignore it.</p>');
+  return json({ sent: true }, 200, origin);
+}
+
+// Verifies the emailed code (factor 2 of 2) - only reachable with a valid
+// stage-2 token, i.e. only after the authenticator code already verified.
+// Issues the real session only once both factors have succeeded.
+async function handleLoginPasswordlessEmailVerify(request, env, origin) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const username = await verifyPasswordlessPendingToken(env, (body.pendingToken || '').toString(), 'passwordless_2fa');
+  if (!username) return json({ message: 'Your sign-in session has expired — please start again.' }, 401, origin);
+  const code = (body.code || '').toString();
+  const usernameLower = username.toLowerCase();
+  const accessLevel = await resolveAccessLevel(env, username);
+
+  if (accessLevel !== 'super_admin' && await isMfaVerifyLocked(env, usernameLower)) {
+    return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
+  }
+
+  const fileState = await readUsersFile(env);
+  const userRecord = findUserByUsername(fileState.users, username);
+  if (!userRecord || !userRecord.passwordLoginDisabled) return json({ message: 'Account not found.' }, 404, origin);
+
+  const fail = async function (message) {
+    if (accessLevel !== 'super_admin') {
+      const attempt = await recordFailedMfaVerify(env, usernameLower);
+      if (attempt.justLocked) return json({ message: MFA_VERIFY_LOCKOUT_MESSAGE, mfaLocked: true }, 401, origin);
+    }
+    return json({ message: message || 'Incorrect code — please try again.' }, 400, origin);
+  };
+
+  const entry = await getEmailOtpEntry(env, usernameLower);
+  if (!entry || !entry.codeHash || !entry.expiresAt || entry.expiresAt < Date.now()) return await fail('Code expired — request a new one.');
+  const matches = await emailOtpCodeMatchesHash(code, entry.codeSalt, entry.codeHash);
+  if (!matches) return await fail();
+  await clearEmailOtpCode(env, usernameLower);
+
+  if (accessLevel !== 'super_admin') await clearFailedMfaVerify(env, usernameLower);
+  await appendMfaAuditLog(env, { actor: username, action: 'passwordless_login', target: username, before: null, after: null });
+  return await issueSession(username, env, origin);
+}
+// -----------------------------------------------------------------------------
 
 // `extra` (optional) merges additional fields into the response body -
 // used once, by the login-time MFA enrollment path, to hand back the new
@@ -2244,7 +2613,11 @@ function sanitizeFileUser(u) {
     id: u.id,
     name: u.name || '',
     username: u.username || null,
-    hasLogin: !!(u.username && u.hash),
+    // A passwordLoginDisabled account never has a password hash on file (see
+    // handleAdminCreateUser/handleAdminUpdateUser) - it still "has a login"
+    // as long as it has a username, so this can't just be u.hash-gated the
+    // way it used to be.
+    hasLogin: !!(u.username && (u.hash || u.passwordLoginDisabled)),
     organization: u.organization || '',
     relationship: u.relationship || 'Dessimate Team member',
     role: u.role || '',
@@ -2254,6 +2627,10 @@ function sanitizeFileUser(u) {
     accessLevel: u.accessLevel && ACCESS_LEVELS.indexOf(u.accessLevel) !== -1 ? u.accessLevel : null,
     isDemo: !!u.isDemo,
     stampImage: sanitizeOrgDoc(u.stampImage),
+    // Rev-Passwordless: this account signs in with an authenticator app
+    // code + an emailed code, both required together - no password field
+    // anywhere in that flow. See handleLoginStart/handlePasswordlessEnroll.
+    passwordLoginDisabled: !!u.passwordLoginDisabled,
     migrated: true
   }, mfaSummaryForUser(u));
 }
@@ -2487,7 +2864,8 @@ function validateDirectoryFields(body, origin) {
     phone: (body.phone || '').toString().trim(),
     active: body.active !== false,
     accessLevel: accessLevel,
-    isDemo: !!body.isDemo
+    isDemo: !!body.isDemo,
+    passwordLoginDisabled: !!body.passwordLoginDisabled
   };
 }
 
@@ -2507,12 +2885,18 @@ async function handleAdminCreateUser(request, env, origin) {
   let username = null, salt = null, hash = null;
   if (wantsUsername) {
     username = body.username.toString().trim();
-    const password = (body.password || '').toString();
-    if (!password) return json({ message: 'Set a password to create a login for this person.' }, 400, origin);
     const conflict = await usernameTaken(env, username, null);
     if (conflict) return json({ message: 'That username is already in use.' }, 409, origin);
-    salt = randomSaltHex();
-    hash = await pbkdf2Hex(password, salt);
+    const password = (body.password || '').toString();
+    if (password) {
+      salt = randomSaltHex();
+      hash = await pbkdf2Hex(password, salt);
+    } else if (!fields.passwordLoginDisabled) {
+      return json({ message: 'Set a password to create a login for this person.' }, 400, origin);
+    }
+    // else: passwordLoginDisabled with no password given - salt/hash stay
+    // null, this account signs in via the authenticator-app + email flow
+    // only (see handleLoginStart) and can never use a password at all.
   }
 
   const newUser = {
@@ -2520,6 +2904,7 @@ async function handleAdminCreateUser(request, env, origin) {
     organization: fields.organization, relationship: fields.relationship, role: fields.role,
     email: fields.email, phone: fields.phone, active: fields.active,
     accessLevel: fields.accessLevel, isDemo: fields.isDemo,
+    passwordLoginDisabled: fields.passwordLoginDisabled,
     stampImage: sanitizeOrgDoc(body.stampImage)
   };
 
@@ -2577,6 +2962,11 @@ async function handleAdminUpdateUser(request, env, origin, id) {
       passwordChanged = true;
     } else if (!usernameChanged && existingHash) {
       newSalt = existingSalt; newHash = existingHash;
+    } else if (fields.passwordLoginDisabled) {
+      // No password on file at all is fine here - this account signs in
+      // via the authenticator-app + email flow only (see handleLoginStart),
+      // never a password.
+      newSalt = null; newHash = null;
     } else {
       return json({ message: 'Set a password to create a login for this person.' }, 400, origin);
     }
@@ -2601,6 +2991,7 @@ async function handleAdminUpdateUser(request, env, origin, id) {
     target.active = fields.active;
     target.accessLevel = fields.accessLevel;
     target.isDemo = fields.isDemo;
+    target.passwordLoginDisabled = fields.passwordLoginDisabled;
     if (body.stampImage !== undefined) {
       target.stampImage = sanitizeOrgDoc(body.stampImage);
     }

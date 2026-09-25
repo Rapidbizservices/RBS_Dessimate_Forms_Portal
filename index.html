@@ -199,21 +199,43 @@
 
   <div class="authOverlay" id="authOverlay">
     <div class="authCard">
-      <div id="authStepPassword">
-        <h2>Staff Sign-In</h2>
-        <p class="authSub">Sign in with the username and password you were given to use the DSCM system.</p>
-        <p class="authNote">Please check the username and password provided by your Dessimate contact. Your account will be locked after 3 unsuccessful login attempts.</p>
-        <form id="authForm">
+      <div id="authStepUsername">
+        <h2>Sign-In</h2>
+        <p class="authSub">Enter your DSCM username to continue.</p>
+        <form id="authUsernameForm">
           <label>Username
-            <input type="text" id="authUsername" autocomplete="username" autofocus>
+            <input type="text" id="authUsernameOnly" autocomplete="username" autofocus>
           </label>
-          <label>Password
-            <input type="password" id="authPassword" autocomplete="current-password">
-          </label>
+          <button type="submit" id="authUsernameSubmitBtn">Continue</button>
+          <div class="authError" id="authUsernameError"></div>
+        </form>
+      </div>
+
+      <div id="authStepPassword" style="display:none;">
+        <h2>Staff Sign-In</h2>
+        <p class="authSub">Sign in with the password you were given to use the DSCM system.</p>
+        <p class="authNote">Please check the password provided by your Dessimate contact. Your account will be locked after 3 unsuccessful login attempts.</p>
+        <form id="authForm">
+          <div id="authPasswordFieldWrap"></div>
           <button type="submit" id="authSubmitBtn">Log In</button>
           <div class="authError" id="authError"></div>
           <div class="authAttempts" id="authAttempts"></div>
         </form>
+        <button type="button" id="authBackToUsernameBtn" style="background:none; border:none; color:var(--brand); font-size:12px; font-weight:600; cursor:pointer; padding:10px 0 0; width:100%;">&larr; Use a different username</button>
+      </div>
+
+      <div id="authStepPasswordless" style="display:none;">
+        <h2 id="authPwlessTitle">Verification Required</h2>
+        <p class="authSub" id="authPwlessSub">Enter the 6-digit code from your authenticator app.</p>
+        <form id="authPwlessForm">
+          <label>Code
+            <input type="text" id="authPwlessCode" inputmode="numeric" autocomplete="one-time-code" maxlength="12">
+          </label>
+          <button type="submit" id="authPwlessSubmitBtn">Verify</button>
+          <button type="button" id="authPwlessResendBtn" style="background:#5b5f66; font-size:12px; padding:8px; display:none; margin-top:8px; width:100%;">Resend email code</button>
+          <div class="authError" id="authPwlessError"></div>
+        </form>
+        <button type="button" id="authPwlessBackBtn" style="background:none; border:none; color:var(--brand); font-size:12px; font-weight:600; cursor:pointer; padding:10px 0 0; width:100%;">&larr; Use a different username</button>
       </div>
 
       <div id="authStepMfa" style="display:none;">
@@ -392,8 +414,70 @@
     else { el.textContent = 'Not signed in'; }
     renderImpersonationBanner();
   }
+  // ---- Sign-in: username first, then password OR passwordless verification
+  // (never both, never a password field anywhere in the passwordless path) -
+  // see POST /login/start in the Worker. The overlay always starts at the
+  // username step; which step comes next is decided server-side per
+  // username, not guessed client-side.
+  var authCapturedUsername = null;
+
+  function hideAllAuthSteps(){
+    document.getElementById('authStepUsername').style.display = 'none';
+    document.getElementById('authStepPassword').style.display = 'none';
+    document.getElementById('authStepPasswordless').style.display = 'none';
+    document.getElementById('authStepMfa').style.display = 'none';
+  }
+  function showAuthStepUsername(){
+    hideAllAuthSteps();
+    document.getElementById('authStepUsername').style.display = '';
+    authCapturedUsername = null;
+    removePasswordField();
+    document.getElementById('authUsernameOnly').value = '';
+    document.getElementById('authUsernameError').textContent = '';
+    document.getElementById('authUsernameOnly').focus();
+  }
+  // The password <input> is created fresh (never left sitting in the DOM
+  // from a previous flow) the moment /login/start confirms this username
+  // actually uses a password - and removed again the instant we leave this
+  // step, so a passwordless account can never end up with a stray password
+  // field anywhere in the DOM, at any point in the page's lifetime.
+  function ensurePasswordField(){
+    var wrap = document.getElementById('authPasswordFieldWrap');
+    if (document.getElementById('authPassword')) return;
+    wrap.innerHTML = '';
+    var label = document.createElement('label');
+    label.textContent = 'Password';
+    var input = document.createElement('input');
+    input.type = 'password';
+    input.id = 'authPassword';
+    input.autocomplete = 'current-password';
+    label.appendChild(input);
+    wrap.appendChild(label);
+    input.focus();
+  }
+  function removePasswordField(){
+    document.getElementById('authPasswordFieldWrap').innerHTML = '';
+  }
+  function showAuthStepPassword(){
+    hideAllAuthSteps();
+    document.getElementById('authStepPassword').style.display = '';
+    ensurePasswordField();
+    document.getElementById('authError').textContent = '';
+    document.getElementById('authAttempts').textContent = '';
+  }
+  function showAuthStepPasswordless(){
+    hideAllAuthSteps();
+    document.getElementById('authStepPasswordless').style.display = '';
+    removePasswordField();
+  }
+  function showAuthStepMfa(){
+    hideAllAuthSteps();
+    document.getElementById('authStepMfa').style.display = '';
+    removePasswordField();
+  }
   function showAuthOverlay(){
     document.getElementById('authOverlay').classList.add('open');
+    showAuthStepUsername();
     refreshSideUser();
   }
   function hideAuthOverlay(){
@@ -405,15 +489,50 @@
     else { pendingAfterAuth = fn; showAuthOverlay(); }
   }
 
+  document.getElementById('authUsernameForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var username = document.getElementById('authUsernameOnly').value.trim();
+    var errEl = document.getElementById('authUsernameError');
+    var btn = document.getElementById('authUsernameSubmitBtn');
+    errEl.textContent = '';
+    if (!username) { errEl.textContent = 'Enter your username.'; return; }
+    btn.disabled = true; btn.textContent = 'Checking…';
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/login/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username })
+      });
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      authCapturedUsername = username;
+      if (data.mode === 'passwordless_totp_required') {
+        await enterAuthPasswordlessTotpStep(data.pendingToken);
+      } else if (data.mode === 'passwordless_not_enrolled' || data.mode === 'passwordless_locked') {
+        errEl.textContent = data.message || 'This account can’t sign in right now — contact your admin.';
+        authCapturedUsername = null;
+      } else {
+        showAuthStepPassword();
+      }
+    } catch (err) {
+      console.error(err);
+      errEl.textContent = err && err.message ? err.message : 'Could not check this username — check the backend is reachable.';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Continue';
+    }
+  });
+  document.getElementById('authBackToUsernameBtn').addEventListener('click', showAuthStepUsername);
+  document.getElementById('authPwlessBackBtn').addEventListener('click', showAuthStepUsername);
+
   document.getElementById('authForm').addEventListener('submit', async function(e){
     e.preventDefault();
-    var username = document.getElementById('authUsername').value.trim();
-    var password = document.getElementById('authPassword').value;
+    var username = authCapturedUsername;
+    var passwordInput = document.getElementById('authPassword');
+    var password = passwordInput ? passwordInput.value : '';
     var errEl = document.getElementById('authError');
     var attemptsEl = document.getElementById('authAttempts');
     var btn = document.getElementById('authSubmitBtn');
     errEl.textContent = ''; attemptsEl.textContent = '';
-    if (!username || !password) { errEl.textContent = 'Enter your username and password.'; return; }
+    if (!username || !password) { errEl.textContent = 'Enter your password.'; return; }
     btn.disabled = true; btn.textContent = 'Logging in…';
     try {
       var res = await fetch(WORKER_BASE_URL + '/login', {
@@ -427,7 +546,7 @@
         loginErr.attemptsRemaining = data.attemptsRemaining;
         throw loginErr;
       }
-      document.getElementById('authPassword').value = '';
+      if (passwordInput) passwordInput.value = '';
       if (data.mfaRequired) {
         await enterAuthMfaStep(data);
         return;
@@ -446,6 +565,94 @@
       btn.disabled = false; btn.textContent = 'Log In';
     }
   });
+
+  // ---- Passwordless login (flagged accounts) - genuine two-factor, an
+  // authenticator app code AND an emailed code, BOTH required together (not
+  // an either/or choice the way the normal password+MFA flow's 2nd factor
+  // is - see authMfaMethod above, which never applies here). No password
+  // field is ever created for this path - showAuthStepPasswordless calls
+  // removePasswordField() and authStepPassword's own field is created only
+  // by showAuthStepPassword, which this path never calls.
+  var authPwlessPendingToken = null;
+  var authPwlessStage = null; // 'totp' | 'email'
+
+  async function enterAuthPasswordlessTotpStep(pendingToken){
+    authPwlessPendingToken = pendingToken;
+    authPwlessStage = 'totp';
+    document.getElementById('authPwlessTitle').textContent = 'Verification Required';
+    document.getElementById('authPwlessSub').textContent = 'Enter the 6-digit code from your authenticator app.';
+    document.getElementById('authPwlessResendBtn').style.display = 'none';
+    document.getElementById('authPwlessCode').value = '';
+    document.getElementById('authPwlessError').textContent = '';
+    showAuthStepPasswordless();
+    document.getElementById('authPwlessCode').focus();
+  }
+  function finishAuthPasswordlessLogin(data){
+    setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
+    authPwlessPendingToken = null;
+    authPwlessStage = null;
+    hideAuthOverlay();
+    var fn = pendingAfterAuth; pendingAfterAuth = null;
+    if (fn) fn();
+  }
+  document.getElementById('authPwlessForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var code = document.getElementById('authPwlessCode').value.trim();
+    var errEl = document.getElementById('authPwlessError');
+    var btn = document.getElementById('authPwlessSubmitBtn');
+    errEl.textContent = '';
+    if (!code) { errEl.textContent = 'Enter the code.'; return; }
+    btn.disabled = true; btn.textContent = 'Verifying…';
+    try {
+      if (authPwlessStage === 'totp') {
+        var res = await fetch(WORKER_BASE_URL + '/login/passwordless/totp', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pendingToken: authPwlessPendingToken, code: code })
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+        // Factor 1 passed - the server already sent the email code. Move to
+        // factor 2; both are required, there is no way to skip this step.
+        authPwlessPendingToken = data.pendingToken;
+        authPwlessStage = 'email';
+        document.getElementById('authPwlessTitle').textContent = 'Verification Required';
+        document.getElementById('authPwlessSub').textContent = 'Enter the 6-digit code we just emailed you.';
+        document.getElementById('authPwlessResendBtn').style.display = '';
+        document.getElementById('authPwlessCode').value = '';
+        document.getElementById('authPwlessCode').focus();
+      } else {
+        var res2 = await fetch(WORKER_BASE_URL + '/login/passwordless/email/verify', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pendingToken: authPwlessPendingToken, code: code })
+        });
+        var data2 = await res2.json();
+        if (!res2.ok) throw new Error(data2.message || ('HTTP ' + res2.status));
+        finishAuthPasswordlessLogin(data2);
+      }
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Incorrect code — please try again.';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Verify';
+    }
+  });
+  document.getElementById('authPwlessResendBtn').addEventListener('click', async function(){
+    var errEl = document.getElementById('authPwlessError');
+    errEl.textContent = 'Sending code…';
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/login/passwordless/email/resend', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pendingToken: authPwlessPendingToken })
+      });
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.message + (data.retryAfterSeconds ? ' Try again in ' + data.retryAfterSeconds + 's.' : ''));
+      errEl.textContent = '';
+      document.getElementById('authPwlessCode').value = '';
+      document.getElementById('authPwlessCode').focus();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not send code.';
+    }
+  });
+  // -----------------------------------------------------------------------
 
   // ---- MFA: lazy-loaded QR code rendering --------------------------------
   // Same lazy-CDN-on-demand pattern already used elsewhere in this app for
@@ -495,14 +702,9 @@
   var authMfaMode = null;       // 'challenge' | 'enroll_required'
   var authMfaMethod = 'totp';   // 'totp' | 'email' | 'backup'
 
-  function showAuthStepMfa(){
-    document.getElementById('authStepPassword').style.display = 'none';
-    document.getElementById('authStepMfa').style.display = '';
-  }
-  function showAuthStepPassword(){
-    document.getElementById('authStepPassword').style.display = '';
-    document.getElementById('authStepMfa').style.display = 'none';
-  }
+  // showAuthStepMfa/showAuthStepPassword are defined earlier (near
+  // showAuthStepUsername/showAuthStepPasswordless) - they already route
+  // through hideAllAuthSteps(), which covers this step too.
 
   async function enterAuthMfaStep(data){
     authMfaPendingToken = data.pendingToken;
@@ -549,7 +751,7 @@
   function finishAuthMfaLogin(data){
     setSession({ token: data.token, username: data.username, expiresAt: data.expiresAt });
     authMfaPendingToken = null;
-    showAuthStepPassword();
+    showAuthStepUsername();
     hideAuthOverlay();
     var fn = pendingAfterAuth; pendingAfterAuth = null;
     if (fn) fn();

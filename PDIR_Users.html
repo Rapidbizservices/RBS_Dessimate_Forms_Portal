@@ -137,6 +137,16 @@
   .loginBlock{ background:#f7f8fb; border:1px solid var(--line); border-radius:8px; padding:12px 14px 2px; margin:2px 0 14px; }
   .loginBlock .checkboxRow{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink); font-weight:600; margin-bottom:10px; }
   .loginBlock .checkboxRow input{ width:auto; margin:0; }
+  .checkboxRow .hint{ font-weight:400; color:var(--label); font-size:11.5px; }
+  .passwordlessLinkRow{ margin:2px 0 12px; }
+  .passwordlessLinkRow button{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--brand); background:#fff;
+    border:1px solid var(--brand); border-radius:6px; padding:7px 14px; cursor:pointer; }
+  .passwordlessLinkRow button:hover{ background:#eef1fa; }
+  .passwordlessLinkRow button:disabled{ opacity:.6; cursor:wait; }
+  .passwordlessLinkResult{ margin-top:8px; }
+  .passwordlessLinkResult input{ display:block; width:100%; font-family:inherit; font-size:12px;
+    padding:7px 9px; border:1px solid var(--line); border-radius:6px; background:#fff; }
+  .passwordlessLinkResult .hint{ display:block; font-size:11px; color:var(--label); margin-top:4px; }
   .activeRow{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink); font-weight:600; margin-bottom:16px; }
   .activeRow input{ width:auto; margin:0; }
   .modalBtns{ display:flex; gap:10px; }
@@ -320,6 +330,18 @@
           <label id="passwordLabel">Password
             <input type="password" id="f_password" autocomplete="new-password">
           </label>
+          <div class="checkboxRow">
+            <input type="checkbox" id="f_passwordLoginDisabled">
+            <label style="margin:0;" for="f_passwordLoginDisabled">No password login <span class="hint">(signs in with an authenticator app code + an emailed code, both required — no password field, ever)</span></label>
+          </div>
+          <div class="passwordlessLinkRow" id="passwordlessLinkRow" style="display:none;">
+            <button type="button" id="genEnrollLinkBtn">Generate Enrollment Link</button>
+            <div class="modalError" id="enrollLinkError" style="margin:6px 0 0;"></div>
+            <div class="passwordlessLinkResult" id="enrollLinkResult" style="display:none;">
+              <input type="text" id="enrollLinkText" readonly>
+              <span class="hint">Send this link directly to the person — it works once and expires in 48 hours. Opening it shows the same authenticator-app setup used elsewhere in DSCM.</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -796,6 +818,28 @@
       }
     );
   });
+  document.getElementById('genEnrollLinkBtn').addEventListener('click', async function(){
+    if (!editingId) return;
+    var btn = this;
+    var errEl = document.getElementById('enrollLinkError');
+    errEl.textContent = '';
+    btn.disabled = true; btn.textContent = 'Generating…';
+    try {
+      var res = await apiFetch('admin/users/' + encodeURIComponent(editingId) + '/passwordless-enroll-link', { method: 'POST' });
+      var data = {}; try { data = await res.json(); } catch(e){}
+      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+      var url = new URL('PasswordlessEnroll.html?token=' + encodeURIComponent(data.token), window.location.href).href;
+      var input = document.getElementById('enrollLinkText');
+      input.value = url;
+      document.getElementById('enrollLinkResult').style.display = 'block';
+      input.focus();
+      input.select();
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not generate an enrollment link.';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Generate Enrollment Link';
+    }
+  });
   // -----------------------------------------------------------------------------
 
   // ---- Directory table --------------------------------------------------------
@@ -1068,6 +1112,22 @@
     var loginFields = document.getElementById('loginFields');
     loginBlock.style.display = 'block';
     loginFields.style.display = giveLogin.checked ? 'block' : 'none';
+    updatePasswordlessVisibility();
+  }
+  // A passwordLoginDisabled account never has (or needs) a password - hide
+  // the Password field entirely rather than show one that would just be
+  // ignored, and only offer the enrollment-link button once this account
+  // actually exists (it needs a real id) and has a username to enroll.
+  function updatePasswordlessVisibility(){
+    var passwordless = document.getElementById('f_passwordLoginDisabled').checked;
+    document.getElementById('passwordLabel').style.display = passwordless ? 'none' : 'block';
+    var linkRow = document.getElementById('passwordlessLinkRow');
+    var showLinkRow = passwordless && !!editingId && !!document.getElementById('f_username').value.trim();
+    linkRow.style.display = showLinkRow ? 'block' : 'none';
+    if (!showLinkRow) {
+      document.getElementById('enrollLinkResult').style.display = 'none';
+      document.getElementById('enrollLinkError').textContent = '';
+    }
   }
   // Access Level only applies to Dessimate Team members (super_admin/admin/
   // team_member) - a Supplier/Customer contact's access level is implicit
@@ -1082,6 +1142,8 @@
     updateOrganizationFieldMode('');
   });
   document.getElementById('f_giveLogin').addEventListener('change', updateLoginBlockVisibility);
+  document.getElementById('f_passwordLoginDisabled').addEventListener('change', updatePasswordlessVisibility);
+  document.getElementById('f_username').addEventListener('input', updatePasswordlessVisibility);
 
   // ---- Approver Stamp upload --------------------------------------------------
   var stampState = { existing: null, pending: null, removed: false };
@@ -1141,6 +1203,7 @@
     document.getElementById('f_active').checked = true;
     document.getElementById('f_isDemo').checked = false;
     document.getElementById('f_giveLogin').checked = false;
+    document.getElementById('f_passwordLoginDisabled').checked = false;
     document.getElementById('f_accessLevel').value = 'team_member';
     document.getElementById('modalError').textContent = '';
     stampState = { existing: null, pending: null, removed: false };
@@ -1180,6 +1243,7 @@
     document.getElementById('f_accessLevel').value = u.accessLevel || 'team_member';
     document.getElementById('f_giveLogin').checked = !!u.hasLogin;
     document.getElementById('f_username').value = u.username || '';
+    document.getElementById('f_passwordLoginDisabled').checked = !!u.passwordLoginDisabled;
     document.getElementById('passwordLabel').firstChild.textContent = u.hasLogin
       ? 'New password (leave blank to keep the current one) '
       : 'Password ';
@@ -1244,11 +1308,13 @@
     var accessLevel = relationship === 'Dessimate Team member' ? document.getElementById('f_accessLevel').value : '';
     var isDemo = document.getElementById('f_isDemo').checked;
 
+    var passwordLoginDisabled = giveLogin && document.getElementById('f_passwordLoginDisabled').checked;
     var body = {
       name: name, relationship: relationship,
       organization: organization, role: role, email: email, phone: phone, active: active,
       username: giveLogin ? username : '',
-      accessLevel: accessLevel, isDemo: isDemo
+      accessLevel: accessLevel, isDemo: isDemo,
+      passwordLoginDisabled: passwordLoginDisabled
     };
     if (password) body.password = password;
 
