@@ -7931,6 +7931,24 @@ function sanitizeOpenIssueChampions(v) {
 const OPEN_ISSUE_STATUSES = ['open', 'plan', 'do', 'check', 'act', 'closed'];
 const OPEN_ISSUE_DEFAULT_STATUS = 'open';
 
+// Rev2.36: optional Priority (A = highest). Blank ('') means unassigned -
+// it's the absence of a value, not a 4th option. Existing records have no
+// priority key at all and simply read back as ''; nothing is backfilled.
+// Shared by Customer and Supplier Open Issues.
+const OPEN_ISSUE_PRIORITIES = ['A', 'B', 'C'];
+function sanitizeOpenIssuePriority(v) {
+  return OPEN_ISSUE_PRIORITIES.indexOf(v) !== -1 ? v : '';
+}
+// Strict parse of a client-sent priority: null/undefined/'' -> '' (blank),
+// 'A'/'B'/'C' -> itself, anything else -> undefined (caller rejects 400).
+function parseOpenIssuePriority(v) {
+  if (v === undefined || v === null) return '';
+  const s = String(v).trim();
+  if (!s) return '';
+  return OPEN_ISSUE_PRIORITIES.indexOf(s) !== -1 ? s : undefined;
+}
+const OPEN_ISSUE_PRIORITY_ERROR = 'Priority must be A, B, C, or blank.';
+
 // Open Issue # is formatted "OI-####" (4 digits), same voluntary/custom-
 // value auto-numbering as CR/SCR/DMR Number.
 async function reserveOpenIssueNumber(env, clientIssueNumber) {
@@ -8036,6 +8054,7 @@ function sanitizeCustomerOpenIssue(o) {
     // new list, so it falls through to the default ("plan") below -
     // "closed" is unaffected, it's still valid as-is.
     status: OPEN_ISSUE_STATUSES.indexOf(o.status) !== -1 ? o.status : OPEN_ISSUE_DEFAULT_STATUS,
+    priority: sanitizeOpenIssuePriority(o.priority),
     attachments: sanitizeOpenIssueAttachments(o.attachments),
     comments: sanitizeOpenIssueComments(o.comments)
   };
@@ -8084,6 +8103,9 @@ async function handleCreateCustomerOpenIssue(request, env, origin, username) {
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateCustomerOpenIssueFields(body);
   if (!fields.customerOrg) return json({ message: 'Customer Organization is required.' }, 400, origin);
+  const priority = parseOpenIssuePriority(body.priority);
+  if (priority === undefined) return json({ message: OPEN_ISSUE_PRIORITY_ERROR }, 400, origin);
+  fields.priority = priority;
 
   const clientIssueNumber = (body.issueNumber || '').toString().trim();
   if (clientIssueNumber && await openIssueNumberTaken(env, clientIssueNumber, null)) {
@@ -8108,6 +8130,13 @@ async function handleUpdateCustomerOpenIssue(request, env, origin, id) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateCustomerOpenIssueFields(body);
+  // Only touch priority when the client sends the key, so a PUT from a
+  // page cached before Rev2.36 (no Priority field) can't wipe it.
+  if (body.priority !== undefined) {
+    const priority = parseOpenIssuePriority(body.priority);
+    if (priority === undefined) return json({ message: OPEN_ISSUE_PRIORITY_ERROR }, 400, origin);
+    fields.priority = priority;
+  }
 
   let newIssueNumber; // undefined = leave as-is
   if (body.issueNumber !== undefined) {
@@ -8305,6 +8334,7 @@ function sanitizeSupplierOpenIssue(o) {
     nextAction: o.nextAction || '',
     championResponsible: sanitizeOpenIssueChampions(o.championResponsible),
     status: OPEN_ISSUE_STATUSES.indexOf(o.status) !== -1 ? o.status : OPEN_ISSUE_DEFAULT_STATUS,
+    priority: sanitizeOpenIssuePriority(o.priority),
     attachments: sanitizeOpenIssueAttachments(o.attachments),
     comments: sanitizeOpenIssueComments(o.comments)
   };
@@ -8353,6 +8383,9 @@ async function handleCreateSupplierOpenIssue(request, env, origin, username) {
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateSupplierOpenIssueFields(body);
   if (!fields.supplierOrg) return json({ message: 'Supplier Organization is required.' }, 400, origin);
+  const priority = parseOpenIssuePriority(body.priority);
+  if (priority === undefined) return json({ message: OPEN_ISSUE_PRIORITY_ERROR }, 400, origin);
+  fields.priority = priority;
 
   const clientIssueNumber = (body.issueNumber || '').toString().trim();
   if (clientIssueNumber && await supplierOpenIssueNumberTaken(env, clientIssueNumber, null)) {
@@ -8377,6 +8410,13 @@ async function handleUpdateSupplierOpenIssue(request, env, origin, id) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateSupplierOpenIssueFields(body);
+  // Only touch priority when the client sends the key, so a PUT from a
+  // page cached before Rev2.36 (no Priority field) can't wipe it.
+  if (body.priority !== undefined) {
+    const priority = parseOpenIssuePriority(body.priority);
+    if (priority === undefined) return json({ message: OPEN_ISSUE_PRIORITY_ERROR }, 400, origin);
+    fields.priority = priority;
+  }
 
   let newIssueNumber; // undefined = leave as-is
   if (body.issueNumber !== undefined) {

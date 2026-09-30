@@ -51,7 +51,13 @@
     if (!sortState || !sortState.key) return items;
     var copy = items.slice();
     copy.sort(function (a, b) {
-      return sortState.dir * compareValues(getValue(a, sortState.key), getValue(b, sortState.key));
+      var va = getValue(a, sortState.key), vb = getValue(b, sortState.key);
+      // Blanks stay at the bottom in both directions - handled before the
+      // direction flip, otherwise a descending sort would float them to the top.
+      var aEmpty = (va === null || va === undefined || va === '');
+      var bEmpty = (vb === null || vb === undefined || vb === '');
+      if (aEmpty || bEmpty) return compareValues(va, vb);
+      return sortState.dir * compareValues(va, vb);
     });
     return copy;
   }

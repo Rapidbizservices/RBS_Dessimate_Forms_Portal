@@ -349,6 +349,20 @@
           </div>
         </div>
       </div>
+      <div class="toolbarFilter">
+        <span>Filter by Priority:</span>
+        <div class="partFilterDropdown" id="priorityFilterDropdown">
+          <button type="button" class="partFilterToggle" id="priorityFilterToggleBtn">
+            <span id="priorityFilterToggleLabel">All Priorities</span><span class="caret">&#9662;</span>
+          </button>
+          <div class="partFilterPanel" id="priorityFilterPanel" style="display:none;">
+            <div class="partFilterList" id="priorityFilterList"></div>
+            <div class="partFilterPanelBtns">
+              <button type="button" class="clearFilterLink" id="clearPriorityFilterBtn" style="display:none;">Clear all</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -361,6 +375,7 @@
         <tr>
           <th data-sort-key="issueNumber">Issue #</th>
           <th data-sort-key="status">Status</th>
+          <th data-sort-key="priority">Priority</th>
           <th>Part Number(s)</th>
           <th data-sort-key="issueTitle">Issue Title</th>
           <th>Issue Picture</th>
@@ -417,6 +432,15 @@
           <select id="f_status">
             <option value="open">Open</option>
             <option value="closed">Closed</option>
+          </select>
+        </div>
+        <div class="numberField" style="flex:0 1 160px; min-width:140px;">
+          <label for="f_priority">Priority <span style="font-weight:400;">(A = highest, optional)</span></label>
+          <select id="f_priority">
+            <option value="">&mdash; Not set &mdash;</option>
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
           </select>
         </div>
       </div>
@@ -1142,6 +1166,68 @@
     if (dropdown && !dropdown.contains(e.target)) document.getElementById('partFilterPanel').style.display = 'none';
   });
 
+  // ---- Filter by Priority (multi-select, Rev2.36) - same dropdown pattern
+  // and localStorage persistence as the Part filter above, and combines
+  // with it (an issue must pass every active filter). The '' option is
+  // "Blank / unassigned" - issues with no priority set.
+  var PRIORITY_FILTER_STORAGE_KEY = 'dscm_supplierOpenIssues_priorityFilters';
+  var PRIORITY_FILTER_OPTIONS = [
+    { value: 'A', label: 'A', hint: 'Highest' },
+    { value: 'B', label: 'B', hint: '' },
+    { value: 'C', label: 'C', hint: '' },
+    { value: '', label: 'Blank / unassigned', hint: '' }
+  ];
+  var selectedPriorityFilters = [];
+  try {
+    var storedPriorityFilters = JSON.parse(localStorage.getItem(PRIORITY_FILTER_STORAGE_KEY) || '[]');
+    if (Array.isArray(storedPriorityFilters)) selectedPriorityFilters = storedPriorityFilters.filter(function(v){ return ['A', 'B', 'C', ''].indexOf(v) !== -1; });
+  } catch (e) {}
+  function savePriorityFilters(){
+    try { localStorage.setItem(PRIORITY_FILTER_STORAGE_KEY, JSON.stringify(selectedPriorityFilters)); } catch (e) {}
+  }
+  function updatePriorityFilterToggleLabel(){
+    var labelEl = document.getElementById('priorityFilterToggleLabel');
+    if (!selectedPriorityFilters.length) labelEl.textContent = 'All Priorities';
+    else labelEl.textContent = PRIORITY_FILTER_OPTIONS
+      .filter(function(o){ return selectedPriorityFilters.indexOf(o.value) !== -1; })
+      .map(function(o){ return o.value === '' ? 'Blank' : o.value; })
+      .join(', ');
+  }
+  function renderPriorityFilterOptions(){
+    var listEl = document.getElementById('priorityFilterList');
+    listEl.innerHTML = PRIORITY_FILTER_OPTIONS.map(function(o){
+      var checked = selectedPriorityFilters.indexOf(o.value) !== -1 ? ' checked' : '';
+      var labelText = escapeHtml(o.label) + (o.hint ? ' <span class="partFilterHint">' + escapeHtml(o.hint) + '</span>' : '');
+      return '<label><input type="checkbox" value="' + escapeHtml(o.value) + '"' + checked + '><span class="partFilterLabelText">' + labelText + '</span></label>';
+    }).join('');
+    listEl.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+      cb.addEventListener('change', function(){
+        var val = this.value;
+        var idx = selectedPriorityFilters.indexOf(val);
+        if (this.checked && idx === -1) selectedPriorityFilters.push(val);
+        else if (!this.checked && idx !== -1) selectedPriorityFilters.splice(idx, 1);
+        savePriorityFilters();
+        renderTable();
+      });
+    });
+    document.getElementById('clearPriorityFilterBtn').style.display = selectedPriorityFilters.length ? 'inline' : 'none';
+    updatePriorityFilterToggleLabel();
+  }
+  document.getElementById('priorityFilterToggleBtn').addEventListener('click', function(e){
+    e.stopPropagation();
+    var panel = document.getElementById('priorityFilterPanel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  });
+  document.getElementById('clearPriorityFilterBtn').addEventListener('click', function(){
+    selectedPriorityFilters = [];
+    savePriorityFilters();
+    renderTable();
+  });
+  document.addEventListener('click', function(e){
+    var dropdown = document.getElementById('priorityFilterDropdown');
+    if (dropdown && !dropdown.contains(e.target)) document.getElementById('priorityFilterPanel').style.display = 'none';
+  });
+
   async function loadIssues(){
     var loadingEl = document.getElementById('loadingState');
     var errorEl = document.getElementById('errorState');
@@ -1193,6 +1279,7 @@
     var bodyEl = document.getElementById('issueTableBody');
     var emptyEl = document.getElementById('emptyState');
     populateSupplierFilterOptions();
+    renderPriorityFilterOptions();
     populatePartFilterOptions();
     var filteredIssues = lastIssues;
     if (selectedSupplierFilter) filteredIssues = filteredIssues.filter(function(issue){ return issue.supplierOrg === selectedSupplierFilter; });
@@ -1202,9 +1289,12 @@
         return selectedPartFilters.some(function(p){ return issueParts.indexOf(p) !== -1; });
       });
     }
+    if (selectedPriorityFilters.length) {
+      filteredIssues = filteredIssues.filter(function(issue){ return selectedPriorityFilters.indexOf(issue.priority || '') !== -1; });
+    }
     if (!filteredIssues.length) {
       emptyEl.style.display = 'block'; tableEl.style.display = 'none';
-      emptyEl.textContent = (selectedSupplierFilter || selectedPartFilters.length)
+      emptyEl.textContent = (selectedSupplierFilter || selectedPartFilters.length || selectedPriorityFilters.length)
         ? 'No open issues match the selected filters.'
         : (isSupplierUser() ? 'No open issues assigned to your organization yet.' : 'No open issues yet. Click Add an Open Issue above to add the first one.');
       return;
@@ -1222,6 +1312,7 @@
       return '<tr>' +
         '<td><button type="button" class="issueNumberLink" data-edit="' + escapeHtml(issue.id) + '" title="' + escapeHtml(issue.issueNumber) + '">' + escapeHtml(issue.issueNumber) + '</button></td>' +
         '<td>' + statusPillHtml(issue.status) + '</td>' +
+        '<td>' + escapeHtml(issue.priority || '') + '</td>' +
         '<td>' + escapeHtml((issue.partNumbers || []).join(', ')) + '</td>' +
         '<td><div class="cellClamp" title="' + escapeHtml(issue.issueTitle || issue.issueDescription) + '">' + escapeHtml(listTitleText(issue)) + '</div></td>' +
         '<td>' + picHtml + '</td>' +
@@ -1601,6 +1692,7 @@
     closeChampionPanel();
     renderChampionPicker(issue.championResponsible || []);
     document.getElementById('f_status').value = issue.status === 'closed' ? 'closed' : 'open';
+    document.getElementById('f_priority').value = issue.priority || '';
 
     partNumberRows = (issue.partNumbers || []).slice();
     document.getElementById('f_issueTitle').value = issue.issueTitle || '';
@@ -1638,7 +1730,8 @@
       permCM: document.getElementById('f_permCM').value.trim(),
       nextAction: document.getElementById('f_nextAction').value.trim(),
       championResponsible: getSelectedChampions(),
-      status: document.getElementById('f_status').value
+      status: document.getElementById('f_status').value,
+      priority: document.getElementById('f_priority').value
     };
     if (!baseFields.supplierOrg) throw new Error('Select a Supplier Organization.');
 
@@ -1754,6 +1847,7 @@
   var XLSX_COLUMNS = [
     { header: 'Issue #', width: 12, key: 'issueNumber' },
     { header: 'Status', width: 11, key: 'status', statusStyled: true },
+    { header: 'Priority', width: 9, key: 'priority', centered: true },
     { header: 'Supplier Organization', width: 24, key: 'supplierOrg' },
     { header: 'Part Number(s)', width: 20, key: 'partNumbers' },
     { header: 'Issue Title', width: 26, key: 'issueTitle', wrap: true },
@@ -1775,6 +1869,7 @@
     return {
       issueNumber: issue.issueNumber,
       status: issue.status === 'closed' ? 'Closed' : 'Open',
+      priority: issue.priority || '',
       supplierOrg: issue.supplierOrg || '',
       partNumbers: (issue.partNumbers || []).join(', '),
       issueTitle: truncateForExport(issue.issueTitle, 300),
@@ -1863,6 +1958,7 @@
           var raw = values[col.key];
           if (col.statusStyled) return xlInlineStrCell(ref, raw, issue.status === 'closed' ? 8 : 7);
           if (col.numeric) return xlNumberCell(ref, raw, 5);
+          if (col.centered) return xlInlineStrCell(ref, raw, 5);
           return xlInlineStrCell(ref, raw, col.wrap ? 4 : 6);
         }).join('');
         rows.push('<row r="' + rowNum + '" ht="64" customHeight="1">' + cells + '</row>');

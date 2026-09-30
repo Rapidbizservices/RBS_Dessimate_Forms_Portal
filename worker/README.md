@@ -1322,6 +1322,20 @@ frontend stopped offering them as a new pick, normalizing any of them
 for display. Set from a 2-option dropdown in the Add/Edit modal, shown as
 a color-coded pill in the list view - blue for Open, green for Closed.
 
+**Priority** (Rev2.36) is an optional single-select of **A**/**B**/**C**
+(A = highest), shared by Customer and Supplier Open Issues. Blank means
+unassigned (stored as `''`) and is the default - it's the absence of a
+value, not a 4th option. Existing records have no `priority` key and read
+back as blank; nothing was backfilled. Create/update reject anything other
+than `A`/`B`/`C`/blank with a 400 (`parseOpenIssuePriority`); an update
+that omits the `priority` key leaves the stored value alone, so a page
+cached from before this change can't wipe it. The list view shows it as a
+plain-text sortable column (blanks always sort to the bottom, in either
+direction) and adds a multi-select **Filter by Priority** (A, B, C,
+and/or Blank / unassigned) that combines with the Part filter (and, on
+Supplier Open Issues, the Supplier filter). The Excel export carries a
+Priority column after Status.
+
 The Agentic AI issue summary stub button that used to sit in its own list
 column (a "coming soon" placeholder, never a real feature) was removed
 entirely in Rev2.30 to give that space to the Notes/Comments column
