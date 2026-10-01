@@ -1,0 +1,48 @@
+name = "dscm-backup"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Nightly backup of the DSCM production data (D1 dscm-db + R2 dscm-files) to
+# SharePoint via Microsoft Graph - see README.md in this folder. Separate from
+# the "roberto" app worker on purpose: the SharePoint credentials never sit
+# inside the app, and nothing here can affect the live site.
+
+# workers.dev stays on only for the token-protected POST /run endpoint (manual
+# runs, and the initial full upload). Every other path returns 404.
+workers_dev = true
+
+[triggers]
+# Daily at 10:00 UTC (about 3 am Pacific).
+crons = ["0 10 * * *"]
+
+[limits]
+# Workers Paid allows up to 5 minutes of CPU per invocation. The job is mostly
+# waiting on network I/O, but copying file bytes does use some CPU.
+cpu_ms = 300000
+
+# Same D1 database and R2 bucket the roberto worker uses. This worker only
+# ever reads from them.
+[[d1_databases]]
+binding = "DB"
+database_name = "dscm-db"
+database_id = "5e6c1f37-8995-4425-bdad-b8f4e7985743"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "dscm-files"
+
+[vars]
+# Not secret. Folder inside the backup site's default document library.
+BACKUP_FOLDER = "DSCM-Backups"
+RESEND_FROM_EMAIL = "DSCM Backups <IT_Dessimate@dessimate.com>"
+
+# Secrets - set each with `npx wrangler secret put <NAME>` from this folder.
+# Kept as secrets (not [vars]) because this repo is public:
+#   GRAPH_TENANT_ID      - Entra Directory (tenant) ID
+#   GRAPH_CLIENT_ID      - App registration's Application (client) ID
+#   GRAPH_CLIENT_SECRET  - App registration's client secret VALUE
+#   GRAPH_SITE_ID        - SharePoint site id (from GET /sites/<host>:/sites/<name>)
+#   ALERT_EMAIL          - where failure alerts + the weekly summary go
+#                          (comma-separate for more than one address)
+#   RESEND_API_KEY       - Resend API key (same account the MFA emails use)
+#   BACKUP_TRIGGER_TOKEN - random string guarding POST /run
