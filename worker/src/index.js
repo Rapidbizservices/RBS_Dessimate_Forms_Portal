@@ -211,7 +211,10 @@
  *                                        worker's clock so the page countdown isn't at the mercy
  *                                        of the viewer's computer. A Supplier record has `dueAt`
  *                                        (their effective deadline) instead of quoteDueAt /
- *                                        supplierDueAt.
+ *                                        supplierDueAt. Quote-due emails (extension + 48h/2h
+ *                                        reminders) go to every user whose organization matches
+ *                                        that Supplier - see notifyRfqDueChanges / the scheduled
+ *                                        reminder scan.
  *   POST   /rfqs                       - team_member or above required; create an RFQ.
  *   GET    /rfqs/peek-number           - team_member or above required; preview of the next
  *                                        auto-assigned RFQ Number (does not consume it).
@@ -242,6 +245,10 @@
  *                                        scoped (a Customer login sees only RFQs shared with its own
  *                                        organization, and the Dessimate Quote only once it's been
  *                                        submitted; there is no Supplier role in this module).
+ *                                        Response is `{ customerRfqs, serverNow }`. A Customer
+ *                                        record has `dueAt` instead of quoteDueAt / customerDueAt.
+ *                                        Same private-note audiences, quote-due lock, and due
+ *                                        emails as /rfqs.
  *   POST   /customer-rfqs              - team_member or above required; create a Customer RFQ.
  *   GET    /customer-rfqs/peek-number  - team_member or above required; preview of the next
  *                                        auto-assigned Customer RFQ Number (8000-series, separate
@@ -263,7 +270,9 @@
  *   PUT    /customer-rfqs/<id>/dessimate-quote
  *                                       - admin or above required; submits/updates the "Dessimate
  *                                        Quote" back to the Customer - invisible to that Customer
- *                                        login until called with submit:true.
+ *                                        login until called with submit:true. Rejects with 403
+ *                                        `{ closed: true }` once the RFQ's quoteDueAt has passed
+ *                                        (notes stay open).
  *   POST   /customer-rfqs/<id>/comments
  *                                       - team_member or above, OR a Customer on a Customer RFQ
  *                                        shared with them; appends a Notes/Comments thread entry -
@@ -1398,6 +1407,12 @@ export default {
     } catch (err) {
       return json({ message: 'Server error: ' + (err && err.message ? err.message : String(err)) }, 500, origin);
     }
+  },
+
+  // Quote-due reminder scan (Dessimate RFQ + Customer RFQ). Cron is set in
+  // wrangler.toml - a worker deploy is what registers the schedule.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runRfqDueReminderScan(env));
   }
 };
 
@@ -1581,14 +1596,12 @@ async function clearEmailOtpCode(env, usernameLower) {
   });
 }
 
-// ---- MFA: outbound email via Resend ---------------------------------------
-// DSCM sends no other email today - this is the one small integration
-// surface for the email-OTP fallback, kept to a single fetch() call against
-// Resend's REST API (free tier is comfortably enough at this app's scale).
-// Never throws - a delivery failure shouldn't crash the request that
-// triggered it (the caller already committed the rate-limit record either
-// way); logged to the console for wrangler tail / Cloudflare dashboard
-// visibility instead.
+// ---- outbound email via Resend --------------------------------------------
+// One small integration surface: MFA sign-in codes, plus RFQ quote-due
+// extension/reminder mail. Kept to a single fetch() against Resend's REST
+// API (same RESEND_API_KEY / RESEND_FROM_EMAIL as MFA). Never throws - a
+// delivery failure shouldn't crash the request that triggered it; logged
+// to the console for wrangler tail / Cloudflare dashboard visibility.
 async function sendEmail(env, to, subject, html) {
   if (!env.RESEND_API_KEY) { console.error('sendEmail: RESEND_API_KEY not configured'); return { ok: false }; }
   try {
@@ -1602,6 +1615,191 @@ async function sendEmail(env, to, subject, html) {
   } catch (e) {
     console.error('sendEmail: ' + (e && e.message ? e.message : String(e)));
     return { ok: false };
+  }
+}
+
+// Live Pages URL for RFQ emails. ALLOWED_ORIGIN is the CORS origin (no
+// path); the site itself lives under the repo name on GitHub Pages.
+function dscmPagesBaseUrl(env) {
+  const origin = String(env.ALLOWED_ORIGIN || 'https://rapidbizservices.github.io').replace(/\/+$/, '');
+  return origin + '/RBS_Dessimate_Forms_Portal';
+}
+function escapeEmailHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+function fmtDueForEmail(iso) {
+  const t = Date.parse(iso);
+  if (isNaN(t)) return String(iso || '');
+  return new Date(t).toLocaleString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+  });
+}
+
+// Every user whose `organization` matches - not job title / role. Inactive
+// accounts and anyone without an email are skipped (nothing to send to).
+async function usersInOrganization(env, organization) {
+  if (!organization) return [];
+  const fileState = await readUsersFile(env);
+  const seen = {};
+  return fileState.users.filter(function (u) {
+    if (!u || u.active === false) return false;
+    if ((u.organization || '') !== organization) return false;
+    const email = (u.email || '').toString().trim();
+    if (!email) return false;
+    const key = email.toLowerCase();
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+}
+
+function rfqEmailSubject(rfq, kind) {
+  const num = rfq && rfq.rfqNumber != null && rfq.rfqNumber !== '' ? String(rfq.rfqNumber) : 'RFQ';
+  if (kind === 'extended') return 'DSCM: RFQ ' + num + ' deadline extended';
+  if (kind === '2h') return 'DSCM: RFQ ' + num + ' due in 2 hours';
+  return 'DSCM: RFQ ' + num + ' due in 48 hours';
+}
+function rfqEmailHtml(rfq, kind, dueAt, pageUrl) {
+  const num = escapeEmailHtml(rfq && rfq.rfqNumber != null ? rfq.rfqNumber : '');
+  const title = rfq && rfq.title ? escapeEmailHtml(rfq.title) : '';
+  const due = escapeEmailHtml(fmtDueForEmail(dueAt));
+  const href = escapeEmailHtml(pageUrl);
+  const heading = kind === 'extended'
+    ? 'The quote deadline has been extended (or set) for this RFQ.'
+    : (kind === '2h' ? 'This RFQ’s quote deadline is in about 2 hours.' : 'This RFQ’s quote deadline is in about 48 hours.');
+  return '<p>' + heading + '</p>' +
+    '<p><strong>RFQ ' + num + '</strong>' + (title ? ' — ' + title : '') + '</p>' +
+    '<p>Due: <strong>' + due + '</strong></p>' +
+    (href ? '<p><a href="' + href + '">Open this RFQ in DSCM</a></p>' : '');
+}
+
+async function emailOrgAboutRfqDue(env, organization, rfq, kind, dueAt, pagePath) {
+  const users = await usersInOrganization(env, organization);
+  if (!users.length) return { sent: 0, attempted: 0 };
+  const pageUrl = dscmPagesBaseUrl(env) + '/' + pagePath;
+  const subject = rfqEmailSubject(rfq, kind);
+  const html = rfqEmailHtml(rfq, kind, dueAt, pageUrl);
+  let sent = 0;
+  for (let i = 0; i < users.length; i++) {
+    const result = await sendEmail(env, users[i].email, subject, html);
+    if (result && result.ok) sent++;
+  }
+  return { sent: sent, attempted: users.length };
+}
+
+function emptyDueReminders() { return {}; }
+function sanitizeDueReminders(obj) {
+  const out = emptyDueReminders();
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return out;
+  Object.keys(obj).forEach(function (org) {
+    const row = obj[org];
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return;
+    const h48 = row.h48 ? String(row.h48) : '';
+    const h2 = row.h2 ? String(row.h2) : '';
+    if (h48 || h2) out[org] = { h48: h48, h2: h2 };
+  });
+  return out;
+}
+function resetDueRemindersForOrg(target, org) {
+  if (!target.dueReminders || typeof target.dueReminders !== 'object') return;
+  delete target.dueReminders[org];
+}
+function dueWasExtendedOrFirstSet(prevDue, nextDue) {
+  if (!nextDue) return false;
+  if (!prevDue) return true;
+  const prevMs = Date.parse(prevDue);
+  const nextMs = Date.parse(nextDue);
+  return !isNaN(prevMs) && !isNaN(nextMs) && nextMs > prevMs;
+}
+
+const RFQ_REMINDER_48H_MS = 48 * 60 * 60 * 1000;
+const RFQ_REMINDER_2H_MS = 2 * 60 * 60 * 1000;
+
+async function runRfqDueReminderScan(env) {
+  try {
+    await scanRfqStoreDueReminders(env, {
+      path: RFQS_FILE_PATH,
+      sanitize: sanitizeRfq,
+      sharedKey: 'sharedWithSuppliers',
+      dueAtFor: rfqDueAtFor,
+      pagePath: 'RFQ.html'
+    });
+    await scanRfqStoreDueReminders(env, {
+      path: CUSTOMER_RFQS_FILE_PATH,
+      sanitize: sanitizeCustomerRfq,
+      sharedKey: 'sharedWithCustomers',
+      dueAtFor: customerRfqDueAtFor,
+      pagePath: 'CustomerRFQ.html'
+    });
+  } catch (e) {
+    console.error('runRfqDueReminderScan: ' + (e && e.message ? e.message : String(e)));
+  }
+}
+
+async function scanRfqStoreDueReminders(env, spec) {
+  const state = await readJsonArrayFile(env, spec.path);
+  const now = Date.now();
+  const marks = []; // { id, org, kind }
+  for (let i = 0; i < state.items.length; i++) {
+    const raw = state.items[i];
+    const rfq = spec.sanitize(raw);
+    const shared = Array.isArray(rfq[spec.sharedKey]) ? rfq[spec.sharedKey] : [];
+    const reminders = sanitizeDueReminders(raw.dueReminders);
+    for (let j = 0; j < shared.length; j++) {
+      const org = shared[j];
+      const dueAt = spec.dueAtFor(rfq, org);
+      if (!dueAt) continue;
+      const dueMs = Date.parse(dueAt);
+      if (isNaN(dueMs) || now >= dueMs) continue;
+      const remaining = dueMs - now;
+      const sent = reminders[org] || {};
+      const kinds = [];
+      if (remaining <= RFQ_REMINDER_48H_MS && !sent.h48) kinds.push('48h');
+      if (remaining <= RFQ_REMINDER_2H_MS && !sent.h2) kinds.push('2h');
+      for (let k = 0; k < kinds.length; k++) {
+        const kind = kinds[k];
+        const result = await emailOrgAboutRfqDue(env, org, rfq, kind, dueAt, spec.pagePath);
+        if (result.sent > 0 || result.attempted === 0) {
+          marks.push({ id: raw.id, org: org, kind: kind });
+        }
+      }
+    }
+  }
+  if (!marks.length) return;
+  await mutateJsonArrayFile(env, spec.path, function (items) {
+    const sentAt = new Date().toISOString();
+    marks.forEach(function (m) {
+      const target = items.find(function (o) { return o.id === m.id; });
+      if (!target) return;
+      if (!target.dueReminders || typeof target.dueReminders !== 'object' || Array.isArray(target.dueReminders)) {
+        target.dueReminders = {};
+      }
+      if (!target.dueReminders[m.org] || typeof target.dueReminders[m.org] !== 'object') {
+        target.dueReminders[m.org] = {};
+      }
+      if (m.kind === '48h') target.dueReminders[m.org].h48 = sentAt;
+      if (m.kind === '2h') target.dueReminders[m.org].h2 = sentAt;
+    });
+    return { items: items };
+  });
+}
+
+async function notifyRfqDueExtensions(env, prevShared, prevDueFor, nextShared, nextDueFor, rfq, pagePath) {
+  const previouslyShared = Array.isArray(prevShared) ? prevShared : [];
+  const shared = Array.isArray(nextShared) ? nextShared : [];
+  for (let i = 0; i < shared.length; i++) {
+    const org = shared[i];
+    if (previouslyShared.indexOf(org) === -1) continue;
+    const prevDue = prevDueFor(org);
+    const nextDue = nextDueFor(org);
+    if (!dueWasExtendedOrFirstSet(prevDue, nextDue)) continue;
+    if (Date.parse(nextDue) <= Date.now()) continue;
+    await emailOrgAboutRfqDue(env, org, rfq, 'extended', nextDue, pagePath);
   }
 }
 
@@ -5203,9 +5401,14 @@ async function handleUpdateRfq(request, env, origin, id) {
   }
 
   let saved = null;
+  let prevShared = [];
+  let prevDueByOrg = {};
   const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
+    const before = sanitizeRfq(target);
+    prevShared = before.sharedWithSuppliers.slice();
+    prevShared.forEach(function (org) { prevDueByOrg[org] = rfqDueAtFor(before, org); });
     Object.assign(target, fields); // supplierQuotes is never in `fields` - a team_member's edit never touches it
     if (newRfqNumber !== undefined) target.rfqNumber = newRfqNumber;
     if (body.title !== undefined) target.title = cleanRfqTitle(body.title);
@@ -5215,6 +5418,12 @@ async function handleUpdateRfq(request, env, origin, id) {
     if (body.quoteDueAt !== undefined) target.quoteDueAt = cleanDueAt(body.quoteDueAt);
     target.supplierDueAt = cleanSupplierDueAt(body.supplierDueAt !== undefined ? body.supplierDueAt : target.supplierDueAt, target.sharedWithSuppliers);
     if (body.dessimateAttachments !== undefined) target.dessimateAttachments = sanitizeOrgDocList(body.dessimateAttachments);
+    const after = sanitizeRfq(target);
+    (after.sharedWithSuppliers || []).forEach(function (org) {
+      if (dueWasExtendedOrFirstSet(prevDueByOrg[org] || '', rfqDueAtFor(after, org))) {
+        resetDueRemindersForOrg(target, org);
+      }
+    });
     saved = target;
     return { items: items };
   }, { requireFound: true });
@@ -5227,7 +5436,17 @@ async function handleUpdateRfq(request, env, origin, id) {
       return { obj: obj };
     });
   }
-  return json(resolveRfqCommentAudiences(sanitizeRfq(saved), await readSupplierOrgByUsername(env)), 200, origin);
+  const presented = resolveRfqCommentAudiences(sanitizeRfq(saved), await readSupplierOrgByUsername(env));
+  await notifyRfqDueExtensions(
+    env,
+    prevShared,
+    function (org) { return prevDueByOrg[org] || ''; },
+    presented.sharedWithSuppliers,
+    function (org) { return rfqDueAtFor(presented, org); },
+    presented,
+    'RFQ.html'
+  );
+  return json(presented, 200, origin);
 }
 
 // Hard delete (array splice only) - see the module comment above for why
@@ -5504,6 +5723,9 @@ function sanitizeCustomerRfqQuote(q) {
     submittedBy: q.submittedBy || ''
   };
 }
+function customerRfqDueAtFor(rfq, org) {
+  return (rfq.customerDueAt && rfq.customerDueAt[org]) || rfq.quoteDueAt || '';
+}
 function sanitizeCustomerRfq(o) {
   const lines = (Array.isArray(o.lines) ? o.lines : []).map(sanitizeCustomerRfqLine).map(function (l, idx) {
     l.lineNo = idx + 1;
@@ -5529,19 +5751,40 @@ function sanitizeCustomerRfq(o) {
     dessimateAttachments: sanitizeOrgDocList(o.dessimateAttachments),
     sharedWithCustomers: sharedWithCustomers,
     dessimateQuote: sanitizeCustomerRfqQuote(o.dessimateQuote),
+    quoteDueAt: cleanDueAt(o.quoteDueAt),
+    customerDueAt: cleanSupplierDueAt(o.customerDueAt, null),
     comments: sanitizeRfqComments(o.comments),
     createdAt: o.createdAt || null
   };
+}
+
+async function readCustomerOrgByUsername(env) {
+  const fileState = await readUsersFile(env);
+  const map = {};
+  fileState.users.forEach(function (u) {
+    if (!u || !u.username || !u.organization) return;
+    const isCustomer = u.accessLevel ? u.accessLevel === 'customer' : u.relationship === 'Customer';
+    if (isCustomer) map[u.username.toLowerCase()] = u.organization;
+  });
+  return map;
+}
+function resolveCustomerRfqCommentAudiences(rfq, customerOrgByUsername) {
+  rfq.comments = (rfq.comments || []).map(function (c) {
+    if (c.audience) return c;
+    const org = customerOrgByUsername[(c.authorUsername || '').toLowerCase()] || '';
+    return Object.assign({}, c, { audience: org || 'all', authorOrg: c.authorOrg || org });
+  });
+  return rfq;
 }
 
 // A Customer login sees only RFQs it's actually been shared with, never
 // the RFQ's own internal legacy `notes` (staff-only, frozen - see
 // sanitizeCustomerRfq), and only `dessimateQuote` once it's actually been
 // submitted - before that a "no quote yet" shape, same structure either
-// way so the frontend doesn't need a separate branch. `comments` (the real
-// Notes/Comments thread) passes through untouched - a Customer is meant to
-// see and post to it, same as a Supplier already does on the Dessimate RFQ
-// side. A Supplier login has no role in this module at all.
+// way so the frontend doesn't need a separate branch. Comments are scoped
+// the same way Dessimate RFQ scopes Supplier notes: 'all' plus this
+// Customer's private thread, never another Customer's. A Supplier login
+// has no role in this module at all.
 function scopeCustomerRfqs(rfqs, accessLevel, organization) {
   if (accessLevel === 'customer') {
     const visible = rfqs.filter(function (o) { return organization && o.sharedWithCustomers.indexOf(organization) !== -1; });
@@ -5552,6 +5795,10 @@ function scopeCustomerRfqs(rfqs, accessLevel, organization) {
       copy.dessimateQuote = (o.dessimateQuote && o.dessimateQuote.submitted)
         ? o.dessimateQuote
         : { lines: [], attachments: [], notes: '', submitted: false, submittedAt: null, submittedBy: '' };
+      copy.comments = (o.comments || []).filter(function (c) { return c.audience === 'all' || c.audience === organization; });
+      copy.dueAt = customerRfqDueAtFor(o, organization);
+      delete copy.quoteDueAt;
+      delete copy.customerDueAt;
       return copy;
     });
   }
@@ -5559,10 +5806,16 @@ function scopeCustomerRfqs(rfqs, accessLevel, organization) {
   return rfqs;
 }
 
+function presentCustomerRfqs(items, customerOrgByUsername, accessLevel, organization) {
+  const rfqs = items.map(function (o) { return resolveCustomerRfqCommentAudiences(sanitizeCustomerRfq(o), customerOrgByUsername); });
+  return scopeCustomerRfqs(rfqs, accessLevel, organization);
+}
+
 async function handleListCustomerRfqs(env, origin, accessLevel, organization) {
   const state = await readJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH);
-  const rfqs = scopeCustomerRfqs(state.items.map(sanitizeCustomerRfq), accessLevel, organization);
-  return json({ customerRfqs: rfqs }, 200, origin);
+  const customerOrgByUsername = await readCustomerOrgByUsername(env);
+  const rfqs = presentCustomerRfqs(state.items, customerOrgByUsername, accessLevel, organization);
+  return json({ customerRfqs: rfqs, serverNow: new Date().toISOString() }, 200, origin);
 }
 
 function validateCustomerRfqFields(body) {
@@ -5602,6 +5855,8 @@ async function handleCreateCustomerRfq(request, env, origin) {
     { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, title: cleanRfqTitle(body.title), dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments) },
     fields
   );
+  newRfq.quoteDueAt = cleanDueAt(body.quoteDueAt);
+  newRfq.customerDueAt = cleanSupplierDueAt(body.customerDueAt, newRfq.sharedWithCustomers);
 
   const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
     items.push(newRfq);
@@ -5627,13 +5882,26 @@ async function handleUpdateCustomerRfq(request, env, origin, id) {
   }
 
   let saved = null;
+  let prevShared = [];
+  let prevDueByOrg = {};
   const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
+    const before = sanitizeCustomerRfq(target);
+    prevShared = before.sharedWithCustomers.slice();
+    prevShared.forEach(function (org) { prevDueByOrg[org] = customerRfqDueAtFor(before, org); });
     Object.assign(target, fields); // dessimateQuote is never in `fields` - a team_member's edit never touches it
     if (newRfqNumber !== undefined) target.rfqNumber = newRfqNumber;
     if (body.title !== undefined) target.title = cleanRfqTitle(body.title);
+    if (body.quoteDueAt !== undefined) target.quoteDueAt = cleanDueAt(body.quoteDueAt);
+    target.customerDueAt = cleanSupplierDueAt(body.customerDueAt !== undefined ? body.customerDueAt : target.customerDueAt, target.sharedWithCustomers);
     if (body.dessimateAttachments !== undefined) target.dessimateAttachments = sanitizeOrgDocList(body.dessimateAttachments);
+    const after = sanitizeCustomerRfq(target);
+    (after.sharedWithCustomers || []).forEach(function (org) {
+      if (dueWasExtendedOrFirstSet(prevDueByOrg[org] || '', customerRfqDueAtFor(after, org))) {
+        resetDueRemindersForOrg(target, org);
+      }
+    });
     saved = target;
     return { items: items };
   }, { requireFound: true });
@@ -5646,7 +5914,17 @@ async function handleUpdateCustomerRfq(request, env, origin, id) {
       return { obj: obj };
     });
   }
-  return json(sanitizeCustomerRfq(saved), 200, origin);
+  const presented = resolveCustomerRfqCommentAudiences(sanitizeCustomerRfq(saved), await readCustomerOrgByUsername(env));
+  await notifyRfqDueExtensions(
+    env,
+    prevShared,
+    function (org) { return prevDueByOrg[org] || ''; },
+    presented.sharedWithCustomers,
+    function (org) { return customerRfqDueAtFor(presented, org); },
+    presented,
+    'CustomerRFQ.html'
+  );
+  return json(presented, 200, origin);
 }
 
 // Hard delete, same precedent as the original RFQ module (see its own
@@ -5681,23 +5959,29 @@ async function handleAddCustomerRfqComment(request, env, origin, id, accessLevel
     callerOrg = await resolveUserOrganization(env, username);
     if (!callerOrg) return json({ message: 'Your account isn’t linked to a Customer organization.' }, 403, origin);
   }
+  const audience = isCustomer ? callerOrg : ((body.audience || '').toString().trim() || 'all');
 
-  const comment = { id: cryptoRandomId(), authorUsername: username || '', text: text, createdAt: new Date().toISOString() };
+  const comment = { id: cryptoRandomId(), authorUsername: username || '', authorOrg: callerOrg, audience: audience, text: text, createdAt: new Date().toISOString() };
 
   let saved = null;
+  let badAudience = false;
   const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
-    if (isCustomer && (!Array.isArray(target.sharedWithCustomers) || target.sharedWithCustomers.indexOf(callerOrg) === -1)) return null;
+    const sharedWith = Array.isArray(target.sharedWithCustomers) ? target.sharedWithCustomers : [];
+    if (isCustomer && sharedWith.indexOf(callerOrg) === -1) return null;
+    if (audience !== 'all' && sharedWith.indexOf(audience) === -1) { badAudience = true; return null; }
     target.comments = Array.isArray(target.comments) ? target.comments : [];
     target.comments.push(comment);
     saved = target;
     return { items: items };
   }, { requireFound: true });
 
+  if (badAudience) return json({ message: 'That Customer isn’t on this RFQ’s Share With Customers list.' }, 400, origin);
   if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
-  return json(sanitizeCustomerRfq(saved), 200, origin);
+  const customerOrgByUsername = await readCustomerOrgByUsername(env);
+  return json(presentCustomerRfqs([saved], customerOrgByUsername, accessLevel, callerOrg)[0], 200, origin);
 }
 
 // Edits one existing comment's text in place - same permission split as
@@ -5738,7 +6022,8 @@ async function handleEditCustomerRfqComment(request, env, origin, id, commentId,
   if (forbidden) return json({ message: 'You can only edit your own comments.' }, 403, origin);
   if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
-  return json(sanitizeCustomerRfq(saved), 200, origin);
+  const customerOrgByUsername = await readCustomerOrgByUsername(env);
+  return json(presentCustomerRfqs([saved], customerOrgByUsername, accessLevel, callerOrg)[0], 200, origin);
 }
 
 // Used by isContentsPathAllowedForExternal to gate a Customer's raw
@@ -5762,10 +6047,20 @@ async function handleUpdateCustomerRfqQuote(request, env, origin, id, username) 
   const notes = (body.notes || '').toString().trim();
   const submitNow = !!body.submit;
 
+  const existing = await resolveCustomerRfqRecord(env, id);
+  if (!existing) return json({ message: 'Not found.' }, 404, origin);
+  const quoteDueAt = existing.quoteDueAt;
+  if (quoteDueAt && Date.now() > Date.parse(quoteDueAt)) {
+    return json({ message: 'The quote deadline for this RFQ has passed, so the Dessimate Quote can no longer be changed. Extend the Quote Due date if you need more time.', closed: true }, 403, origin);
+  }
+
   let saved = null;
+  let closed = false;
   const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
+    const dueNow = cleanDueAt(target.quoteDueAt);
+    if (dueNow && Date.now() > Date.parse(dueNow)) { closed = true; return null; }
     const validLineIds = new Set((Array.isArray(target.lines) ? target.lines : []).map(function (l) { return l.lineId; }));
     const lines = linesIn
       .filter(function (l) { return l && validLineIds.has(l.lineId); })
@@ -5782,6 +6077,7 @@ async function handleUpdateCustomerRfqQuote(request, env, origin, id, username) 
     saved = target;
     return { items: items };
   }, { requireFound: true });
+  if (closed) return json({ message: 'The quote deadline for this RFQ has passed, so the Dessimate Quote can no longer be changed. Extend the Quote Due date if you need more time.', closed: true }, 403, origin);
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   return json(sanitizeCustomerRfqQuote(saved.dessimateQuote), 200, origin);

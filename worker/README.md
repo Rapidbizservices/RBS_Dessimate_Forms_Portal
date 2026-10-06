@@ -1539,6 +1539,22 @@ per-Supplier extensions under Share With Suppliers, and **Extend** on
 each card in Quotes Received (Extend writes immediately so the Supplier
 is unblocked without waiting for the big Save).
 
+**Quote-due emails** - when a Supplier's effective deadline is extended
+(or first set after that Supplier was already on Share With Suppliers),
+every user whose `organization` matches that Supplier (from
+`data/users.json` - not job title) gets an email via the same Resend path
+as MFA sign-in codes (`RESEND_API_KEY` / `RESEND_FROM_EMAIL`). A scheduled
+scan on this worker (`[triggers] crons` in `wrangler.toml`, every 15
+minutes) also sends a 48-hour reminder and a 2-hour reminder before that
+effective due. Reminders are recorded per RFQ per Supplier on
+`dueReminders` (not returned in API responses); extending the deadline
+clears that Supplier's record so they get a fresh 48h/2h against the new
+date. No email after the deadline has passed, and no reminder if there is
+no due date. Already-submitted quotes still get reminders (they can revise
+until lock). The message includes RFQ number, title if set, the due date,
+and a link to `RFQ.html` on the Pages site. **A worker deploy is what
+registers the cron** - editing `wrangler.toml` locally does not.
+
 **Title** - an optional short description (up to 150 characters) so an RFQ
 can be recognized by more than its number. It's shown as its own sortable
 column in the list, in the Edit modal's heading, and in a Supplier's quote
@@ -1582,6 +1598,39 @@ every Customer RFQ that existed at that point.) Attachments live under their own
 only, checked fresh from storage on every file request (never
 list-time-only), same defense-in-depth already used for the original RFQ
 module's equivalent branches.
+
+**Attachment visibility** - RFQ-level files and per-part drawings/3D are
+visible to every Customer the RFQ is shared with. The Add/Edit form and
+the per-part attachments window both say so in an amber notice.
+
+**Private notes (audience)** - same shape as Dessimate RFQ
+(`audience` `'all'` or one Customer organization, plus `authorOrg`). A
+Customer's note is always private to its own organization. Dessimate
+staff choose: post under "All Customers" (amber warning + confirm) or
+reply in that Customer's private thread. `scopeCustomerRfqs` filters
+comments so a Customer never sees another Customer's notes. Comment
+add/edit responses go through `presentCustomerRfqs` (sanitize + resolve
++ scope) so those routes can't leak another Customer's notes/deadline.
+Notes written before audiences existed have none on disk;
+`resolveCustomerRfqCommentAudiences` fills them in at read time (a
+Customer author's old note becomes private to that org; anyone else's
+stays `'all'`). Notes stay open after the quote deadline.
+
+**Quote due dates** - optional `quoteDueAt` plus `customerDueAt: { [org]:
+ISO }` overrides. A Customer's effective deadline is its override if it
+has one, otherwise the RFQ's. `scopeCustomerRfqs` replaces those two
+fields with a single `dueAt` for the caller. `GET /customer-rfqs`
+includes `serverNow`. `PUT /customer-rfqs/<id>/dessimate-quote` rejects
+with 403 `{ closed: true }` after `quoteDueAt` (the Dessimate Quote
+locks; notes stay open). The page shows a live days/hours/minutes
+countdown (amber under 24h, red under 1h). Team Member+ set the RFQ due
+in the Add/Edit form, per-Customer extensions under Share With
+Customers, and **Extend** on Customer Deadlines (writes immediately).
+
+**Quote-due emails** - same rules as Dessimate RFQ, to every user whose
+organization matches that Customer: extension (or first set after they
+were already shared), plus 48h and 2h reminders, tracked/reset the same
+way on `dueReminders`. Link in the email goes to `CustomerRFQ.html`.
 
 ## Installable app (PWA)
 

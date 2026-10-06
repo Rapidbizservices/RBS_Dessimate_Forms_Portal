@@ -25,6 +25,12 @@ database_id = "5e6c1f37-8995-4425-bdad-b8f4e7985743"
 binding = "FILES"
 bucket_name = "dscm-files"
 
+# RFQ quote-due reminder scan (48h + 2h before each Supplier/Customer
+# effective deadline). A worker deploy is what registers this schedule
+# with Cloudflare - editing the file locally is not enough.
+[triggers]
+crons = ["*/15 * * * *"]
+
 # Secrets (set these with `wrangler secret put <NAME>` - see the README in
 # this folder for exact commands):
 #   SESSION_SECRET  - random string, used to sign staff login sessions
@@ -42,11 +48,13 @@ bucket_name = "dscm-files"
 #                     encrypting TOTP secrets at rest. See worker/README.md's
 #                     Multi-factor authentication section.
 #   RESEND_API_KEY  - from your Resend account (resend.com, free tier).
-#                     Sends the email one-time-code MFA fallback. Once set,
-#                     every account with an email on file automatically sees
-#                     "use email code instead" at MFA login - no per-user
-#                     opt-in. MFA still works with just an authenticator app
-#                     if this is never set - only the email fallback needs it.
+#                     Sends MFA email one-time codes AND RFQ quote-due
+#                     extension/reminder emails. Once set, every account
+#                     with an email on file automatically sees "use email
+#                     code instead" at MFA login - no per-user opt-in.
+#                     MFA still works with just an authenticator app if
+#                     this is never set - only email (MFA fallback + RFQ
+#                     due notices) needs it.
 # Note: GITHUB_TOKEN is no longer used - this backend never talks to GitHub
 # for anything except the one-time migration, which reads the old public
 # repo's already-public files with no token at all.
