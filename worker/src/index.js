@@ -207,6 +207,11 @@
  *                                        organization, and only its own submitted quote on each; a
  *                                        Customer login has no role in this module at all - Rev2.27
  *                                        split the Customer-facing half out to /customer-rfqs).
+ *                                        Response is `{ rfqs, serverNow }` - serverNow is the
+ *                                        worker's clock so the page countdown isn't at the mercy
+ *                                        of the viewer's computer. A Supplier record has `dueAt`
+ *                                        (their effective deadline) instead of quoteDueAt /
+ *                                        supplierDueAt.
  *   POST   /rfqs                       - team_member or above required; create an RFQ.
  *   GET    /rfqs/peek-number           - team_member or above required; preview of the next
  *                                        auto-assigned RFQ Number (does not consume it).
@@ -216,7 +221,10 @@
  *                                        left in place, same as Dessimate PO/Customer PO).
  *   PUT    /rfqs/<id>/quote            - Supplier only, and only if that RFQ has been shared with
  *                                        their organization; submits/updates their own price/
- *                                        tooling-cost quote and quote attachments.
+ *                                        tooling-cost quote and quote attachments. Rejects with
+ *                                        403 `{ closed: true }` once that Supplier's deadline has
+ *                                        passed (`supplierDueAt[org]` if set, else `quoteDueAt`).
+ *                                        Notes stay open after the deadline (POST /comments).
  *   POST   /rfqs/<id>/comments         - team_member or above, OR a Supplier on an RFQ shared with
  *                                        their organization; appends a note to the Notes/Comments
  *                                        thread (Rev2.29 - superseded the old single `notes` field).
@@ -4956,11 +4964,18 @@ function sanitizeRfqSupplierQuote(q) {
 // field at all) - so nobody can silently rewrite the whole thread by
 // resending a modified array. editedAt is set only once a comment has
 // actually been edited, so the UI can show a "(edited)" marker.
+// `audience` is who the note is for: 'all' (every Supplier the RFQ is
+// shared with - only Dessimate staff can post these) or one Supplier
+// organization's name (that Supplier's private thread with Dessimate). A
+// note saved before audiences existed has none; resolveRfqCommentAudiences
+// fills it in from the author (see there).
 function sanitizeRfqComment(c) {
   if (!c) return null;
   return {
     id: c.id || cryptoRandomId(),
     authorUsername: c.authorUsername || '',
+    authorOrg: c.authorOrg || '',
+    audience: c.audience || '',
     text: c.text || '',
     createdAt: c.createdAt || null,
     editedAt: c.editedAt || null
@@ -4969,6 +4984,52 @@ function sanitizeRfqComment(c) {
 function sanitizeRfqComments(list) {
   const arr = Array.isArray(list) ? list : [];
   return arr.map(sanitizeRfqComment).filter(Boolean);
+}
+
+// lowercased username -> organization, for every Supplier login. Lets a
+// note written before audiences existed be placed by who wrote it: a
+// Supplier's old note becomes private to that Supplier, anyone else's
+// (Dessimate staff) stays visible to all.
+async function readSupplierOrgByUsername(env) {
+  const fileState = await readUsersFile(env);
+  const map = {};
+  fileState.users.forEach(function (u) {
+    if (!u || !u.username || !u.organization) return;
+    const isSupplier = u.accessLevel ? u.accessLevel === 'supplier' : u.relationship === 'Supplier';
+    if (isSupplier) map[u.username.toLowerCase()] = u.organization;
+  });
+  return map;
+}
+function resolveRfqCommentAudiences(rfq, supplierOrgByUsername) {
+  rfq.comments = (rfq.comments || []).map(function (c) {
+    if (c.audience) return c;
+    const org = supplierOrgByUsername[(c.authorUsername || '').toLowerCase()] || '';
+    return Object.assign({}, c, { audience: org || 'all', authorOrg: c.authorOrg || org });
+  });
+  return rfq;
+}
+
+// Quote due dates: `quoteDueAt` is the RFQ's own deadline, `supplierDueAt`
+// holds per-Supplier extensions ({ [org]: ISO }). A Supplier's deadline is
+// its extension if it has one, otherwise the RFQ's; neither set = no
+// deadline. Stored as absolute ISO timestamps so every viewer sees the same
+// moment in their own local time.
+function cleanDueAt(v) {
+  if (v === undefined || v === null || v === '') return '';
+  const t = Date.parse(String(v));
+  return isNaN(t) ? '' : new Date(t).toISOString();
+}
+function cleanSupplierDueAt(obj, sharedWith) {
+  const out = {};
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return out;
+  Object.keys(obj).forEach(function (org) {
+    const due = cleanDueAt(obj[org]);
+    if (due && (!sharedWith || sharedWith.indexOf(org) !== -1)) out[org] = due;
+  });
+  return out;
+}
+function rfqDueAtFor(rfq, org) {
+  return (rfq.supplierDueAt && rfq.supplierDueAt[org]) || rfq.quoteDueAt || '';
 }
 function sanitizeRfq(o) {
   const lines = (Array.isArray(o.lines) ? o.lines : []).map(sanitizeRfqLine).map(function (l, idx) {
@@ -4998,6 +5059,8 @@ function sanitizeRfq(o) {
     dessimateAttachments: sanitizeOrgDocList(o.dessimateAttachments),
     sharedWithSuppliers: sharedWithSuppliers,
     supplierQuotes: supplierQuotes,
+    quoteDueAt: cleanDueAt(o.quoteDueAt),
+    supplierDueAt: cleanSupplierDueAt(o.supplierDueAt, null),
     comments: sanitizeRfqComments(o.comments),
     createdAt: o.createdAt || null
   };
@@ -5025,16 +5088,36 @@ function scopeRfqs(rfqs, accessLevel, organization) {
       const copy = Object.assign({}, o);
       copy.sharedWithSuppliers = [organization];
       copy.supplierQuotes = (o.supplierQuotes && o.supplierQuotes[organization]) ? { [organization]: o.supplierQuotes[organization] } : {};
+      // Only notes to every Supplier, plus this Supplier's own private
+      // thread - never another Supplier's notes or Dessimate's replies to
+      // them. Expects audiences already resolved (resolveRfqCommentAudiences).
+      copy.comments = (o.comments || []).filter(function (c) { return c.audience === 'all' || c.audience === organization; });
+      // Just this Supplier's own deadline - not the RFQ's default or anyone
+      // else's extension.
+      copy.dueAt = rfqDueAtFor(o, organization);
+      delete copy.quoteDueAt;
+      delete copy.supplierDueAt;
       return copy;
     });
   }
   return rfqs;
 }
 
+// Sanitized, audience-resolved and scoped to the caller - the one shape
+// every RFQ response goes out in, so no response path can hand a Supplier
+// another Supplier's quote, notes or deadline.
+function presentRfqs(items, supplierOrgByUsername, accessLevel, organization) {
+  const rfqs = items.map(function (o) { return resolveRfqCommentAudiences(sanitizeRfq(o), supplierOrgByUsername); });
+  return scopeRfqs(rfqs, accessLevel, organization);
+}
+
 async function handleListRfqs(env, origin, accessLevel, organization) {
   const state = await readJsonArrayFile(env, RFQS_FILE_PATH);
-  const rfqs = scopeRfqs(state.items.map(sanitizeRfq), accessLevel, organization);
-  return json({ rfqs: rfqs }, 200, origin);
+  const supplierOrgByUsername = await readSupplierOrgByUsername(env);
+  const rfqs = presentRfqs(state.items, supplierOrgByUsername, accessLevel, organization);
+  // serverNow lets the page run its due-date countdown off the server's
+  // clock rather than trusting the viewer's own.
+  return json({ rfqs: rfqs, serverNow: new Date().toISOString() }, 200, origin);
 }
 
 // A short label so users can tell RFQs apart by more than their number
@@ -5088,6 +5171,8 @@ async function handleCreateRfq(request, env, origin) {
     { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, title: cleanRfqTitle(body.title), dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments), supplierQuotes: {} },
     fields
   );
+  newRfq.quoteDueAt = cleanDueAt(body.quoteDueAt);
+  newRfq.supplierDueAt = cleanSupplierDueAt(body.supplierDueAt, newRfq.sharedWithSuppliers);
 
   const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
     items.push(newRfq);
@@ -5124,6 +5209,11 @@ async function handleUpdateRfq(request, env, origin, id) {
     Object.assign(target, fields); // supplierQuotes is never in `fields` - a team_member's edit never touches it
     if (newRfqNumber !== undefined) target.rfqNumber = newRfqNumber;
     if (body.title !== undefined) target.title = cleanRfqTitle(body.title);
+    // Same only-when-sent rule as title, so a page that predates due dates
+    // can't clear them. Extensions for a Supplier no longer shared with are
+    // dropped.
+    if (body.quoteDueAt !== undefined) target.quoteDueAt = cleanDueAt(body.quoteDueAt);
+    target.supplierDueAt = cleanSupplierDueAt(body.supplierDueAt !== undefined ? body.supplierDueAt : target.supplierDueAt, target.sharedWithSuppliers);
     if (body.dessimateAttachments !== undefined) target.dessimateAttachments = sanitizeOrgDocList(body.dessimateAttachments);
     saved = target;
     return { items: items };
@@ -5137,7 +5227,7 @@ async function handleUpdateRfq(request, env, origin, id) {
       return { obj: obj };
     });
   }
-  return json(sanitizeRfq(saved), 200, origin);
+  return json(resolveRfqCommentAudiences(sanitizeRfq(saved), await readSupplierOrgByUsername(env)), 200, origin);
 }
 
 // Hard delete (array splice only) - see the module comment above for why
@@ -5189,6 +5279,12 @@ async function handleSubmitRfqQuote(request, env, origin, id, organization, user
   if (!organization || sharedWith.indexOf(organization) === -1) {
     return json({ message: 'This RFQ hasn’t been shared with your organization.' }, 403, origin);
   }
+  // Enforced here, not just by the page's countdown, so a stale tab or a
+  // wrong computer clock can't sneak a quote in after the deadline.
+  const dueAt = rfqDueAtFor(sanitizeRfq(rfq), organization);
+  if (dueAt && Date.now() > Date.parse(dueAt)) {
+    return json({ message: 'The quote deadline for this RFQ has passed, so it can no longer be changed. Contact Dessimate if you need more time.', closed: true }, 403, origin);
+  }
 
   // Drop any submitted line whose lineId doesn't match a real current line
   // on this RFQ - defends against a stale client submitting against a line
@@ -5225,13 +5321,17 @@ async function handleSubmitRfqQuote(request, env, origin, id, organization, user
 
   const quote = { lines: lines, attachments: attachments, submittedAt: new Date().toISOString(), submittedBy: username || '' };
 
+  let closed = false;
   const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
+    const dueNow = rfqDueAtFor(sanitizeRfq(target), organization);
+    if (dueNow && Date.now() > Date.parse(dueNow)) { closed = true; return null; }
     if (!target.supplierQuotes || typeof target.supplierQuotes !== 'object') target.supplierQuotes = {};
     target.supplierQuotes[organization] = quote;
     return { items: items };
   }, { requireFound: true });
+  if (closed) return json({ message: 'The quote deadline for this RFQ has passed, so it can no longer be changed. Contact Dessimate if you need more time.', closed: true }, 403, origin);
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   return json(sanitizeRfqSupplierQuote(quote), 200, origin);
@@ -5241,8 +5341,13 @@ async function handleSubmitRfqQuote(request, env, origin, id, organization, user
 // existing one is handleEditRfqComment below; there is still no delete
 // route), same pattern as Customer Open Issues' comment thread. Team
 // Member+ can comment on any RFQ; a Supplier can comment only on one
-// shared with their own organization. Returns the full updated record (the
-// frontend reads `.comments` off it).
+// shared with their own organization. A Supplier's note is always private
+// to its own organization (whatever it sends); Dessimate staff choose with
+// body.audience - 'all' (the default, which is what a page from before
+// audiences existed meant) or one shared Supplier's organization, to reply
+// in that Supplier's private thread. Notes stay open after the quote
+// deadline - only the quote itself locks. Returns the updated record,
+// scoped to the caller (the frontend reads `.comments` off it).
 async function handleAddRfqComment(request, env, origin, id, accessLevel, username) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
@@ -5255,23 +5360,29 @@ async function handleAddRfqComment(request, env, origin, id, accessLevel, userna
     callerOrg = await resolveUserOrganization(env, username);
     if (!callerOrg) return json({ message: 'Your account isn’t linked to a Supplier organization.' }, 403, origin);
   }
+  const audience = isSupplier ? callerOrg : ((body.audience || '').toString().trim() || 'all');
 
-  const comment = { id: cryptoRandomId(), authorUsername: username || '', text: text, createdAt: new Date().toISOString() };
+  const comment = { id: cryptoRandomId(), authorUsername: username || '', authorOrg: callerOrg, audience: audience, text: text, createdAt: new Date().toISOString() };
 
   let saved = null;
+  let badAudience = false;
   const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
-    if (isSupplier && (!Array.isArray(target.sharedWithSuppliers) || target.sharedWithSuppliers.indexOf(callerOrg) === -1)) return null;
+    const sharedWith = Array.isArray(target.sharedWithSuppliers) ? target.sharedWithSuppliers : [];
+    if (isSupplier && sharedWith.indexOf(callerOrg) === -1) return null;
+    if (audience !== 'all' && sharedWith.indexOf(audience) === -1) { badAudience = true; return null; }
     target.comments = Array.isArray(target.comments) ? target.comments : [];
     target.comments.push(comment);
     saved = target;
     return { items: items };
   }, { requireFound: true });
 
+  if (badAudience) return json({ message: 'That Supplier isn’t on this RFQ’s Share With Suppliers list.' }, 400, origin);
   if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
-  return json(sanitizeRfq(saved), 200, origin);
+  const supplierOrgByUsername = await readSupplierOrgByUsername(env);
+  return json(presentRfqs([saved], supplierOrgByUsername, accessLevel, callerOrg)[0], 200, origin);
 }
 
 // Edits one existing comment's text in place. Team Member+ can edit any
@@ -5314,7 +5425,8 @@ async function handleEditRfqComment(request, env, origin, id, commentId, accessL
   if (forbidden) return json({ message: 'You can only edit your own comments.' }, 403, origin);
   if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
-  return json(sanitizeRfq(saved), 200, origin);
+  const supplierOrgByUsername = await readSupplierOrgByUsername(env);
+  return json(presentRfqs([saved], supplierOrgByUsername, accessLevel, callerOrg)[0], 200, origin);
 }
 
 // ---- Customer RFQ (Rev2.27) - split out of the RFQ module above. The

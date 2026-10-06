@@ -1490,8 +1490,10 @@ share any data structure at runtime even though they started as one.
 modal (below Attachments/Quotes Received), and both Dessimate staff and a
 Supplier can now post to it - a departure from the single Team-Member-only
 free-text `notes` field this replaced. Each entry is stamped with who wrote
-it and when (`{id, authorUsername, text, createdAt, editedAt}`, same shape
-as Customer Open Issues' comment thread), and can be edited afterward:
+it and when (`{id, authorUsername, authorOrg, audience, text, createdAt,
+editedAt}`, same shape as Customer Open Issues' comment thread, plus
+audience/authorOrg for private-vs-all threads - see below), and can be
+edited afterward:
 Team Member+ can edit any entry, a Supplier only their own (and only on an
 RFQ shared with their organization) - via `POST /rfqs/<id>/comments` and
 `PUT /rfqs/<id>/comments/<commentId>`, kept out of the generic record PUT
@@ -1501,6 +1503,41 @@ Whatever was already written under the old single-field system before this
 change is preserved and still shown (read-only, unattributed, pinned above
 the live thread as an "Earlier note") - `sanitizeRfq` still returns the
 legacy `notes` value for that purpose, it's just frozen from here on.
+
+**Private notes (audience)** - each comment now has `audience` (`'all'`, or
+one Supplier organization's name) and `authorOrg`. A Supplier's note is
+always private to its own organization (the backend ignores whatever
+audience it sends). Dessimate staff choose: post under "All Suppliers"
+(amber warning + confirm, because every shared Supplier will see it) or
+reply in that Supplier's private thread. `scopeRfqs` filters comments the
+same way it already silos quotes, so a Supplier never sees another
+Supplier's notes. Comment add/edit responses go through `presentRfqs`
+(sanitize + resolve + scope) so those routes can't leak another Supplier's
+quote/notes/deadline the way a raw `sanitizeRfq` return used to.
+Notes written before audiences existed have none on disk;
+`resolveRfqCommentAudiences` fills them in at read time from the users
+file (a Supplier author's old note becomes private to that org; anyone
+else's stays `'all'`). Notes stay open after the quote deadline.
+
+**Attachment visibility** - RFQ-level files and per-part drawings/3D are
+visible to every Supplier the RFQ is shared with. The Add/Edit form and
+the per-part attachments window both say so in an amber notice. Nothing
+changed about who can actually download the files.
+
+**Quote due dates** - optional `quoteDueAt` (ISO) on the RFQ, plus
+`supplierDueAt: { [org]: ISO }` overrides so one Supplier can get more
+(or less) time. A Supplier's effective deadline is its override if it
+has one, otherwise the RFQ's; neither set = no deadline. `scopeRfqs`
+replaces those two fields with a single `dueAt` for the caller, so a
+Supplier never sees the default or anyone else's extension. `GET /rfqs`
+includes `serverNow` so the page countdown runs off the worker's clock.
+`PUT /rfqs/<id>/quote` rejects with 403 `{ closed: true }` after that
+Supplier's deadline; the page also locks price/tooling/files/Save (notes
+stay open) and shows a live days/hours/minutes banner (amber under 24h,
+red under 1h). Team Member+ set the RFQ due date in the Add/Edit form,
+per-Supplier extensions under Share With Suppliers, and **Extend** on
+each card in Quotes Received (Extend writes immediately so the Supplier
+is unblocked without waiting for the big Save).
 
 **Title** - an optional short description (up to 150 characters) so an RFQ
 can be recognized by more than its number. It's shown as its own sortable
