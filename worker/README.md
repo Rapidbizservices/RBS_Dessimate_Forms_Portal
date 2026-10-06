@@ -1633,6 +1633,11 @@ empty cells:
   40%"), including empty cells whose only content is their colour, as in
   the timing plans' planned/actual shading. Text on a dark fill is switched
   to white, since the file's own font colour isn't available.
+- **Freeze Panes carry over** - rows and columns frozen in Excel stay put
+  while the rest of the sheet scrolls, read straight from each sheet's XML
+  (SheetJS doesn't expose them). Row numbers and column letters always stay
+  on screen too, as in Excel. A plain split (not frozen) is ignored, and a
+  workbook whose panes can't be read just shows unfrozen.
 - **Not yet carried over:** font colour/bold and borders (the free SheetJS
   build can't read them), and conditional formatting - Excel saves only the
   rules, not the resulting colours, so rule-coloured cells show unfilled.

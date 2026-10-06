@@ -603,6 +603,140 @@
     return (0.299 * r + 0.587 * g + 0.114 * b) < 128;
   }
 
+  // ---- .xlsx frozen panes -----------------------------------------------------
+  // SheetJS parses <sheetView> but skips its <pane>, which is where Excel keeps
+  // Freeze Panes, so read it straight out of each sheet's XML. Returns
+  // { [sheetName]: { rowStart, rowEnd, colStart, colEnd } } (0-based,
+  // inclusive; an end below its start means nothing frozen on that axis).
+  // Freeze panes are a reading aid, not content: any failure here just
+  // renders the sheet unfrozen.
+  function xlsxDecodeXmlText(s) {
+    return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  }
+  function xlsxXmlAttr(tag, name) {
+    var m = new RegExp('\\s' + name + '="([^"]*)"').exec(tag);
+    return m ? xlsxDecodeXmlText(m[1]) : null;
+  }
+  function xlsxReadFrozenPanes(bytes) {
+    var panes = {};
+    try {
+      var X = window.XLSX;
+      if (!X.CFB || typeof TextDecoder === 'undefined') return panes;
+      // CFB only recognises a zip from a byte array; a bare ArrayBuffer would
+      // fail its signature check.
+      var zip = X.CFB.read(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes, { type: 'array' });
+      var decoder = new TextDecoder('utf-8');
+      var readPart = function (path, maxBytes) {
+        var entry = X.CFB.find(zip, '/' + path);
+        if (!entry || !entry.content) return null;
+        var data = entry.content instanceof Uint8Array ? entry.content : new Uint8Array(entry.content);
+        return decoder.decode(maxBytes && data.length > maxBytes ? data.subarray(0, maxBytes) : data);
+      };
+      var workbookXml = readPart('xl/workbook.xml');
+      var relsXml = readPart('xl/_rels/workbook.xml.rels');
+      if (!workbookXml || !relsXml) return panes;
+
+      var targets = {};
+      (relsXml.match(/<(?:\w+:)?Relationship\b[^>]*>/g) || []).forEach(function (tag) {
+        var id = xlsxXmlAttr(tag, 'Id'), target = xlsxXmlAttr(tag, 'Target');
+        if (id && target) targets[id] = target.charAt(0) === '/' ? target.slice(1) : 'xl/' + target;
+      });
+
+      var u = X.utils;
+      (workbookXml.match(/<(?:\w+:)?sheet\b[^>]*>/g) || []).forEach(function (tag) {
+        var name = xlsxXmlAttr(tag, 'name');
+        var rid = /\s\w+:id="([^"]*)"/.exec(tag);
+        var path = rid && targets[rid[1]];
+        if (!name || !path) return;
+        // <sheetViews> sits ahead of <sheetData>, so the opening bytes are
+        // enough - no need to decode a large sheet's entire XML for this.
+        var head = readPart(path, 65536);
+        if (!head) return;
+        var view = /<(?:\w+:)?sheetView\b[^>]*>/.exec(head);
+        var pane = /<(?:\w+:)?pane\b[^>]*>/.exec(head);
+        if (!view || !pane) return;
+        var state = xlsxXmlAttr(pane[0], 'state');
+        // A plain (unfrozen) split is two independently scrolling views -
+        // there's no faithful way to show that in a single grid, so skip it.
+        if (state !== 'frozen' && state !== 'frozenSplit') return;
+        var rows = Math.floor(+xlsxXmlAttr(pane[0], 'ySplit') || 0);
+        var colsFrozen = Math.floor(+xlsxXmlAttr(pane[0], 'xSplit') || 0);
+        if (rows <= 0 && colsFrozen <= 0) return;
+        // The frozen block starts at the view's own top-left cell, which is
+        // A1 unless the sheet was saved scrolled.
+        var topLeft = u.decode_cell(xlsxXmlAttr(view[0], 'topLeftCell') || 'A1');
+        panes[name] = {
+          rowStart: topLeft.r, rowEnd: topLeft.r + rows - 1,
+          colStart: topLeft.c, colEnd: topLeft.c + colsFrozen - 1
+        };
+      });
+    } catch (e) { /* unreadable panes - render unfrozen */ }
+    return panes;
+  }
+
+  // Excel always keeps its row numbers and column letters on screen, and on
+  // top of that whatever the workbook froze. Done after the table is in the
+  // document because each sticky offset is the summed size of everything
+  // already stuck above or left of it, and wrapped rows only have a height
+  // once laid out.
+  function xlsxStick(el, top, left, z) {
+    el.style.position = 'sticky';
+    if (top !== null) el.style.top = top + 'px';
+    if (left !== null) el.style.left = left + 'px';
+    el.style.zIndex = String(z);
+  }
+  function xlsxPinPanes(pin) {
+    var table = pin.table;
+    var headRow = table.tHead && table.tHead.rows[0];
+    // Laid out invisibly (display:none somewhere above): every size reads 0
+    // and the offsets would stack everything at the top, so leave it unpinned.
+    if (!headRow || !headRow.offsetHeight) return;
+    var top = pin.nameBar ? pin.nameBar.offsetHeight : 0;
+    var headCells = headRow.cells;
+    var frozen = pin.frozen;
+
+    var lefts = {};
+    var x = headCells[0].offsetWidth;
+    for (var i = 1; i < headCells.length; i++) {
+      var col = pin.firstCol + i - 1;
+      if (frozen && col >= frozen.colStart && col <= frozen.colEnd) {
+        lefts[col] = x;
+        x += headCells[i].offsetWidth;
+      }
+    }
+    var isFrozenCol = function (c) { return Object.prototype.hasOwnProperty.call(lefts, c); };
+
+    // Layering, lowest first: frozen column, frozen row, their intersection,
+    // row numbers, column letters, the corner - so nothing that scrolls ever
+    // paints over something that is pinned.
+    xlsxStick(headCells[0], top, 0, 8);
+    for (var h = 1; h < headCells.length; h++) {
+      var hcol = pin.firstCol + h - 1;
+      xlsxStick(headCells[h], top, isFrozenCol(hcol) ? lefts[hcol] : null, isFrozenCol(hcol) ? 7 : 6);
+    }
+
+    var rowTop = top + headRow.offsetHeight;
+    var bodyRows = table.tBodies[0].rows;
+    for (var r = 0; r < bodyRows.length; r++) {
+      var tr = bodyRows[r];
+      var sheetRow = pin.firstRow + r;
+      var rowFrozen = !!frozen && sheetRow >= frozen.rowStart && sheetRow <= frozen.rowEnd;
+      var cells = tr.cells;
+      xlsxStick(cells[0], rowFrozen ? rowTop : null, 0, rowFrozen ? 5 : 4);
+      for (var k = 1; k < cells.length; k++) {
+        var cell = cells[k];
+        var colFrozen = isFrozenCol(cell._xlsxCol);
+        if (!rowFrozen && !colFrozen) continue;
+        xlsxStick(cell, rowFrozen ? rowTop : null, colFrozen ? lefts[cell._xlsxCol] : null,
+          rowFrozen && colFrozen ? 3 : (rowFrozen ? 2 : 1));
+        // A pinned cell slides over the ones scrolling beneath it, so it
+        // needs a solid background even when the workbook gave it none.
+        if (!cell.style.backgroundColor) cell.style.backgroundColor = '#fff';
+      }
+      if (rowFrozen) rowTop += tr.offsetHeight;
+    }
+  }
+
   function xlsxHeaderCell(text) {
     var th = document.createElement('th');
     th.className = 'officeXlsxHdr';
@@ -616,12 +750,13 @@
     return note;
   }
 
-  function buildXlsxSheet(ws, name, showName, themeColors) {
+  function buildXlsxSheet(ws, name, showName, themeColors, frozen) {
     var u = window.XLSX.utils;
     var section = document.createElement('section');
     section.className = 'officeXlsxSheet';
+    var heading = null;
     if (showName) {
-      var heading = document.createElement('div');
+      heading = document.createElement('div');
       heading.className = 'officeXlsxSheetName';
       var headingText = document.createElement('span');
       headingText.textContent = name;
@@ -686,6 +821,9 @@
         var key = r2 + ':' + c2;
         if (covered[key]) continue;
         var td = document.createElement('td');
+        // Merges make a row's cells stop lining up with sheet columns, so the
+        // pane pinning needs each cell's real column carried on it.
+        td._xlsxCol = c2;
         var span = spans[key];
         if (span) {
           if (span.rows > 1) td.rowSpan = span.rows;
@@ -721,6 +859,7 @@
       wrap.appendChild(xlsxNote('Showing the first ' + (lastRow - range.s.r + 1) + ' rows and ' +
         (lastCol - range.s.c + 1) + ' columns of this sheet. Download the file to see all of it.'));
     }
+    section._xlsxPin = { table: table, nameBar: heading, firstRow: range.s.r, firstCol: range.s.c, frozen: frozen || null };
     return section;
   }
 
@@ -742,11 +881,16 @@
     var showNames = wb.SheetNames.length > 1;
     var scheme = wb.Themes && wb.Themes.themeElements && wb.Themes.themeElements.clrScheme;
     var themeColors = scheme ? scheme.map(function (c) { return c && c.rgb; }) : null;
+    var panes = xlsxReadFrozenPanes(bytes);
     var frag = document.createDocumentFragment();
+    var sections = [];
     wb.SheetNames.forEach(function (name) {
-      frag.appendChild(buildXlsxSheet(wb.Sheets[name], name, showNames, themeColors));
+      var section = buildXlsxSheet(wb.Sheets[name], name, showNames, themeColors, panes[name]);
+      sections.push(section);
+      frag.appendChild(section);
     });
     container.appendChild(frag);
+    sections.forEach(function (section) { if (section._xlsxPin) xlsxPinPanes(section._xlsxPin); });
   }
 
   // ---- .pptx (PPTXjs) — best-effort ------------------------------------------

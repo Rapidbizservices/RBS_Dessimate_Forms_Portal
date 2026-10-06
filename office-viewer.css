@@ -15,7 +15,8 @@
    sheet is as wide as its own table so the caption bar spans it. */
 #docViewerOffice .officeXlsxSheet{ padding-bottom:18px; width:max-content; min-width:100%; }
 #docViewerOffice .officeXlsxSheetName{
-  position:sticky; top:0; z-index:2;
+  /* Above every pinned header/frozen cell (they go up to z-index 8). */
+  position:sticky; top:0; z-index:10;
   padding:7px 12px; font-size:12.5px; font-weight:600; color:#333;
   background:#f4f5f7; border-bottom:1px solid #d7dae0;
 }
@@ -23,10 +24,18 @@
    instead of scrolling out of view when panning right. */
 #docViewerOffice .officeXlsxSheetName > span{ display:inline-block; position:sticky; left:12px; }
 #docViewerOffice .officeXlsxTableWrap{ padding:10px; }
-#docViewerOffice .officeXlsxTableWrap table{ border-collapse:collapse; font-size:12px; }
+/* Separate borders drawn only on each cell's right and bottom, rather than
+   border-collapse: a collapsed border belongs to the table, not the cell, so
+   pinned (sticky) row numbers, headings and frozen panes would slide around
+   with no grid lines of their own. */
+#docViewerOffice .officeXlsxTableWrap table{
+  border-collapse:separate; border-spacing:0; font-size:12px;
+  border-top:1px solid #d7dae0; border-left:1px solid #d7dae0;
+}
 #docViewerOffice .officeXlsxTableWrap td,
 #docViewerOffice .officeXlsxTableWrap th{
-  border:1px solid #d7dae0; padding:3px 8px; vertical-align:top;
+  border-right:1px solid #d7dae0; border-bottom:1px solid #d7dae0;
+  padding:3px 8px; vertical-align:top;
   /* Text cells used to be nowrap, which stretched any sheet holding a
      paragraph into an unreadably wide grid. */
   white-space:pre-wrap; overflow-wrap:break-word; max-width:420px;
