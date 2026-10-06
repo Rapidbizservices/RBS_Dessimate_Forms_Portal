@@ -103,6 +103,8 @@
   table.userTable tr:last-child td{ border-bottom:none; }
   table.userTable tr.inactive{ opacity:.55; }
   .userName{ font-weight:700; }
+  .loginAsCol{ width:1%; white-space:nowrap; padding-left:6px; padding-right:8px; }
+  table.userTable th.loginAsCol{ text-transform:none; letter-spacing:0; }
   .liveNumber{ font-family:inherit; font-size:inherit; font-weight:inherit;
     color:var(--brand); background:none; border:none; padding:0; cursor:pointer;
     text-decoration:underline; text-underline-offset:2px; }
@@ -238,6 +240,7 @@
         <tr>
           <th data-sort-key="userNumber">User #</th>
           <th data-sort-key="displayName">Name</th>
+          <th class="loginAsCol">Log in as</th>
           <th data-sort-key="organization">Organization</th>
           <th data-sort-key="relationship">Relationship</th>
           <th data-sort-key="accessLevel">Access</th>
@@ -1001,21 +1004,23 @@
         ? '<span class="pill pill-accesslevel">' + escapeHtml(ACCESS_LEVEL_LABELS[u.accessLevel] || u.accessLevel) + '</span>'
         : '<span style="color:var(--label); font-style:italic;">default</span>';
 
-      var actions = '';
       // Rev2.4: "Log in as" (impersonation) - see handleAdminImpersonate in
       // the Worker. A real session as that person, no password ever seen;
       // deliberately unavailable for Super Admin accounts (server-enforced
       // too) and for anyone without an active login of their own.
+      var loginAsHtml = '';
       if (u.migrated !== false && u.hasLogin && u.active && u.accessLevel !== 'super_admin') {
-        actions += '<button type="button" class="editBtn" data-impersonate="' + escapeHtml(u.id) + '">Log in as</button>';
+        loginAsHtml = '<div class="rowActions"><button type="button" class="editBtn" data-impersonate="' + escapeHtml(u.id) + '">Log in as</button></div>';
       }
+      var deleteHtml = '';
       if (u.migrated !== false) {
-        actions += ' <button type="button" class="deleteBtn" data-delete="' + escapeHtml(u.id) + '">Delete</button>';
+        deleteHtml = '<div class="rowActions"><button type="button" class="deleteBtn" data-delete="' + escapeHtml(u.id) + '">Delete</button></div>';
       }
 
       return '<tr class="' + (u.active ? '' : 'inactive') + '">' +
         '<td class="userNumber">' + escapeHtml(formatUserNumber(u)) + '</td>' +
         '<td class="userName">' + nameHtml + '</td>' +
+        '<td class="loginAsCol">' + loginAsHtml + '</td>' +
         '<td>' + escapeHtml(u.organization) + '</td>' +
         '<td class="relBadge">' + escapeHtml(u.relationship) + '</td>' +
         '<td>' + accessHtml + '</td>' +
@@ -1023,7 +1028,7 @@
         '<td>' + escapeHtml(u.email) + '</td>' +
         '<td>' + escapeHtml(u.phone) + '</td>' +
         '<td>' + statusPills + '</td>' +
-        '<td><div class="rowActions">' + actions + '</div></td>' +
+        '<td>' + deleteHtml + '</td>' +
         '</tr>';
     }).join('');
 
