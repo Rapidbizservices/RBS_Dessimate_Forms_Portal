@@ -132,6 +132,18 @@
   .modalSection{ margin:18px 0 4px; }
   .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
   .modalSectionHint{ font-size:12px; color:var(--label); margin:2px 0 8px; }
+  .shareCollapseToggle{
+    display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    width:100%; margin:0; padding:16px 0 10px; border:none; border-top:1px solid var(--line);
+    background:none; font-family:inherit; font-size:13px; font-weight:700; color:var(--ink);
+    text-align:left; cursor:pointer;
+  }
+  .shareCollapseToggle:hover{ color:var(--brand); }
+  .shareCollapseToggle:focus-visible{ outline:2px solid var(--brand); outline-offset:3px; border-radius:4px; }
+  .shareCollapseTitle{ display:flex; flex-direction:column; align-items:flex-start; gap:3px; min-width:0; }
+  .shareCollapseMeta{ font-weight:400; font-size:12px; color:var(--label); }
+  .shareCollapseCaret{ font-size:10px; color:var(--label); flex:0 0 auto; margin-top:3px; }
+  .shareCollapseHint{ font-size:11.5px; color:#a06a1c; margin:0 0 8px; }
 
   .checkList{ max-height:150px; overflow-y:auto; border:1px solid var(--line); border-radius:6px;
     padding:9px 10px; margin-top:5px; }
@@ -399,17 +411,30 @@
       </div>
 
       <div class="modalSection">
-        <h3>Share With Customers <span style="font-weight:400;">(optional — until a quote is submitted, they'll only see the RFQ number, parts, and drawings/3D)</span></h3>
-        <div class="checkList" id="f_sharedWithCustomers_list"></div>
-        <div id="customerDueWrap" style="display:none; margin-top:10px;">
-          <p class="modalSectionHint" style="margin-bottom:4px;"><strong>Quote deadline per Customer</strong> — leave blank to use the Quote Due above. Set a later date/time to extend it for just that Customer, then Save.</p>
-          <div id="customerDueList"></div>
+        <button type="button" class="shareCollapseToggle" id="shareWithToggle" aria-expanded="false" aria-controls="shareWithBody">
+          <span class="shareCollapseTitle">Share With Customers <span class="shareCollapseMeta" id="shareWithMeta">Shared with 0 customers — click to expand</span></span>
+          <span class="shareCollapseCaret" id="shareWithCaret" aria-hidden="true">&#9656;</span>
+        </button>
+        <p class="shareCollapseHint" id="shareWithHint">Collapsed so names stay off screen during a share.</p>
+        <div id="shareWithBody" hidden>
+          <p class="modalSectionHint">Optional — until a quote is submitted, they'll only see the RFQ number, parts, and drawings/3D.</p>
+          <div class="checkList" id="f_sharedWithCustomers_list"></div>
+          <div id="customerDueWrap" style="display:none; margin-top:10px;">
+            <p class="modalSectionHint" style="margin-bottom:4px;"><strong>Quote deadline per Customer</strong> — leave blank to use the Quote Due above. Set a later date/time to extend it for just that Customer, then Save.</p>
+            <div id="customerDueList"></div>
+          </div>
         </div>
       </div>
 
       <div class="modalSection" id="customerDeadlinesSection" style="display:none;">
-        <h3>Customer Deadlines</h3>
-        <div id="customerDeadlinesList"></div>
+        <button type="button" class="shareCollapseToggle" id="quotesReceivedToggle" aria-expanded="false" aria-controls="quotesReceivedBody">
+          <span class="shareCollapseTitle">Customer Deadlines <span class="shareCollapseMeta" id="quotesReceivedMeta">Deadlines 0 — click to expand</span></span>
+          <span class="shareCollapseCaret" id="quotesReceivedCaret" aria-hidden="true">&#9656;</span>
+        </button>
+        <p class="shareCollapseHint" id="quotesReceivedHint">Collapsed so names stay off screen during a share.</p>
+        <div id="quotesReceivedBody" hidden>
+          <div id="customerDeadlinesList"></div>
+        </div>
       </div>
 
       <div class="modalSection">
@@ -1198,6 +1223,50 @@
     return Array.prototype.slice.call(document.querySelectorAll('#f_sharedWithCustomers_list input[type=checkbox]:checked'))
       .map(function(el){ return el.value; });
   }
+  function setSharePanelCollapsed(prefix, collapsed){
+    var body = document.getElementById(prefix + 'Body');
+    var btn = document.getElementById(prefix + 'Toggle');
+    var caret = document.getElementById(prefix + 'Caret');
+    var hint = document.getElementById(prefix + 'Hint');
+    if (!body || !btn) return;
+    body.hidden = !!collapsed;
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    if (caret) caret.innerHTML = collapsed ? '&#9656;' : '&#9662;';
+    if (hint) hint.hidden = !collapsed;
+  }
+  function bindSharePanelToggle(prefix){
+    var btn = document.getElementById(prefix + 'Toggle');
+    if (!btn || btn.getAttribute('data-bound') === '1') return;
+    btn.setAttribute('data-bound', '1');
+    btn.addEventListener('click', function(){
+      var body = document.getElementById(prefix + 'Body');
+      setSharePanelCollapsed(prefix, !(body && body.hidden));
+      if (prefix === 'shareWith') updateShareWithSummary();
+      if (prefix === 'quotesReceived') updateQuotesReceivedSummary();
+    });
+  }
+  function updateShareWithSummary(){
+    var n = getSelectedSharedWithCustomers().length;
+    var collapsed = !!(document.getElementById('shareWithBody') && document.getElementById('shareWithBody').hidden);
+    var el = document.getElementById('shareWithMeta');
+    if (!el) return;
+    el.textContent = 'Shared with ' + n + ' customer' + (n === 1 ? '' : 's') + (collapsed ? ' — click to expand' : '');
+  }
+  function updateQuotesReceivedSummary(){
+    var n = getSelectedSharedWithCustomers().length;
+    var collapsed = !!(document.getElementById('quotesReceivedBody') && document.getElementById('quotesReceivedBody').hidden);
+    var el = document.getElementById('quotesReceivedMeta');
+    if (!el) return;
+    el.textContent = 'Deadlines for ' + n + ' customer' + (n === 1 ? '' : 's') + (collapsed ? ' — click to expand' : '');
+  }
+  function resetSharePanelsCollapsed(){
+    setSharePanelCollapsed('shareWith', true);
+    setSharePanelCollapsed('quotesReceived', true);
+    updateShareWithSummary();
+    updateQuotesReceivedSummary();
+  }
+  bindSharePanelToggle('shareWith');
+  bindSharePanelToggle('quotesReceived');
   // -----------------------------------------------------------------------------
 
   // ---- Quote due dates -----------------------------------------------------------
@@ -1294,6 +1363,7 @@
   document.getElementById('f_sharedWithCustomers_list').addEventListener('change', function(){
     renderCustomerDueList();
     renderCustomerDeadlines();
+    updateShareWithSummary();
   });
   document.getElementById('f_quoteDueAt').addEventListener('change', function(){
     renderCustomerDueList();
@@ -1345,6 +1415,7 @@
     var orgs = getSelectedSharedWithCustomers();
     if (!editingId || !orgs.length || !canManageRfqRecords()) { section.style.display = 'none'; return; }
     section.style.display = 'block';
+    updateQuotesReceivedSummary();
     var rfq = editingRfq() || {};
     var defaultIso = localInputToIso(document.getElementById('f_quoteDueAt').value);
     listEl.innerHTML = orgs.map(function(org){
@@ -1463,7 +1534,7 @@
     window.SortableTable.updateSortIndicators(headEl, rfqSortState);
     bodyEl.innerHTML = sorted.map(function(r){
       var sharedCount = (r.sharedWithCustomers || []).length;
-      var sharedCell = sharedCount ? escapeHtml(r.sharedWithCustomers.join(', ')) : '<span style="color:var(--label);">—</span>';
+      var sharedCell = sharedCount ? String(sharedCount) : '<span style="color:var(--label);">—</span>';
       var quoteCell = !sharedCount
         ? '<span style="color:var(--label);">—</span>'
         : (r.dessimateQuote && r.dessimateQuote.submitted)
@@ -1949,6 +2020,7 @@
     document.getElementById('dessimateQuoteSection').style.display = 'none';
     renderLines();
     renderStaffNotes();
+    resetSharePanelsCollapsed();
   }
 
   function openAddModal(){
@@ -1986,6 +2058,7 @@
     customerDueDraft = {};
     Object.keys(rfq.customerDueAt || {}).forEach(function(org){ customerDueDraft[org] = isoToLocalInput(rfq.customerDueAt[org]); });
     renderCustomerDueList();
+    resetSharePanelsCollapsed();
     renderCustomerDeadlines();
     renderLines();
     renderDessimateQuotePanel(rfq);
@@ -2307,7 +2380,7 @@
       audience: 'all',
       title: 'All Customers',
       hint: shared.length
-        ? 'Visible to all ' + shared.length + ' Customer' + (shared.length === 1 ? '' : 's') + ' this RFQ is shared with (' + shared.join(', ') + ').'
+        ? 'Visible to all ' + shared.length + ' Customer' + (shared.length === 1 ? '' : 's') + ' this RFQ is shared with.'
         : 'Visible to every Customer this RFQ gets shared with.',
       warn: true,
       postable: canPost,

@@ -140,6 +140,18 @@
   .modalSection{ margin:18px 0 4px; }
   .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
   .modalSectionHint{ font-size:12px; color:var(--label); margin:2px 0 8px; }
+  .shareCollapseToggle{
+    display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    width:100%; margin:0; padding:16px 0 10px; border:none; border-top:1px solid var(--line);
+    background:none; font-family:inherit; font-size:13px; font-weight:700; color:var(--ink);
+    text-align:left; cursor:pointer;
+  }
+  .shareCollapseToggle:hover{ color:var(--brand); }
+  .shareCollapseToggle:focus-visible{ outline:2px solid var(--brand); outline-offset:3px; border-radius:4px; }
+  .shareCollapseTitle{ display:flex; flex-direction:column; align-items:flex-start; gap:3px; min-width:0; }
+  .shareCollapseMeta{ font-weight:400; font-size:12px; color:var(--label); }
+  .shareCollapseCaret{ font-size:10px; color:var(--label); flex:0 0 auto; margin-top:3px; }
+  .shareCollapseHint{ font-size:11.5px; color:#a06a1c; margin:0 0 8px; }
 
   .checkList{ max-height:150px; overflow-y:auto; border:1px solid var(--line); border-radius:6px;
     padding:9px 10px; margin-top:5px; }
@@ -428,11 +440,18 @@
       </div>
 
       <div class="modalSection">
-        <h3>Share With Suppliers <span style="font-weight:400;">(optional — choose who can see and quote this RFQ)</span></h3>
-        <div class="checkList" id="f_sharedWithSuppliers_list"></div>
-        <div id="supplierDueWrap" style="display:none; margin-top:10px;">
-          <p class="modalSectionHint" style="margin-bottom:4px;"><strong>Quote deadline per Supplier</strong> — leave blank to use the Quote Due above. Set a later date/time to extend it for just that Supplier, then Save.</p>
-          <div id="supplierDueList"></div>
+        <button type="button" class="shareCollapseToggle" id="shareWithToggle" aria-expanded="false" aria-controls="shareWithBody">
+          <span class="shareCollapseTitle">Share With Suppliers <span class="shareCollapseMeta" id="shareWithMeta">Shared with 0 suppliers — click to expand</span></span>
+          <span class="shareCollapseCaret" id="shareWithCaret" aria-hidden="true">&#9656;</span>
+        </button>
+        <p class="shareCollapseHint" id="shareWithHint">Collapsed so names stay off screen during a share.</p>
+        <div id="shareWithBody" hidden>
+          <p class="modalSectionHint">Optional — choose who can see and quote this RFQ.</p>
+          <div class="checkList" id="f_sharedWithSuppliers_list"></div>
+          <div id="supplierDueWrap" style="display:none; margin-top:10px;">
+            <p class="modalSectionHint" style="margin-bottom:4px;"><strong>Quote deadline per Supplier</strong> — leave blank to use the Quote Due above. Set a later date/time to extend it for just that Supplier, then Save.</p>
+            <div id="supplierDueList"></div>
+          </div>
         </div>
       </div>
 
@@ -450,8 +469,14 @@
       </div>
 
       <div class="modalSection" id="quotesReceivedSection" style="display:none;">
-        <h3>Quotes Received</h3>
-        <div id="quotesReceivedList"></div>
+        <button type="button" class="shareCollapseToggle" id="quotesReceivedToggle" aria-expanded="false" aria-controls="quotesReceivedBody">
+          <span class="shareCollapseTitle">Quotes Received <span class="shareCollapseMeta" id="quotesReceivedMeta">Quotes received 0 of 0 — click to expand</span></span>
+          <span class="shareCollapseCaret" id="quotesReceivedCaret" aria-hidden="true">&#9656;</span>
+        </button>
+        <p class="shareCollapseHint" id="quotesReceivedHint">Collapsed so names stay off screen during a share.</p>
+        <div id="quotesReceivedBody" hidden>
+          <div id="quotesReceivedList"></div>
+        </div>
       </div>
 
       <div class="modalSection" id="notesWrap">
@@ -1279,6 +1304,52 @@
     return Array.prototype.slice.call(document.querySelectorAll('#f_sharedWithSuppliers_list input[type=checkbox]:checked'))
       .map(function(el){ return el.value; });
   }
+  function setSharePanelCollapsed(prefix, collapsed){
+    var body = document.getElementById(prefix + 'Body');
+    var btn = document.getElementById(prefix + 'Toggle');
+    var caret = document.getElementById(prefix + 'Caret');
+    var hint = document.getElementById(prefix + 'Hint');
+    if (!body || !btn) return;
+    body.hidden = !!collapsed;
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    if (caret) caret.innerHTML = collapsed ? '&#9656;' : '&#9662;';
+    if (hint) hint.hidden = !collapsed;
+  }
+  function bindSharePanelToggle(prefix){
+    var btn = document.getElementById(prefix + 'Toggle');
+    if (!btn || btn.getAttribute('data-bound') === '1') return;
+    btn.setAttribute('data-bound', '1');
+    btn.addEventListener('click', function(){
+      var body = document.getElementById(prefix + 'Body');
+      setSharePanelCollapsed(prefix, !(body && body.hidden));
+      if (prefix === 'shareWith') updateShareWithSummary();
+      if (prefix === 'quotesReceived') updateQuotesReceivedSummary();
+    });
+  }
+  function updateShareWithSummary(){
+    var n = getSelectedSharedWithSuppliers().length;
+    var collapsed = !!(document.getElementById('shareWithBody') && document.getElementById('shareWithBody').hidden);
+    var el = document.getElementById('shareWithMeta');
+    if (!el) return;
+    el.textContent = 'Shared with ' + n + ' supplier' + (n === 1 ? '' : 's') + (collapsed ? ' — click to expand' : '');
+  }
+  function updateQuotesReceivedSummary(rfq){
+    rfq = rfq || (typeof editingRfq === 'function' ? editingRfq() : null) || {};
+    var sharedCount = (rfq.sharedWithSuppliers || getSelectedSharedWithSuppliers()).length;
+    var quoteCount = Object.keys(rfq.supplierQuotes || {}).length;
+    var collapsed = !!(document.getElementById('quotesReceivedBody') && document.getElementById('quotesReceivedBody').hidden);
+    var el = document.getElementById('quotesReceivedMeta');
+    if (!el) return;
+    el.textContent = 'Quotes received ' + quoteCount + ' of ' + sharedCount + (collapsed ? ' — click to expand' : '');
+  }
+  function resetSharePanelsCollapsed(){
+    setSharePanelCollapsed('shareWith', true);
+    setSharePanelCollapsed('quotesReceived', true);
+    updateShareWithSummary();
+    updateQuotesReceivedSummary();
+  }
+  bindSharePanelToggle('shareWith');
+  bindSharePanelToggle('quotesReceived');
   // -----------------------------------------------------------------------------
 
   // ---- Quote due dates -----------------------------------------------------------
@@ -1380,7 +1451,10 @@
       });
     });
   }
-  document.getElementById('f_sharedWithSuppliers_list').addEventListener('change', renderSupplierDueList);
+  document.getElementById('f_sharedWithSuppliers_list').addEventListener('change', function(){
+    renderSupplierDueList();
+    updateShareWithSummary();
+  });
   document.getElementById('f_quoteDueAt').addEventListener('change', renderSupplierDueList);
   function selectedSupplierDueAt(){
     var out = {};
@@ -1475,7 +1549,7 @@
     window.SortableTable.updateSortIndicators(headEl, rfqSortState);
     bodyEl.innerHTML = sorted.map(function(r){
       var sharedCount = (r.sharedWithSuppliers || []).length;
-      var sharedCell = sharedCount ? escapeHtml(r.sharedWithSuppliers.join(', ')) : '<span style="color:var(--label);">—</span>';
+      var sharedCell = sharedCount ? String(sharedCount) : '<span style="color:var(--label);">—</span>';
       var quoteOrgs = Object.keys(r.supplierQuotes || {});
       var quotesCell = quoteOrgs.length
         ? '<span class="have" style="color:#187b46; font-weight:600;">' + quoteOrgs.length + ' of ' + sharedCount + '</span>'
@@ -1663,7 +1737,7 @@
       audience: 'all',
       title: 'All Suppliers',
       hint: shared.length
-        ? 'Visible to all ' + shared.length + ' Supplier' + (shared.length === 1 ? '' : 's') + ' this RFQ is shared with (' + shared.join(', ') + ').'
+        ? 'Visible to all ' + shared.length + ' Supplier' + (shared.length === 1 ? '' : 's') + ' this RFQ is shared with.'
         : 'Visible to every Supplier this RFQ gets shared with.',
       warn: true,
       postable: canPost,
@@ -2054,6 +2128,7 @@
     var orgs = Object.keys(rfq.supplierQuotes || {});
     if (!orgs.length) { section.style.display = 'none'; return; }
     section.style.display = 'block';
+    updateQuotesReceivedSummary(rfq);
     var linesById = {};
     (rfq.lines || []).forEach(function(l){ linesById[l.lineId] = l; });
     listEl.innerHTML = orgs.map(function(org){
@@ -2131,6 +2206,7 @@
     document.getElementById('quotesReceivedSection').style.display = 'none';
     renderLines();
     renderStaffNotes();
+    resetSharePanelsCollapsed();
   }
 
   function openAddModal(){
@@ -2169,6 +2245,7 @@
     Object.keys(rfq.supplierDueAt || {}).forEach(function(org){ supplierDueDraft[org] = isoToLocalInput(rfq.supplierDueAt[org]); });
     renderSupplierDueList();
     renderLines();
+    resetSharePanelsCollapsed();
     renderQuotesReceived(rfq);
     renderStaffNotes();
     document.getElementById('rfqModalOverlay').classList.add('open');
