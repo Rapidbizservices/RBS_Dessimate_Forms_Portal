@@ -1296,12 +1296,10 @@
     return '<div class="notesCell">' + html + '</div>';
   }
 
-  function renderTable(){
-    var tableEl = document.getElementById('issueTable');
-    var bodyEl = document.getElementById('issueTableBody');
-    var emptyEl = document.getElementById('emptyState');
-    populatePartFilterOptions();
-    renderPriorityFilterOptions();
+  // Same AND of part / priority / keyword as the on-screen table. Shared
+  // by renderTable and the Excel download so the file always matches the
+  // rows currently shown (not the full lastIssues load).
+  function getFilteredIssues(){
     var filteredIssues = lastIssues;
     if (selectedPartFilters.length) {
       filteredIssues = filteredIssues.filter(function(issue){
@@ -1316,6 +1314,17 @@
     if (searchQ) {
       filteredIssues = filteredIssues.filter(function(issue){ return issueMatchesSearch(issue, searchQ); });
     }
+    return filteredIssues;
+  }
+
+  function renderTable(){
+    var tableEl = document.getElementById('issueTable');
+    var bodyEl = document.getElementById('issueTableBody');
+    var emptyEl = document.getElementById('emptyState');
+    populatePartFilterOptions();
+    renderPriorityFilterOptions();
+    var filteredIssues = getFilteredIssues();
+    var searchQ = currentIssueSearchQuery();
     if (!filteredIssues.length) {
       emptyEl.style.display = 'block'; tableEl.style.display = 'none';
       emptyEl.textContent = (searchQ && !selectedPartFilters.length && !selectedPriorityFilters.length)
@@ -1927,6 +1936,7 @@
     { header: 'Priority', width: 9, key: 'priority', centered: true },
     { header: 'Customer Organization', width: 24, key: 'customerOrg' },
     { header: 'Part Number(s)', width: 20, key: 'partNumbers' },
+    { header: 'Has Picture', width: 15, key: 'hasPicture', isPicture: true },
     { header: 'Issue Title', width: 26, key: 'issueTitle', wrap: true },
     { header: 'Issue Description', width: 34, key: 'issueDescription', wrap: true },
     { header: 'Root Cause', width: 28, key: 'rootCause', wrap: true },
@@ -1935,7 +1945,6 @@
     { header: 'Next Action', width: 26, key: 'nextAction', wrap: true },
     { header: 'Champion/Responsible', width: 20, key: 'championResponsible' },
     { header: 'Attachments', width: 11, key: 'attachmentCount', numeric: true },
-    { header: 'Has Picture', width: 15, key: 'hasPicture', isPicture: true },
     { header: 'Notes Count', width: 11, key: 'notesCount', numeric: true },
     { header: 'Latest Note', width: 36, key: 'latestNote', wrap: true }
   ];
@@ -2192,7 +2201,10 @@
     var originalText = btn.textContent;
     btn.disabled = true; btn.textContent = 'Preparing…';
     try {
-      var bytes = await buildOpenIssuesXlsxBytes(lastIssues);
+      var exportIssues = getFilteredIssues().slice().sort(function(a, b){
+        return String(a.issueNumber || '').localeCompare(String(b.issueNumber || ''), undefined, { numeric: true });
+      });
+      var bytes = await buildOpenIssuesXlsxBytes(exportIssues);
       var blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
