@@ -5,21 +5,41 @@
 }
 #docViewerOffice .docx-wrapper{ background:#e9ebef; padding:24px 0; }
 
-#docViewerOffice .officeXlsxTabs{
-  display:flex; flex-wrap:wrap; gap:4px; padding:8px 10px;
+/* Sheets stack one after another down the page (they used to sit behind a tab
+   bar, where later sheets went unnoticed), so each one gets a sticky caption
+   to keep its name visible while scrolling through a long sheet. */
+#docViewerOffice .officeXlsxSheet{ padding-bottom:18px; }
+#docViewerOffice .officeXlsxSheetName{
+  position:sticky; top:0; z-index:2;
+  padding:7px 12px; font-size:12.5px; font-weight:600; color:#333;
   background:#f4f5f7; border-bottom:1px solid #d7dae0;
-  position:sticky; top:0; z-index:1;
 }
-#docViewerOffice .officeXlsxTab{
-  font:inherit; font-size:12px; padding:4px 10px; border:1px solid #ccd0d8;
-  background:#fff; border-radius:4px; cursor:pointer; color:#333;
-}
-#docViewerOffice .officeXlsxTab.active{ background:var(--brand,#1f3d7a); border-color:var(--brand,#1f3d7a); color:#fff; }
 #docViewerOffice .officeXlsxTableWrap{ padding:10px; overflow:auto; }
 #docViewerOffice .officeXlsxTableWrap table{ border-collapse:collapse; font-size:12px; }
-#docViewerOffice .officeXlsxTableWrap table td,
-#docViewerOffice .officeXlsxTableWrap table th{
-  border:1px solid #d7dae0; padding:3px 8px; white-space:nowrap;
+#docViewerOffice .officeXlsxTableWrap td,
+#docViewerOffice .officeXlsxTableWrap th{
+  border:1px solid #d7dae0; padding:3px 8px; vertical-align:top;
+  /* Text cells used to be nowrap, which stretched any sheet holding a
+     paragraph into an unreadably wide grid. */
+  white-space:pre-wrap; overflow-wrap:break-word; max-width:420px;
 }
+/* Row numbers and column letters - needed to read a cell that is showing its
+   own formula text, e.g. "=SUM(B2:B9)". */
+#docViewerOffice .officeXlsxHdr{
+  background:#f4f5f7; color:#6b7280; font-weight:600; text-align:center;
+  white-space:nowrap; font-size:11px;
+}
+#docViewerOffice .officeXlsxNum{ text-align:right; white-space:nowrap; }
+/* A value the viewer calculated itself, because the workbook was saved without
+   one - marked so it is never mistaken for a figure Excel actually stored. */
+#docViewerOffice .officeXlsxComputed{ text-decoration:underline dotted #aab1bd; }
+/* A formula we couldn't calculate, printed verbatim: an empty cell reads as
+   missing data, the formula tells the reader exactly what is there. */
+#docViewerOffice .officeXlsxFormula{
+  font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:11px;
+  color:#8a5a00; background:#fff8e6; padding:0 2px; border-radius:2px;
+}
+#docViewerOffice .officeXlsxErr{ color:#b3261e; white-space:nowrap; }
+#docViewerOffice .officeXlsxNote{ padding:8px 4px; color:#6b7280; font-size:11.5px; font-style:italic; }
 
 #docViewerOffice .slides-loadnig-msg{ padding:16px; text-align:center; color:#555; }

@@ -1594,6 +1594,52 @@ and every icon fetch with a 200, and `navigator.serviceWorker.register()`
 resolves to an active registration - not just a static file-presence
 check.
 
+## In-page attachment viewer: Excel (`.xlsx`)
+
+Every page's **View** button previews `.docx`/`.xlsx`/`.pptx` attachments
+through the shared `office-viewer.js` (styled by `office-viewer.css`),
+entirely in the browser - files are never sent to any third-party viewer.
+The Excel path was rebuilt (October 2026) to fix workbooks that showed
+empty cells:
+
+- **Why cells were blank** - an `.xlsx` stores each formula next to the
+  value Excel cached when it last saved. Workbooks written by a generator
+  (openpyxl, xlsxwriter, AI tools) carry the formula with **no cached
+  value**; Excel recalculates on open so they look fine there, but SheetJS
+  has no calculation engine, and with default options it silently drops
+  those cells altogether.
+- **Formulas without a value are now calculated** in the browser by a
+  small built-in evaluator: arithmetic and comparisons, `&`, `%`, ranges,
+  and `SUM`, `PRODUCT`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`, `ABS`,
+  `SQRT`, `POWER`, `ROUND`, `IF`, `IFERROR`, `CONCATENATE`. A calculated
+  value is shown with a dotted underline, and hovering shows the formula.
+  Values Excel already cached are always shown exactly as saved - the
+  evaluator never overrides them.
+- **Anything it can't calculate shows its formula text** (e.g.
+  `=VLOOKUP(...)`, in amber monospace) instead of a blank or a guessed
+  number: unsupported functions, references to another sheet, and circular
+  references all land here. To support another function, add it to
+  `XLSX_FUNCS` in `office-viewer.js`.
+- **All sheets render one after another** on one scrolling page, each
+  under its own sticky name, instead of behind tabs.
+- **Layout from the file** - column widths, merged cells, the workbook's
+  number formats (e.g. `0.0%`), and row numbers/column letters (so a cell
+  showing `=SUM(B2:B9)` can be read). Long text wraps instead of stretching
+  the grid.
+- **Cell fill colours are shown** - solid fills in plain RGB, theme colours
+  and tinted theme colours (e.g. "White, darker 15%", "Accent 1, lighter
+  40%"), including empty cells whose only content is their colour, as in
+  the timing plans' planned/actual shading. Text on a dark fill is switched
+  to white, since the file's own font colour isn't available.
+- **Not yet carried over:** font colour/bold and borders (the free SheetJS
+  build can't read them), and conditional formatting - Excel saves only the
+  rules, not the resulting colours, so rule-coloured cells show unfilled.
+  Very large sheets are capped at the first 2,000 rows x 150 columns with a
+  note to download the full file.
+- **No new library and no new cost** - still the same SheetJS CDN script,
+  no backend involvement. A third-party formula engine was deliberately
+  avoided: the usual one (HyperFormula) is GPLv3-or-commercial.
+
 ## About the GitHub repo's visibility
 
 Now that every page and file is fetched through this backend (using your
