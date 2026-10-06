@@ -83,6 +83,10 @@
     background:none; border:none; padding:0; cursor:pointer; text-decoration:none; white-space:nowrap; }
   .toolbarFilter .clearFilterLink:hover{ text-decoration:underline; }
   .toolbarFilters{ display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  .toolbarFilter input[type="search"]{
+    font-family:inherit; font-size:12.5px; padding:7px 10px; border:1px solid var(--line);
+    border-radius:6px; background:#fff; color:var(--ink); min-width:200px; width:220px;
+  }
   .partFilterDropdown{ position:relative; }
   .partFilterToggle{ font-family:inherit; font-size:12.5px; padding:7px 12px; border:1px solid var(--line);
     border-radius:6px; background:#fff; color:var(--ink); cursor:pointer; min-width:170px; max-width:260px;
@@ -366,6 +370,9 @@
             </div>
           </div>
         </div>
+      </div>
+      <div class="toolbarFilter">
+        <input type="search" id="issueSearchInput" placeholder="Search issues" autocomplete="off">
       </div>
     </div>
   </div>
@@ -1202,6 +1209,56 @@
     if (dropdown && !dropdown.contains(e.target)) document.getElementById('priorityFilterPanel').style.display = 'none';
   });
 
+  // Keyword search is an additional client-side narrow on the already-
+  // loaded list. It ANDs with the part/priority filters above: empty
+  // search leaves whatever those filters already show. Matches any of
+  // the issue's own text fields (no invented keys).
+  function currentIssueSearchQuery(){
+    var el = document.getElementById('issueSearchInput');
+    return el ? (el.value || '').toLowerCase().trim() : '';
+  }
+  function addIssueSearchText(parts, v){
+    if (v == null) return;
+    var s = String(v).trim();
+    if (s) parts.push(s);
+  }
+  function issueSearchHaystack(issue){
+    var parts = [];
+    addIssueSearchText(parts, issue.issueNumber);
+    addIssueSearchText(parts, displayIssueNumber(issue.issueNumber));
+    addIssueSearchText(parts, issue.issueTitle);
+    addIssueSearchText(parts, issue.issueDescription);
+    addIssueSearchText(parts, issue.status);
+    addIssueSearchText(parts, OPEN_ISSUE_STATUS_LABELS[issue.status === 'closed' ? 'closed' : 'open']);
+    addIssueSearchText(parts, issue.priority);
+    addIssueSearchText(parts, issue.customerOrg);
+    addIssueSearchText(parts, issue.createdBy);
+    addIssueSearchText(parts, issue.rootCause);
+    addIssueSearchText(parts, issue.interimCM);
+    addIssueSearchText(parts, issue.permCM);
+    addIssueSearchText(parts, issue.nextAction);
+    (issue.partNumbers || []).forEach(function(p){ addIssueSearchText(parts, p); });
+    (issue.championResponsible || []).forEach(function(u){ addIssueSearchText(parts, u); });
+    (issue.comments || []).forEach(function(c){
+      if (!c) return;
+      addIssueSearchText(parts, c.text);
+      addIssueSearchText(parts, c.authorUsername);
+    });
+    (issue.attachments || []).forEach(function(a){
+      if (!a) return;
+      addIssueSearchText(parts, a.filename);
+      addIssueSearchText(parts, a.comment);
+    });
+    if (issue.issuePicture) addIssueSearchText(parts, issue.issuePicture.filename);
+    return parts.join(' ').toLowerCase();
+  }
+  function issueMatchesSearch(issue, q){
+    if (!q) return true;
+    var hay = issueSearchHaystack(issue);
+    return q.split(/\s+/).every(function(token){ return hay.indexOf(token) !== -1; });
+  }
+  document.getElementById('issueSearchInput').addEventListener('input', function(){ renderTable(); });
+
   async function loadIssues(){
     var loadingEl = document.getElementById('loadingState');
     var errorEl = document.getElementById('errorState');
@@ -1255,9 +1312,15 @@
     if (selectedPriorityFilters.length) {
       filteredIssues = filteredIssues.filter(function(issue){ return selectedPriorityFilters.indexOf(issue.priority || '') !== -1; });
     }
+    var searchQ = currentIssueSearchQuery();
+    if (searchQ) {
+      filteredIssues = filteredIssues.filter(function(issue){ return issueMatchesSearch(issue, searchQ); });
+    }
     if (!filteredIssues.length) {
       emptyEl.style.display = 'block'; tableEl.style.display = 'none';
-      emptyEl.textContent = selectedPriorityFilters.length
+      emptyEl.textContent = (searchQ && !selectedPartFilters.length && !selectedPriorityFilters.length)
+        ? 'No open issues match the search.'
+        : selectedPriorityFilters.length || searchQ
         ? 'No open issues match the selected filters.'
         : selectedPartFilters.length
         ? 'No open issues for the selected part' + (selectedPartFilters.length > 1 ? 's' : '') + '.'
