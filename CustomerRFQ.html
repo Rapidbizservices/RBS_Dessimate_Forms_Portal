@@ -183,6 +183,31 @@
     border-radius:6px; padding:9px 16px; color:#fff; background:var(--brand); border:none; white-space:nowrap; }
   .addCommentRow button:hover{ background:var(--brand-dark); }
   .addCommentRow button:disabled{ background:#9fb0d8; cursor:wait; }
+  .visibilityNotice{ background:#fdf3e2; border:1px solid #f0d9a8; color:#7a4e00; border-radius:6px;
+    padding:7px 10px; font-size:12px; font-weight:600; margin:2px 0 10px; }
+  .notesGroup{ border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+  .notesGroup.broadcast{ border-color:#f0d9a8; background:#fffbf3; }
+  .notesGroup h4{ font-size:13px; margin:0 0 4px; color:var(--ink); }
+  .notesGroup .notesGroupHint{ font-size:11.5px; color:var(--label); margin:0 0 8px; }
+  .notesGroup .reviewCommentsList{ margin-bottom:6px; }
+  .commentOrgTag{ font-weight:400; }
+  .dueRow{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12.5px; padding:6px 0; border-top:1px solid var(--line); }
+  .dueRow:first-child{ border-top:none; }
+  .dueRow .dueOrg{ flex:1 1 160px; font-weight:600; }
+  .dueRow input{ width:auto; margin:0 !important; }
+  .dueRow button{ font-family:inherit; font-size:11.5px; cursor:pointer; background:#fff; border:1px solid var(--line); border-radius:6px; padding:4px 8px; }
+  .dueState{ font-size:11.5px; font-weight:700; white-space:nowrap; }
+  .dueState.open{ color:#187b46; }
+  .dueState.soon{ color:#a35f00; }
+  .dueState.urgent, .dueState.closed{ color:#b42318; }
+  .dueBanner{ border-radius:8px; padding:12px 14px; margin:0 0 14px; border:1px solid #c9d6f3; background:#f1f5fe; }
+  .dueBanner .dueWhen{ font-size:12.5px; color:var(--label); }
+  .dueBanner .dueCountdown{ font-size:20px; font-weight:800; margin-top:2px; font-variant-numeric:tabular-nums; color:var(--ink); }
+  .dueBanner.soon{ border-color:#f0d9a8; background:#fdf3e2; }
+  .dueBanner.soon .dueCountdown{ color:#a35f00; }
+  .dueBanner.urgent, .dueBanner.closed{ border-color:#f3c3be; background:#fdecea; }
+  .dueBanner.urgent .dueCountdown, .dueBanner.closed .dueCountdown{ color:#b42318; }
+  .dueBanner .dueLockNote{ font-size:12px; margin-top:6px; color:#7a1f16; }
 
   /* Per-part file chips (Files column on RFQ line tables) - deliberately not
      .quietLink (that's a bordered/padded button and looks like stacked
@@ -349,6 +374,9 @@
       <label for="f_title" style="margin-top:14px;">Title <span style="font-weight:400;">(a short description so this RFQ is easy to recognize in the list - Customers it's shared with see it too)</span>
         <input type="text" id="f_title" maxlength="150" placeholder="e.g. Aluminum housings - 2027 program">
       </label>
+      <label for="f_quoteDueAt" style="margin-top:14px;">Quote Due <span style="font-weight:400;">(optional — date and time, in your local time. Customers see a countdown; the Dessimate Quote can't be changed after this. Extend it for one Customer under Share With Customers below)</span>
+        <input type="datetime-local" id="f_quoteDueAt" style="max-width:260px;">
+      </label>
 
       <div class="modalSection">
         <h3>Part Number(s) <span style="font-weight:400;">(optional — you can leave this blank and fill it in later)</span></h3>
@@ -373,11 +401,21 @@
       <div class="modalSection">
         <h3>Share With Customers <span style="font-weight:400;">(optional — until a quote is submitted, they'll only see the RFQ number, parts, and drawings/3D)</span></h3>
         <div class="checkList" id="f_sharedWithCustomers_list"></div>
+        <div id="customerDueWrap" style="display:none; margin-top:10px;">
+          <p class="modalSectionHint" style="margin-bottom:4px;"><strong>Quote deadline per Customer</strong> — leave blank to use the Quote Due above. Set a later date/time to extend it for just that Customer, then Save.</p>
+          <div id="customerDueList"></div>
+        </div>
+      </div>
+
+      <div class="modalSection" id="customerDeadlinesSection" style="display:none;">
+        <h3>Customer Deadlines</h3>
+        <div id="customerDeadlinesList"></div>
       </div>
 
       <div class="modalSection">
         <h3>Attachments <span class="attachCount" id="attachCount">(0 / 20)</span></h3>
         <p class="modalSectionHint">Drawings, 3D (.stp/.step) files, anything the Customer needs to see — up to 20 files.</p>
+        <p class="visibilityNotice">Visible to all Customers: every Customer this RFQ is shared with can see and download these files (and the per-part files above). Don't attach anything meant for only one Customer.</p>
         <div id="attachmentsList" class="attachmentsList"></div>
         <div class="docRow">
           <div class="docMain">
@@ -388,12 +426,9 @@
       </div>
 
       <div class="modalSection" id="notesWrap">
-        <h3>Notes / Comments <span style="font-weight:400;">(optional — Dessimate and the Customer can both add notes here)</span></h3>
-        <div id="reviewCommentsList" class="reviewCommentsList"></div>
-        <div class="addCommentRow" id="addCommentRow" style="display:none;">
-          <input type="text" id="f_newComment" placeholder="Add a note…">
-          <button type="button" id="addCommentBtn">Add Note</button>
-        </div>
+        <h3>Notes / Comments</h3>
+        <p class="modalSectionHint">Each Customer's notes are private between that Customer and Dessimate. Notes posted under "All Customers" go to everyone this RFQ is shared with.</p>
+        <div id="staffNotesGroups"></div>
         <p class="modalSectionHint" id="addCommentHint" style="display:none;">Save this RFQ first before adding a note.</p>
       </div>
 
@@ -447,6 +482,7 @@
   <div class="modalCard" style="max-width:520px;">
     <h2 id="partAttachModalTitle">Part Attachments</h2>
     <p class="modalSub">Drawings, 3D (.stp/.step) files, or anything else specific to this part.</p>
+    <p class="visibilityNotice">Visible to all Customers this RFQ is shared with.</p>
     <div id="partAttachmentsList" class="attachmentsList"></div>
     <div class="docRow">
       <div class="docMain">
@@ -464,6 +500,7 @@
   <div class="modalCard">
     <h2 id="customerViewTitle">RFQ</h2>
     <p class="modalSub" id="customerViewSub"></p>
+    <div class="dueBanner" id="customerViewDueBanner" style="display:none;"></div>
 
     <div class="modalSection" style="margin-top:0;">
       <h3 style="border-top:none; padding-top:0;">Parts</h3>
@@ -486,12 +523,21 @@
       <div id="customerViewQuoteBody"></div>
     </div>
 
-    <div class="modalSection">
-      <h3>Notes / Comments <span style="font-weight:400;">(optional — Dessimate and you can both add notes here)</span></h3>
-      <div id="customerViewCommentsList" class="reviewCommentsList"></div>
-      <div class="addCommentRow" id="customerViewAddCommentRow">
-        <input type="text" id="f_newCustomerViewComment" placeholder="Add a note…">
-        <button type="button" id="addCustomerViewCommentBtn">Add Note</button>
+    <div class="modalSection" id="customerViewNotesWrap">
+      <h3>Notes / Comments</h3>
+      <div class="notesGroup">
+        <h4>Your notes with Dessimate</h4>
+        <p class="notesGroupHint">Private — only your organization and Dessimate can see these. You can add notes even after the quote deadline.</p>
+        <div id="customerViewCommentsList" class="reviewCommentsList"></div>
+        <div class="addCommentRow" id="customerViewAddCommentRow">
+          <input type="text" id="f_newCustomerViewComment" placeholder="Add a note for Dessimate…">
+          <button type="button" id="addCustomerViewCommentBtn">Add Note</button>
+        </div>
+      </div>
+      <div class="notesGroup broadcast" id="customerViewBroadcastGroup" style="display:none;">
+        <h4>From Dessimate to all Customers</h4>
+        <p class="notesGroupHint">General notes Dessimate shared with every Customer on this RFQ.</p>
+        <div id="customerViewBroadcastCommentsList" class="reviewCommentsList"></div>
       </div>
     </div>
 
@@ -1154,6 +1200,187 @@
   }
   // -----------------------------------------------------------------------------
 
+  // ---- Quote due dates -----------------------------------------------------------
+  var serverClockOffsetMs = 0;
+  function nowMs(){ return Date.now() + serverClockOffsetMs; }
+  function pad2(n){ return (n < 10 ? '0' : '') + n; }
+  function isoToLocalInput(iso){
+    var t = iso ? Date.parse(iso) : NaN;
+    if (isNaN(t)) return '';
+    var d = new Date(t);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + 'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+  function localInputToIso(v){
+    if (!v) return '';
+    var t = new Date(v).getTime();
+    return isNaN(t) ? '' : new Date(t).toISOString();
+  }
+  function fmtDueWhen(iso){
+    var t = Date.parse(iso);
+    if (isNaN(t)) return '';
+    return new Date(t).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+  }
+  function dueStatus(iso){
+    var t = iso ? Date.parse(iso) : NaN;
+    if (isNaN(t)) return { state: 'none', msLeft: 0 };
+    var msLeft = t - nowMs();
+    if (msLeft <= 0) return { state: 'closed', msLeft: 0 };
+    return { state: msLeft < 3600000 ? 'urgent' : (msLeft < 86400000 ? 'soon' : 'open'), msLeft: msLeft };
+  }
+  function fmtCountdown(msLeft, long){
+    var totalMin = Math.ceil(msLeft / 60000);
+    var d = Math.floor(totalMin / 1440), h = Math.floor((totalMin % 1440) / 60), m = totalMin % 60;
+    if (!long) return (d ? d + 'd ' : '') + ((d || h) ? h + 'h ' : '') + m + 'm left';
+    function unit(n, word){ return n + ' ' + word + (n === 1 ? '' : 's'); }
+    return unit(d, 'day') + ', ' + unit(h, 'hour') + ', ' + unit(m, 'minute') + ' left';
+  }
+  function dueStateText(iso){
+    var s = dueStatus(iso);
+    return s.state === 'none' ? '' : (s.state === 'closed' ? 'Closed' : fmtCountdown(s.msLeft, false));
+  }
+  function dueStateHtml(iso){
+    var s = dueStatus(iso);
+    if (s.state === 'none') return '';
+    return '<span class="dueState ' + s.state + '" data-due-at="' + escapeHtml(iso) + '">' + escapeHtml(dueStateText(iso)) + '</span>';
+  }
+  function dueCellHtml(iso, extra){
+    if (!iso) return '<span style="color:var(--label);">—</span>';
+    return '<div style="white-space:nowrap;">' + escapeHtml(fmtDueWhen(iso)) + '</div>' + dueStateHtml(iso) + (extra || '');
+  }
+  function refreshDueChips(){
+    document.querySelectorAll('[data-due-at]').forEach(function(el){
+      var iso = el.getAttribute('data-due-at');
+      el.className = 'dueState ' + dueStatus(iso).state;
+      el.textContent = dueStateText(iso);
+    });
+    if (customerViewRfqId && document.getElementById('customerViewModalOverlay').classList.contains('open')) refreshCustomerViewDeadline();
+    if (editingId && document.getElementById('dessimateQuoteSection').style.display !== 'none') applyDessimateQuoteLock();
+  }
+  setInterval(refreshDueChips, 15000);
+
+  var customerDueDraft = {};
+  function renderCustomerDueList(){
+    var wrap = document.getElementById('customerDueWrap');
+    var listEl = document.getElementById('customerDueList');
+    var orgs = getSelectedSharedWithCustomers();
+    var defaultIso = localInputToIso(document.getElementById('f_quoteDueAt').value);
+    if (!orgs.length) { wrap.style.display = 'none'; listEl.innerHTML = ''; return; }
+    wrap.style.display = '';
+    listEl.innerHTML = orgs.map(function(org){
+      var v = customerDueDraft[org] || '';
+      var effective = localInputToIso(v) || defaultIso;
+      return '<div class="dueRow">' +
+        '<span class="dueOrg">' + escapeHtml(org) + '</span>' +
+        '<input type="datetime-local" data-due-org="' + escapeHtml(org) + '" value="' + escapeHtml(v) + '">' +
+        (v ? '<button type="button" data-due-clear="' + escapeHtml(org) + '">Use RFQ due date</button>' : '') +
+        '<span data-due-effective="' + escapeHtml(org) + '">' + (effective ? dueStateHtml(effective) : '<span class="dueState">No deadline</span>') + '</span>' +
+        '</div>';
+    }).join('');
+    listEl.querySelectorAll('[data-due-org]').forEach(function(input){
+      input.addEventListener('change', function(){
+        customerDueDraft[input.getAttribute('data-due-org')] = input.value;
+        renderCustomerDueList();
+        renderCustomerDeadlines();
+      });
+    });
+    listEl.querySelectorAll('[data-due-clear]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        delete customerDueDraft[btn.getAttribute('data-due-clear')];
+        renderCustomerDueList();
+        renderCustomerDeadlines();
+      });
+    });
+  }
+  document.getElementById('f_sharedWithCustomers_list').addEventListener('change', function(){
+    renderCustomerDueList();
+    renderCustomerDeadlines();
+  });
+  document.getElementById('f_quoteDueAt').addEventListener('change', function(){
+    renderCustomerDueList();
+    renderCustomerDeadlines();
+    applyDessimateQuoteLock();
+  });
+  function selectedCustomerDueAt(){
+    var out = {};
+    getSelectedSharedWithCustomers().forEach(function(org){
+      var iso = localInputToIso(customerDueDraft[org]);
+      if (iso) out[org] = iso;
+    });
+    return out;
+  }
+  function editingRfq(){ return editingId ? lastRfqs.find(function(x){ return x.id === editingId; }) : null; }
+  async function persistCustomerRfqDueDates(){
+    var rfq = editingRfq();
+    if (!rfq) throw new Error('Save this RFQ first.');
+    var body = {
+      rfqNumber: document.getElementById('f_rfqNumber').value.trim() || rfq.rfqNumber,
+      title: document.getElementById('f_title').value.trim(),
+      rfqDate: document.getElementById('f_rfqDate').value,
+      lines: rfq.lines,
+      sharedWithCustomers: getSelectedSharedWithCustomers(),
+      dessimateAttachments: rfq.dessimateAttachments,
+      quoteDueAt: localInputToIso(document.getElementById('f_quoteDueAt').value),
+      customerDueAt: selectedCustomerDueAt()
+    };
+    var res = await apiFetch('customer-rfqs/' + encodeURIComponent(rfq.id), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    var data = {}; try { data = await res.json(); } catch(e){}
+    if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+    var idx = lastRfqs.findIndex(function(x){ return x.id === rfq.id; });
+    if (idx !== -1) {
+      lastRfqs[idx].quoteDueAt = data.quoteDueAt;
+      lastRfqs[idx].customerDueAt = data.customerDueAt;
+      lastRfqs[idx].sharedWithCustomers = data.sharedWithCustomers;
+    }
+    renderCustomerDueList();
+    renderCustomerDeadlines();
+    applyDessimateQuoteLock();
+    return data;
+  }
+  function renderCustomerDeadlines(){
+    var section = document.getElementById('customerDeadlinesSection');
+    var listEl = document.getElementById('customerDeadlinesList');
+    var orgs = getSelectedSharedWithCustomers();
+    if (!editingId || !orgs.length || !canManageRfqRecords()) { section.style.display = 'none'; return; }
+    section.style.display = 'block';
+    var rfq = editingRfq() || {};
+    var defaultIso = localInputToIso(document.getElementById('f_quoteDueAt').value);
+    listEl.innerHTML = orgs.map(function(org){
+      var effectiveDue = (rfq.customerDueAt && rfq.customerDueAt[org]) || rfq.quoteDueAt || defaultIso || '';
+      return '<div class="quoteCard">' +
+        '<div class="quoteCardHead"><h4>' + escapeHtml(org) + '</h4></div>' +
+        '<div class="dueRow">' +
+          '<span class="dueOrg">Deadline</span>' +
+          (effectiveDue ? dueStateHtml(effectiveDue) + '<span class="quoteMeta">' + escapeHtml(fmtDueWhen(effectiveDue)) + '</span>' : '<span class="dueState">No deadline</span>') +
+          '<input type="datetime-local" data-extend-org="' + escapeHtml(org) + '" value="' + escapeHtml(customerDueDraft[org] || isoToLocalInput(effectiveDue)) + '">' +
+          '<button type="button" data-extend-save="' + escapeHtml(org) + '">Extend</button>' +
+        '</div></div>';
+    }).join('');
+    listEl.querySelectorAll('[data-extend-save]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var org = btn.getAttribute('data-extend-save');
+        var input = btn.parentNode.querySelector('[data-extend-org]');
+        var iso = localInputToIso(input && input.value);
+        if (!iso) { alert('Pick a date and time to extend to, then click Extend.'); return; }
+        customerDueDraft[org] = isoToLocalInput(iso);
+        renderCustomerDueList();
+        btn.disabled = true;
+        btn.textContent = 'Saving…';
+        try {
+          await persistCustomerRfqDueDates();
+        } catch (err) {
+          alert('Could not extend this deadline (' + (err && err.message ? err.message : err) + ').');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Extend';
+        }
+      });
+    });
+  }
+  // -----------------------------------------------------------------------------
+
   // ---- List table ---------------------------------------------------------------
   var lastRfqs = [];
   var rfqSortState = { key: null, dir: 1 };
@@ -1172,6 +1399,8 @@
       }
       var data = await res.json();
       lastRfqs = Array.isArray(data.customerRfqs) ? data.customerRfqs : [];
+      var serverNow = data.serverNow ? Date.parse(data.serverNow) : NaN;
+      serverClockOffsetMs = isNaN(serverNow) ? 0 : serverNow - Date.now();
       loadingEl.style.display = 'none';
       renderTable();
     } catch (err) {
@@ -1205,7 +1434,7 @@
     });
 
     if (isCustomerUser()) {
-      headEl.innerHTML = '<tr><th data-sort-key="rfqNumber">RFQ Number</th><th data-sort-key="title">Title</th><th data-sort-key="rfqDate">RFQ Date</th><th data-sort-key="lineCount">Parts</th><th>Quote Status</th><th></th></tr>';
+      headEl.innerHTML = '<tr><th data-sort-key="rfqNumber">RFQ Number</th><th data-sort-key="title">Title</th><th data-sort-key="rfqDate">RFQ Date</th><th data-sort-key="lineCount">Parts</th><th data-sort-key="dueAt">Quote Due</th><th>Quote Status</th><th></th></tr>';
       window.SortableTable.makeSortableHeaders(headEl, rfqSortState, renderTable);
       window.SortableTable.updateSortIndicators(headEl, rfqSortState);
       bodyEl.innerHTML = sorted.map(function(r){
@@ -1218,6 +1447,7 @@
           rfqTitleCell(r) +
           '<td>' + escapeHtml(fmtDateMDY(r.rfqDate)) + '</td>' +
           '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
+          '<td>' + dueCellHtml(r.dueAt) + '</td>' +
           '<td>' + statusHtml + '</td>' +
           '<td><div class="rowActions"><button type="button" class="editBtn" data-view="' + escapeHtml(r.id) + '">View</button></div></td>' +
           '</tr>';
@@ -1228,7 +1458,7 @@
       return;
     }
 
-    headEl.innerHTML = '<tr><th data-sort-key="rfqNumber">RFQ Number</th><th data-sort-key="title">Title</th><th data-sort-key="rfqDate">RFQ Date</th><th data-sort-key="lineCount">Parts</th><th>Shared With Customers</th><th>Customer Quote</th><th>Files</th><th></th></tr>';
+    headEl.innerHTML = '<tr><th data-sort-key="rfqNumber">RFQ Number</th><th data-sort-key="title">Title</th><th data-sort-key="rfqDate">RFQ Date</th><th data-sort-key="lineCount">Parts</th><th data-sort-key="quoteDueAt">Quote Due</th><th>Shared With Customers</th><th>Customer Quote</th><th>Files</th><th></th></tr>';
     window.SortableTable.makeSortableHeaders(headEl, rfqSortState, renderTable);
     window.SortableTable.updateSortIndicators(headEl, rfqSortState);
     bodyEl.innerHTML = sorted.map(function(r){
@@ -1241,11 +1471,14 @@
           : '<span style="color:var(--label);">Draft</span>';
       var attCount = (r.dessimateAttachments || []).length;
       var attCell = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '<span style="color:var(--label);">—</span>';
+      var extCount = Object.keys(r.customerDueAt || {}).length;
+      var extNote = extCount ? '<div class="quoteMeta" style="font-size:11px; color:var(--label);">' + extCount + ' Customer extension' + (extCount === 1 ? '' : 's') + '</div>' : '';
       return '<tr>' +
         '<td class="rfqNumber">' + escapeHtml(r.rfqNumber) + '</td>' +
         rfqTitleCell(r) +
         '<td>' + escapeHtml(fmtDateMDY(r.rfqDate)) + '</td>' +
         '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
+        '<td>' + (r.quoteDueAt ? dueCellHtml(r.quoteDueAt, extNote) : (extCount ? extNote : dueCellHtml(''))) + '</td>' +
         '<td>' + sharedCell + '</td>' +
         '<td>' + quoteCell + '</td>' +
         '<td class="docCell">' + attCell + '</td>' +
@@ -1620,10 +1853,35 @@
     statusEl.textContent = q.submitted
       ? 'Submitted to the customer ' + (q.submittedAt ? new Date(q.submittedAt).toLocaleString() : '') + (q.submittedBy ? ' by ' + q.submittedBy : '') + '. Further saves here are live to the customer immediately.'
       : 'Draft — not visible to the customer yet. Click "Submit to Customer" when ready.';
+    applyDessimateQuoteLock();
+  }
+
+  function dessimateQuoteDueIso(){
+    return localInputToIso(document.getElementById('f_quoteDueAt').value) || ((editingRfq() || {}).quoteDueAt) || '';
+  }
+  function applyDessimateQuoteLock(){
+    var section = document.getElementById('dessimateQuoteSection');
+    if (section.style.display === 'none') return;
+    var iso = dessimateQuoteDueIso();
+    var locked = dueStatus(iso).state === 'closed';
+    document.querySelectorAll('#dessimateQuoteLinesTableBody [data-dq-field]').forEach(function(el){ el.disabled = locked; });
+    document.getElementById('f_dessimateQuoteNotes').disabled = locked;
+    document.getElementById('dessimateQuoteAttachmentsDocInput').disabled = locked;
+    document.getElementById('saveDessimateQuoteDraftBtn').disabled = locked;
+    document.getElementById('submitDessimateQuoteBtn').disabled = locked;
+    document.querySelectorAll('#dessimateQuoteAttachmentsList [data-dqremove-idx]').forEach(function(el){ el.style.display = locked ? 'none' : ''; });
+    var statusEl = document.getElementById('dessimateQuoteStatus');
+    if (locked) {
+      statusEl.textContent = 'The quote deadline has passed, so price, tooling cost, files and Submit are locked. Notes/Comments stay open — extend Quote Due if you need more time.';
+    }
   }
 
   async function saveDessimateQuote(submit){
     if (!editingId) return;
+    if (dueStatus(dessimateQuoteDueIso()).state === 'closed') {
+      document.getElementById('dessimateQuoteError').textContent = 'The quote deadline has passed. Extend Quote Due to change the Dessimate Quote.';
+      return;
+    }
     var errEl = document.getElementById('dessimateQuoteError');
     errEl.textContent = '';
 
@@ -1684,10 +1942,13 @@
     document.getElementById('f_rfqNumber').value = '';
     document.getElementById('f_rfqDate').value = '';
     document.getElementById('f_title').value = '';
+    document.getElementById('f_quoteDueAt').value = '';
+    customerDueDraft = {};
+    renderCustomerDueList();
+    renderCustomerDeadlines();
     document.getElementById('dessimateQuoteSection').style.display = 'none';
     renderLines();
-    staffComments.setState([]);
-    staffComments.render();
+    renderStaffNotes();
   }
 
   function openAddModal(){
@@ -1720,11 +1981,15 @@
     document.getElementById('f_rfqNumber').value = rfq.rfqNumber;
     document.getElementById('f_rfqDate').value = rfq.rfqDate || '';
     document.getElementById('f_title').value = rfq.title || '';
+    document.getElementById('f_quoteDueAt').value = isoToLocalInput(rfq.quoteDueAt);
     document.getElementById('f_sharedWithCustomers_list').innerHTML = sharedWithCustomersChecklistOptions(rfq.sharedWithCustomers || []);
+    customerDueDraft = {};
+    Object.keys(rfq.customerDueAt || {}).forEach(function(org){ customerDueDraft[org] = isoToLocalInput(rfq.customerDueAt[org]); });
+    renderCustomerDueList();
+    renderCustomerDeadlines();
     renderLines();
     renderDessimateQuotePanel(rfq);
-    staffComments.setState(rfq.comments);
-    staffComments.render();
+    renderStaffNotes();
     document.getElementById('rfqModalOverlay').classList.add('open');
   }
   function closeModal(){ document.getElementById('rfqModalOverlay').classList.remove('open'); }
@@ -1750,7 +2015,9 @@
       title: document.getElementById('f_title').value.trim(),
       rfqDate: document.getElementById('f_rfqDate').value,
       lines: linesForCreate,
-      sharedWithCustomers: getSelectedSharedWithCustomers()
+      sharedWithCustomers: getSelectedSharedWithCustomers(),
+      quoteDueAt: localInputToIso(document.getElementById('f_quoteDueAt').value),
+      customerDueAt: selectedCustomerDueAt()
     };
 
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
@@ -1824,6 +2091,7 @@
     customerViewRfqId = id;
     document.getElementById('customerViewTitle').textContent = 'RFQ ' + rfq.rfqNumber + (rfq.title ? ' — ' + rfq.title : '');
     document.getElementById('customerViewSub').textContent = rfq.rfqDate ? 'RFQ Date: ' + fmtDateMDY(rfq.rfqDate) : '';
+    refreshCustomerViewDeadline();
 
     var lines = rfq.lines || [];
     var linesBodyEl = document.getElementById('customerViewLinesTableBody');
@@ -1889,10 +2157,29 @@
       });
     }
 
-    customerViewComments.setState(rfq.comments);
-    customerViewComments.render();
+    customerViewComments.setState(rfq.comments); customerViewComments.render();
+    customerViewBroadcastComments.setState(rfq.comments); customerViewBroadcastComments.render();
 
     document.getElementById('customerViewModalOverlay').classList.add('open');
+  }
+  function refreshCustomerViewDeadline(){
+    var banner = document.getElementById('customerViewDueBanner');
+    var rfq = customerViewRfqId && lastRfqs.find(function(x){ return x.id === customerViewRfqId; });
+    if (!rfq || !rfq.dueAt) {
+      banner.style.display = 'none';
+      banner.className = 'dueBanner';
+      return;
+    }
+    var s = dueStatus(rfq.dueAt);
+    banner.style.display = '';
+    banner.className = 'dueBanner' + (s.state === 'none' ? '' : ' ' + s.state);
+    var html = '<div class="dueWhen">Quote due ' + escapeHtml(fmtDueWhen(rfq.dueAt)) + '</div>';
+    if (s.state === 'closed') {
+      html += '<div class="dueCountdown">Deadline passed</div><div class="dueLockNote">The quote deadline has passed. You can still add notes — contact Dessimate if you need more time.</div>';
+    } else {
+      html += '<div class="dueCountdown">' + escapeHtml(fmtCountdown(s.msLeft, true)) + '</div>';
+    }
+    banner.innerHTML = html;
   }
   function closeCustomerViewModal(){ document.getElementById('customerViewModalOverlay').classList.remove('open'); }
   document.getElementById('customerViewCloseBtn').addEventListener('click', closeCustomerViewModal);
@@ -1902,30 +2189,26 @@
   // -----------------------------------------------------------------------------
 
   // ---- Notes/Comments thread -----------------------------------------------
-  // Same pattern as the Dessimate RFQ module's own comment thread (RFQ.html) -
-  // append-only via its own endpoint (never the form's own Save). Team
-  // Member+ can edit any comment; a Customer can edit only their own -
-  // matches handleEditCustomerRfqComment's permission check server-side. A
-  // pinned, unstamped "legacy" entry is shown first if the RFQ still has an
-  // old free-text `notes` value from before this feature existed (frozen,
-  // not editable, not part of the real thread) - staff-only, since a
-  // Customer never received that field to begin with (see scopeCustomerRfqs).
   function createCommentsThread(opts){
     var state = [];
     var editingCommentId = null;
     function listEl(){ return document.getElementById(opts.listElId); }
+    function orgTag(c){
+      return ' <span class="commentOrgTag">· ' + escapeHtml(c.authorOrg || 'Dessimate') + '</span>';
+    }
 
     function render(){
       var session = getSession();
       var myUsername = (session && session.username) || '';
+      var shown = opts.filter ? state.filter(opts.filter) : state;
       var legacyNotes = opts.getLegacyNotes ? opts.getLegacyNotes() : '';
       var legacyHtml = legacyNotes
         ? '<div class="reviewCommentRow legacyComment"><div class="commentMeta">Earlier note <span class="commentEditedTag">(no author/date on record)</span></div><div class="commentText">' + escapeHtml(legacyNotes) + '</div></div>'
         : '';
-      if (!state.length && !legacyNotes) {
-        listEl().innerHTML = '<div class="attachEmpty">No notes yet.</div>';
+      if (!shown.length && !legacyNotes) {
+        listEl().innerHTML = '<div class="attachEmpty">' + escapeHtml(opts.emptyText || 'No notes yet.') + '</div>';
       } else {
-        listEl().innerHTML = legacyHtml + state.map(function(c){
+        listEl().innerHTML = legacyHtml + shown.map(function(c){
           var canEditThis = opts.canEdit(c, myUsername);
           if (editingCommentId === c.id) {
             return '<div class="reviewCommentRow">' +
@@ -1937,7 +2220,7 @@
               '</div></div>';
           }
           return '<div class="reviewCommentRow">' +
-            '<div class="commentMeta">' + escapeHtml(c.authorUsername || 'Unknown') + ' — ' + escapeHtml(fmtDateMDY((c.createdAt || '').slice(0, 10))) +
+            '<div class="commentMeta">' + escapeHtml(c.authorUsername || 'Unknown') + orgTag(c) + ' — ' + escapeHtml(fmtDateMDY((c.createdAt || '').slice(0, 10))) +
               (c.editedAt ? ' <span class="commentEditedTag">(edited)</span>' : '') +
               (canEditThis ? ' <button type="button" class="commentEditLink" data-comment-edit="' + escapeHtml(c.id) + '">Edit</button>' : '') +
             '</div>' +
@@ -1986,8 +2269,10 @@
     async function addComment(text){
       var rfqId = opts.getRfqId();
       if (!text || !rfqId) return;
+      var payload = { text: text };
+      if (opts.getAudience) payload.audience = opts.getAudience();
       var res = await apiFetch('customer-rfqs/' + encodeURIComponent(rfqId) + '/comments', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       var data = {}; try { data = await res.json(); } catch(e){}
       if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
@@ -1999,50 +2284,131 @@
     return { render: render, setState: setState, addComment: addComment };
   }
 
-  // Staff Add/Edit Customer RFQ modal's thread - add is staff-only (a
-  // Customer never opens this modal, only the read-mostly view below), edit
-  // follows the usual Team-Member-edits-any / everyone-else-edits-own-only
-  // split.
-  var staffComments = createCommentsThread({
-    listElId: 'reviewCommentsList',
-    getRfqId: function(){ return editingId; },
-    getLegacyNotes: function(){ var rfq = editingId && lastRfqs.find(function(x){ return x.id === editingId; }); return rfq ? rfq.notes : ''; },
-    canEdit: function(c, myUsername){ return !!editingId && (canManageRfqRecords() || c.authorUsername === myUsername); },
-    applyVisibility: function(){
-      var canComment = canManageRfqRecords() && !!editingId;
-      document.getElementById('addCommentRow').style.display = canComment ? 'flex' : 'none';
-      document.getElementById('addCommentHint').style.display = (!editingId && canManageRfqRecords()) ? '' : 'none';
-    },
-    onSaved: function(data){ var idx = lastRfqs.findIndex(function(x){ return x.id === editingId; }); if (idx !== -1) lastRfqs[idx] = data; }
-  });
-  document.getElementById('f_newComment').addEventListener('keydown', function(e){
-    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('addCommentBtn').click(); }
-  });
-  document.getElementById('addCommentBtn').addEventListener('click', async function(){
-    var btn = this;
-    var input = document.getElementById('f_newComment');
-    var text = input.value.trim();
-    if (!text || !editingId) return;
-    btn.disabled = true; btn.textContent = 'Adding…';
-    try {
-      await staffComments.addComment(text);
-      input.value = '';
-    } catch (err) {
-      alert('Could not add this note (' + (err && err.message ? err.message : err) + ').');
-    } finally {
-      btn.disabled = false; btn.textContent = 'Add Note';
-    }
-  });
+  var staffThreads = [];
+  function staffNotesSaved(data){
+    var idx = lastRfqs.findIndex(function(x){ return x.id === editingId; });
+    if (idx !== -1) lastRfqs[idx] = data;
+    staffThreads.forEach(function(t){ t.setState(data.comments); t.render(); });
+  }
+  function renderStaffNotes(){
+    var wrap = document.getElementById('staffNotesGroups');
+    var rfq = editingRfq();
+    staffThreads = [];
+    document.getElementById('addCommentHint').style.display = (!rfq && canManageRfqRecords()) ? '' : 'none';
+    if (!rfq) { wrap.innerHTML = ''; return; }
+    var comments = rfq.comments || [];
+    var shared = rfq.sharedWithCustomers || [];
+    var orgs = shared.slice();
+    comments.forEach(function(c){
+      if (c.audience && c.audience !== 'all' && orgs.indexOf(c.audience) === -1) orgs.push(c.audience);
+    });
+    var canPost = canManageRfqRecords();
+    var groups = [{
+      audience: 'all',
+      title: 'All Customers',
+      hint: shared.length
+        ? 'Visible to all ' + shared.length + ' Customer' + (shared.length === 1 ? '' : 's') + ' this RFQ is shared with (' + shared.join(', ') + ').'
+        : 'Visible to every Customer this RFQ gets shared with.',
+      warn: true,
+      postable: canPost,
+      placeholder: 'Note for ALL Customers…',
+      button: 'Post to All Customers',
+      emptyText: 'No notes to all Customers yet.'
+    }].concat(orgs.map(function(org){
+      var isShared = shared.indexOf(org) !== -1;
+      return {
+        audience: org,
+        title: org + ' — private',
+        hint: isShared
+          ? 'Only ' + org + ' and Dessimate see this thread.'
+          : org + ' is no longer on Share With Customers, so this thread is read-only.',
+        warn: false,
+        postable: canPost && isShared,
+        placeholder: 'Reply to ' + org + ' only…',
+        button: 'Reply',
+        emptyText: 'No notes with ' + org + ' yet.'
+      };
+    }));
+    wrap.innerHTML = groups.map(function(g, i){
+      return '<div class="notesGroup' + (g.warn ? ' broadcast' : '') + '">' +
+        '<h4>' + escapeHtml(g.title) + '</h4>' +
+        (g.warn
+          ? '<p class="visibilityNotice">Anything posted here is visible to all Customers on this RFQ. To answer one Customer, reply in their private thread below.</p>'
+          : '') +
+        '<p class="notesGroupHint">' + escapeHtml(g.hint) + '</p>' +
+        '<div id="staffNotesList_' + i + '" class="reviewCommentsList"></div>' +
+        (g.postable
+          ? '<div class="addCommentRow"><input type="text" data-note-input="' + i + '" placeholder="' + escapeHtml(g.placeholder) + '">' +
+            '<button type="button" data-note-post="' + i + '">' + escapeHtml(g.button) + '</button></div>'
+          : '') +
+        '</div>';
+    }).join('');
+    groups.forEach(function(g, i){
+      var thread = createCommentsThread({
+        listElId: 'staffNotesList_' + i,
+        getRfqId: function(){ return editingId; },
+        getLegacyNotes: g.audience === 'all' ? function(){ var r = editingRfq(); return r ? r.notes : ''; } : null,
+        filter: function(c){ return (c.audience || 'all') === g.audience; },
+        getAudience: function(){ return g.audience; },
+        emptyText: g.emptyText,
+        canEdit: function(c, myUsername){ return !!editingId && (canManageRfqRecords() || c.authorUsername === myUsername); },
+        onSaved: staffNotesSaved
+      });
+      thread.setState(comments);
+      thread.render();
+      staffThreads.push(thread);
+      var input = wrap.querySelector('[data-note-input="' + i + '"]');
+      var btn = wrap.querySelector('[data-note-post="' + i + '"]');
+      if (!input || !btn) return;
+      input.addEventListener('keydown', function(e){
+        if (e.key === 'Enter') { e.preventDefault(); btn.click(); }
+      });
+      btn.addEventListener('click', async function(){
+        var text = input.value.trim();
+        if (!text || !editingId) return;
+        if (g.audience === 'all') {
+          var current = (editingRfq() || {}).sharedWithCustomers || [];
+          var who = current.length ? 'all ' + current.length + ' Customer' + (current.length === 1 ? '' : 's') + ' on this RFQ (' + current.join(', ') + ')' : 'every Customer this RFQ gets shared with';
+          if (!(await confirmDialog('This note will be visible to ' + who + '. Post it?'))) return;
+        }
+        btn.disabled = true; btn.textContent = 'Posting…';
+        try {
+          await thread.addComment(text);
+          input.value = '';
+        } catch (err) {
+          alert('Could not add this note (' + (err && err.message ? err.message : err) + ').');
+        } finally {
+          btn.disabled = false; btn.textContent = g.button;
+        }
+      });
+    });
+  }
 
-  // Customer view modal's thread - this modal only ever opens for the
-  // signed-in Customer themselves (never staff), so "can edit" collapses to
-  // "is my own comment" with no Team-Member-edits-any branch to check.
+  function customerViewNotesSaved(data){
+    var idx = lastRfqs.findIndex(function(x){ return x.id === customerViewRfqId; });
+    if (idx !== -1) lastRfqs[idx] = data;
+    customerViewComments.setState(data.comments); customerViewComments.render();
+    customerViewBroadcastComments.setState(data.comments); customerViewBroadcastComments.render();
+  }
   var customerViewComments = createCommentsThread({
     listElId: 'customerViewCommentsList',
     getRfqId: function(){ return customerViewRfqId; },
-    getLegacyNotes: function(){ return ''; }, // legacy notes were always staff-only - see scopeCustomerRfqs
+    filter: function(c){ return c.audience !== 'all'; },
+    emptyText: 'No notes yet. Questions about this RFQ? Ask Dessimate here.',
     canEdit: function(c, myUsername){ return c.authorUsername === myUsername; },
-    onSaved: function(data){ var idx = lastRfqs.findIndex(function(x){ return x.id === customerViewRfqId; }); if (idx !== -1) lastRfqs[idx] = data; }
+    onSaved: customerViewNotesSaved
+  });
+  var customerViewBroadcastComments = createCommentsThread({
+    listElId: 'customerViewBroadcastCommentsList',
+    getRfqId: function(){ return customerViewRfqId; },
+    filter: function(c){ return c.audience === 'all'; },
+    canEdit: function(){ return false; },
+    applyVisibility: function(){
+      var rfq = customerViewRfqId && lastRfqs.find(function(x){ return x.id === customerViewRfqId; });
+      var has = !!rfq && (rfq.comments || []).some(function(c){ return c.audience === 'all'; });
+      document.getElementById('customerViewBroadcastGroup').style.display = has ? '' : 'none';
+    },
+    onSaved: customerViewNotesSaved
   });
   document.getElementById('f_newCustomerViewComment').addEventListener('keydown', function(e){
     if (e.key === 'Enter') { e.preventDefault(); document.getElementById('addCustomerViewCommentBtn').click(); }
