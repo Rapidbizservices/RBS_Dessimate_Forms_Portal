@@ -1546,7 +1546,7 @@ every user whose `organization` matches that Supplier (from
 as MFA sign-in codes (`RESEND_API_KEY` / `RESEND_FROM_EMAIL`). A scheduled
 scan on this worker (`[triggers] crons` in `wrangler.toml`, every 15
 minutes) also sends a 48-hour reminder and a 2-hour reminder before that
-effective due. Reminders are recorded per RFQ per Supplier on
+effective due. Only one reminder fires per scan (2h if remaining ≤ 2 hours, else 48h if remaining ≤ 48 hours; sending 2h also marks h48 so a stale 48h cannot fire later, and the 48h email is worded "due in under 48 hours"). Reminders are recorded per RFQ per Supplier on
 `dueReminders` (not returned in API responses); extending the deadline
 clears that Supplier's record so they get a fresh 48h/2h against the new
 date. No email after the deadline has passed, and no reminder if there is
@@ -1554,6 +1554,26 @@ no due date. Already-submitted quotes still get reminders (they can revise
 until lock). The message includes RFQ number, title if set, the due date,
 and a link to `RFQ.html` on the Pages site. **A worker deploy is what
 registers the cron** - editing `wrangler.toml` locally does not.
+
+Those supplier-facing sends also give three Dessimate staff **one**
+dedicated copy per email event (one extension for one Supplier org, or
+one 48h/2h reminder kind for one org) — not a BCC on every Supplier
+recipient. Suppliers each still get their own To email and never see
+staff addresses. The staff copy uses the same body with a short "sent
+to N supplier users at [org]" note and a `Copy:` subject prefix.
+Addresses are **looked up at send time** from `data/users.json`
+(`readUsersFile`) — they are not hardcoded. The worker matches active
+Dessimate staff (not Supplier / Customer access levels) whose
+**username or display name** equals one of `komal`, `amy`, `roberto`
+(case-insensitive; a display name like "Amy Chen" matches on the first
+word). Inactive accounts and anyone without an email are skipped; the
+Supplier still gets the mail. A staff address already in a Supplier To
+is omitted from the copy. If the staff-copy send fails, it does not
+retry the Supplier emails. Customer RFQ emails to Customers do **not**
+get this copy (the shared send helper is gated with `bccStaff: true` on
+Dessimate RFQ only). To add or rename who is copied, edit
+`RFQ_STAFF_BCC_NEEDLES` in `worker/src/index.js` and keep this list in
+sync.
 
 **Title** - an optional short description (up to 150 characters) so an RFQ
 can be recognized by more than its number. It's shown as its own sortable
@@ -1631,6 +1651,8 @@ Customers, and **Extend** on Customer Deadlines (writes immediately).
 organization matches that Customer: extension (or first set after they
 were already shared), plus 48h and 2h reminders, tracked/reset the same
 way on `dueReminders`. Link in the email goes to `CustomerRFQ.html`.
+The staff copy (Komal / Amy / Roberto) is **not** sent here — that
+copy is only on Dessimate RFQ emails to Suppliers.
 
 ## Installable app (PWA)
 

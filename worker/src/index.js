@@ -1602,19 +1602,114 @@ async function clearEmailOtpCode(env, usernameLower) {
 // API (same RESEND_API_KEY / RESEND_FROM_EMAIL as MFA). Never throws - a
 // delivery failure shouldn't crash the request that triggered it; logged
 // to the console for wrangler tail / Cloudflare dashboard visibility.
-async function sendEmail(env, to, subject, html) {
+// `to` may be one address or an array (one Resend send, several To
+// recipients). Optional options.bcc is Resend's bcc array. A bcc failure
+// retries the same To/subject/html without bcc so the To recipient(s)
+// still get the message. Supplier RFQ mail does not use bcc — staff get a
+// separate one-copy send (see sendRfqStaffCopy).
+async function sendEmail(env, to, subject, html, options) {
   if (!env.RESEND_API_KEY) { console.error('sendEmail: RESEND_API_KEY not configured'); return { ok: false }; }
+  const toRaw = Array.isArray(to) ? to : [to];
+  const toList = [];
+  const seenTo = {};
+  for (let i = 0; i < toRaw.length; i++) {
+    const addr = (toRaw[i] || '').toString().trim();
+    const key = addr.toLowerCase();
+    if (!addr || seenTo[key]) continue;
+    seenTo[key] = true;
+    toList.push(addr);
+  }
+  if (!toList.length) return { ok: false };
+  const bccRaw = options && Array.isArray(options.bcc) ? options.bcc : [];
+  const bcc = [];
+  const seenBcc = {};
+  for (let i = 0; i < bccRaw.length; i++) {
+    const addr = (bccRaw[i] || '').toString().trim();
+    const key = addr.toLowerCase();
+    if (!addr || seenTo[key] || seenBcc[key]) continue;
+    seenBcc[key] = true;
+    bcc.push(addr);
+  }
+  const sendOnce = async function (includeBcc) {
+    try {
+      const payload = {
+        from: env.RESEND_FROM_EMAIL || 'DSCM <onboarding@resend.dev>',
+        to: toList,
+        subject: subject,
+        html: html
+      };
+      if (includeBcc && bcc.length) payload.bcc = bcc;
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) { console.error('sendEmail: Resend responded ' + res.status + (includeBcc && bcc.length ? ' (with bcc)' : '')); return { ok: false }; }
+      return { ok: true };
+    } catch (e) {
+      console.error('sendEmail: ' + (e && e.message ? e.message : String(e)));
+      return { ok: false };
+    }
+  };
+  const first = await sendOnce(bcc.length > 0);
+  if (first.ok || !bcc.length) return first;
+  console.error('sendEmail: retrying without bcc so the To recipient still gets the message');
+  return await sendOnce(false);
+}
+
+// Display-name / username needles for the Dessimate staff who get one
+// dedicated copy of each supplier-facing RFQ email event. Addresses are
+// looked up at send time from data/users.json (readUsersFile) — never
+// hardcoded. See worker/README.md "Quote-due emails".
+const RFQ_STAFF_BCC_NEEDLES = ['komal', 'amy', 'roberto'];
+
+function isDessimateStaffUser(u) {
+  if (!u) return false;
+  if (u.accessLevel) return u.accessLevel !== 'supplier' && u.accessLevel !== 'customer';
+  const rel = u.relationship || 'Dessimate Team member';
+  return rel !== 'Supplier' && rel !== 'Customer';
+}
+
+function userMatchesStaffBccNeedle(u, needle) {
+  const n = String(needle || '').toLowerCase();
+  if (!n) return false;
+  const username = (u.username || '').toString().trim().toLowerCase();
+  if (username === n) return true;
+  const name = (u.name || '').toString().trim().toLowerCase();
+  if (!name) return false;
+  if (name === n) return true;
+  const words = name.split(/[^a-z0-9]+/).filter(Boolean);
+  return words.indexOf(n) !== -1;
+}
+
+// Active Dessimate staff whose name or username matches RFQ_STAFF_BCC_NEEDLES
+// and who have an email on file. Inactive / no-email / supplier-or-customer
+// records are skipped (a similarly named Supplier must not be copied).
+// Lookup failure returns [] so the supplier send still proceeds.
+async function resolveRfqStaffBccEmails(env) {
   try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: env.RESEND_FROM_EMAIL || 'DSCM <onboarding@resend.dev>', to: [to], subject: subject, html: html })
+    const fileState = await readUsersFile(env);
+    const seen = {};
+    const emails = [];
+    (fileState.users || []).forEach(function (u) {
+      if (!u || u.active === false) return;
+      if (!isDessimateStaffUser(u)) return;
+      const email = (u.email || '').toString().trim();
+      if (!email) return;
+      const key = email.toLowerCase();
+      if (seen[key]) return;
+      let match = false;
+      for (let i = 0; i < RFQ_STAFF_BCC_NEEDLES.length; i++) {
+        if (userMatchesStaffBccNeedle(u, RFQ_STAFF_BCC_NEEDLES[i])) { match = true; break; }
+      }
+      if (!match) return;
+      seen[key] = true;
+      emails.push(email);
     });
-    if (!res.ok) { console.error('sendEmail: Resend responded ' + res.status); return { ok: false }; }
-    return { ok: true };
+    return emails;
   } catch (e) {
-    console.error('sendEmail: ' + (e && e.message ? e.message : String(e)));
-    return { ok: false };
+    console.error('resolveRfqStaffBccEmails: ' + (e && e.message ? e.message : String(e)));
+    return [];
   }
 }
 
@@ -1662,7 +1757,7 @@ function rfqEmailSubject(rfq, kind) {
   const num = rfq && rfq.rfqNumber != null && rfq.rfqNumber !== '' ? String(rfq.rfqNumber) : 'RFQ';
   if (kind === 'extended') return 'DSCM: RFQ ' + num + ' deadline extended';
   if (kind === '2h') return 'DSCM: RFQ ' + num + ' due in 2 hours';
-  return 'DSCM: RFQ ' + num + ' due in 48 hours';
+  return 'DSCM: RFQ ' + num + ' due in under 48 hours';
 }
 function rfqEmailHtml(rfq, kind, dueAt, pageUrl) {
   const num = escapeEmailHtml(rfq && rfq.rfqNumber != null ? rfq.rfqNumber : '');
@@ -1671,14 +1766,39 @@ function rfqEmailHtml(rfq, kind, dueAt, pageUrl) {
   const href = escapeEmailHtml(pageUrl);
   const heading = kind === 'extended'
     ? 'The quote deadline has been extended (or set) for this RFQ.'
-    : (kind === '2h' ? 'This RFQ’s quote deadline is in about 2 hours.' : 'This RFQ’s quote deadline is in about 48 hours.');
+    : (kind === '2h' ? 'This RFQ’s quote deadline is in about 2 hours.' : 'This RFQ’s quote deadline is in under 48 hours.');
   return '<p>' + heading + '</p>' +
     '<p><strong>RFQ ' + num + '</strong>' + (title ? ' — ' + title : '') + '</p>' +
     '<p>Due: <strong>' + due + '</strong></p>' +
     (href ? '<p><a href="' + href + '">Open this RFQ in DSCM</a></p>' : '');
 }
 
-async function emailOrgAboutRfqDue(env, organization, rfq, kind, dueAt, pagePath) {
+// One staff-only copy for a supplier RFQ event (extension or one reminder
+// kind for one org). Suppliers are emailed separately with no staff
+// addresses. Failure here must not affect the supplier sends (call this
+// after those). A staff address already in the supplier To list is omitted.
+async function sendRfqStaffCopy(env, organization, supplierUsers, subject, html) {
+  const staffEmails = await resolveRfqStaffBccEmails(env);
+  const supplierSet = {};
+  (supplierUsers || []).forEach(function (u) {
+    const email = (u && u.email ? u.email : '').toString().trim().toLowerCase();
+    if (email) supplierSet[email] = true;
+  });
+  const toStaff = staffEmails.filter(function (addr) { return !supplierSet[addr.toLowerCase()]; });
+  if (!toStaff.length) return;
+  const n = (supplierUsers || []).length;
+  const copySubject = 'Copy: ' + subject;
+  const copyHtml = '<p><em>Copy of the RFQ email sent to ' + n + ' supplier user' +
+    (n === 1 ? '' : 's') + ' at ' + escapeEmailHtml(organization) + '.</em></p>' + html;
+  const result = await sendEmail(env, toStaff, copySubject, copyHtml);
+  if (result && result.ok) return;
+  console.error('sendRfqStaffCopy: batch send failed; retrying each staff address');
+  for (let i = 0; i < toStaff.length; i++) {
+    await sendEmail(env, toStaff[i], copySubject, copyHtml);
+  }
+}
+
+async function emailOrgAboutRfqDue(env, organization, rfq, kind, dueAt, pagePath, options) {
   const users = await usersInOrganization(env, organization);
   if (!users.length) return { sent: 0, attempted: 0 };
   const pageUrl = dscmPagesBaseUrl(env) + '/' + pagePath;
@@ -1688,6 +1808,9 @@ async function emailOrgAboutRfqDue(env, organization, rfq, kind, dueAt, pagePath
   for (let i = 0; i < users.length; i++) {
     const result = await sendEmail(env, users[i].email, subject, html);
     if (result && result.ok) sent++;
+  }
+  if (options && options.bccStaff) {
+    await sendRfqStaffCopy(env, organization, users, subject, html);
   }
   return { sent: sent, attempted: users.length };
 }
@@ -1727,7 +1850,8 @@ async function runRfqDueReminderScan(env) {
       sanitize: sanitizeRfq,
       sharedKey: 'sharedWithSuppliers',
       dueAtFor: rfqDueAtFor,
-      pagePath: 'RFQ.html'
+      pagePath: 'RFQ.html',
+      bccStaff: true
     });
     await scanRfqStoreDueReminders(env, {
       path: CUSTOMER_RFQS_FILE_PATH,
@@ -1759,13 +1883,17 @@ async function scanRfqStoreDueReminders(env, spec) {
       const remaining = dueMs - now;
       const sent = reminders[org] || {};
       const kinds = [];
-      if (remaining <= RFQ_REMINDER_48H_MS && !sent.h48) kinds.push('48h');
-      if (remaining <= RFQ_REMINDER_2H_MS && !sent.h2) kinds.push('2h');
+      if (remaining <= RFQ_REMINDER_2H_MS) {
+        if (!sent.h2) kinds.push('2h');
+      } else if (remaining <= RFQ_REMINDER_48H_MS && !sent.h48) {
+        kinds.push('48h');
+      }
       for (let k = 0; k < kinds.length; k++) {
         const kind = kinds[k];
-        const result = await emailOrgAboutRfqDue(env, org, rfq, kind, dueAt, spec.pagePath);
+        const result = await emailOrgAboutRfqDue(env, org, rfq, kind, dueAt, spec.pagePath, { bccStaff: !!spec.bccStaff });
         if (result.sent > 0 || result.attempted === 0) {
           marks.push({ id: raw.id, org: org, kind: kind });
+          if (kind === '2h') marks.push({ id: raw.id, org: org, kind: '48h' });
         }
       }
     }
@@ -1789,7 +1917,7 @@ async function scanRfqStoreDueReminders(env, spec) {
   });
 }
 
-async function notifyRfqDueExtensions(env, prevShared, prevDueFor, nextShared, nextDueFor, rfq, pagePath) {
+async function notifyRfqDueExtensions(env, prevShared, prevDueFor, nextShared, nextDueFor, rfq, pagePath, options) {
   const previouslyShared = Array.isArray(prevShared) ? prevShared : [];
   const shared = Array.isArray(nextShared) ? nextShared : [];
   for (let i = 0; i < shared.length; i++) {
@@ -1799,7 +1927,7 @@ async function notifyRfqDueExtensions(env, prevShared, prevDueFor, nextShared, n
     const nextDue = nextDueFor(org);
     if (!dueWasExtendedOrFirstSet(prevDue, nextDue)) continue;
     if (Date.parse(nextDue) <= Date.now()) continue;
-    await emailOrgAboutRfqDue(env, org, rfq, 'extended', nextDue, pagePath);
+    await emailOrgAboutRfqDue(env, org, rfq, 'extended', nextDue, pagePath, options);
   }
 }
 
@@ -1972,6 +2100,7 @@ async function ensureUserRecordForLogin(env, username, legacyMatch) {
       organization: '', relationship: 'Dessimate Team member', role: '', email: '', phone: '',
       active: true, accessLevel: null, isDemo: false, stampImage: null
     });
+    assignMissingUserNumbers(users);
     return { users: users };
   });
 }
@@ -2600,6 +2729,7 @@ async function handleChangeOwnPassword(request, env, origin, username) {
       salt: promotedSalt, hash: promotedHash, organization: '', relationship: '', role: '',
       email: '', phone: '', active: true, accessLevel: null, isDemo: false
     });
+    assignMissingUserNumbers(users);
     return { users: users };
   });
   if (!promoteResult.ok) return json({ message: promoteResult.message }, 500, origin);
@@ -2850,9 +2980,51 @@ function mfaSummaryForUser(u) {
     mfaEnrolledAt: mfa.enrolledAt || null
   };
 }
+// Stable integer serial on each users.json record (`userNumber`). Distinct
+// from the UUID `id` — Super Admins look people up by a short number, and
+// it must not change when the list is sorted or filtered. Assigned on
+// create (max existing + 1) and backfilled for older records the first
+// time GET /admin/users (or a create/update) finds any missing. Not a
+// counters.json series: users.json is an array file, so max+1 inside the
+// mutate callback is the same optimistic-concurrency pattern as the rest
+// of this directory. Never taken from the client.
+function parseUserNumber(value) {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1) return value;
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    const n = Number(value.trim());
+    if (Number.isInteger(n) && n >= 1) return n;
+  }
+  return null;
+}
+function nextUserNumber(users) {
+  let max = 0;
+  (users || []).forEach(function (u) {
+    const n = parseUserNumber(u && u.userNumber);
+    if (n != null && n > max) max = n;
+  });
+  return max + 1;
+}
+function assignMissingUserNumbers(users) {
+  let changed = false;
+  let next = nextUserNumber(users);
+  (users || []).forEach(function (u) {
+    if (!u) return;
+    const n = parseUserNumber(u.userNumber);
+    if (n == null) {
+      u.userNumber = next++;
+      changed = true;
+    } else if (u.userNumber !== n) {
+      u.userNumber = n;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
 function sanitizeFileUser(u) {
   return Object.assign({
     id: u.id,
+    userNumber: parseUserNumber(u.userNumber),
     name: u.name || '',
     username: u.username || null,
     // A passwordLoginDisabled account never has a password hash on file (see
@@ -2879,6 +3051,7 @@ function sanitizeFileUser(u) {
 function legacyToRow(u) {
   return {
     id: 'legacy:' + u.username.toLowerCase(),
+    userNumber: null,
     name: '',
     username: u.username,
     hasLogin: true,
@@ -2896,7 +3069,18 @@ function legacyToRow(u) {
 }
 
 async function handleAdminListUsers(env, origin) {
-  const fileState = await readUsersFile(env);
+  let fileState = await readUsersFile(env);
+  if ((fileState.users || []).some(function (u) {
+    const n = parseUserNumber(u.userNumber);
+    return n == null || u.userNumber !== n;
+  })) {
+    const result = await mutateUsersFile(env, function (users) {
+      assignMissingUserNumbers(users);
+      return { users: users };
+    });
+    if (result.ok) fileState = { users: result.users, sha: null };
+    else assignMissingUserNumbers(fileState.users);
+  }
   const legacy = readLegacyStaff(env);
   const fileUsernamesLower = fileState.users.map(function (u) { return (u.username || '').toLowerCase(); });
   const legacyOnly = legacy
@@ -2930,6 +3114,7 @@ async function handleAdminImportLegacy(env, origin) {
       existingLower.push(u.username.toLowerCase());
       added++;
     });
+    assignMissingUserNumbers(users);
     return { users: users, meta: { added: added } };
   });
   if (!result.ok) return json({ message: result.message }, 500, origin);
@@ -3151,6 +3336,8 @@ async function handleAdminCreateUser(request, env, origin) {
   };
 
   const result = await mutateUsersFile(env, function (users) {
+    assignMissingUserNumbers(users);
+    newUser.userNumber = nextUserNumber(users);
     users.push(newUser);
     return { users: users };
   });
@@ -3240,6 +3427,7 @@ async function handleAdminUpdateUser(request, env, origin, id) {
     target.username = newUsername;
     target.salt = newSalt;
     target.hash = newHash;
+    assignMissingUserNumbers(users);
     savedUser = target;
     return { users: users };
   }, { requireFound: true });
@@ -5444,7 +5632,8 @@ async function handleUpdateRfq(request, env, origin, id) {
     presented.sharedWithSuppliers,
     function (org) { return rfqDueAtFor(presented, org); },
     presented,
-    'RFQ.html'
+    'RFQ.html',
+    { bccStaff: true }
   );
   return json(presented, 200, origin);
 }
