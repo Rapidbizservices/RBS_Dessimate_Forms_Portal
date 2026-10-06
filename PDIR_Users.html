@@ -81,8 +81,12 @@
     border-radius:6px; padding:8px 10px; margin:0 0 16px; line-height:1.45; }
   .authAttempts{ font-size:12px; color:var(--label); min-height:14px; margin-top:4px; }
 
-  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; flex-wrap:wrap; gap:10px; }
+  .toolbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; flex-wrap:wrap; gap:12px; }
   .toolbar h2{ font-size:14px; margin:0; color:var(--ink); }
+  .toolbarFilters{ display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  .toolbarFilter{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--label); }
+  .toolbarFilter select{ font-family:inherit; font-size:12.5px; padding:7px 10px; border:1px solid var(--line);
+    border-radius:6px; background:#fff; color:var(--ink); cursor:pointer; max-width:240px; }
   .importBar{ font-size:12.5px; color:var(--label); display:flex; align-items:center; gap:10px; }
   #importBtn{ font-family:inherit; font-size:12.5px; color:var(--brand); background:#fff;
     border:1px solid var(--line); border-radius:7px; padding:6px 12px; cursor:pointer; }
@@ -90,7 +94,9 @@
   #importBtn:disabled{ color:#999; cursor:wait; }
 
   .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; overflow-x:auto; }
-  table.userTable{ width:100%; border-collapse:collapse; font-size:13px; min-width:820px; }
+  table.userTable{ width:100%; border-collapse:collapse; font-size:13px; min-width:880px; }
+  .userNumber{ font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  #f_userNumber{ font-variant-numeric:tabular-nums; background:#f7f8fb; color:var(--ink); }
   table.userTable th{ background:#eef1f7; color:var(--label); font-size:11px; text-transform:uppercase;
     letter-spacing:.02em; text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
   table.userTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
@@ -209,9 +215,17 @@
 
   <div class="toolbar">
     <h2>Directory</h2>
-    <div class="importBar" id="importBar" style="display:none;">
-      <span id="importMsg"></span>
-      <button type="button" id="importBtn">Import existing logins</button>
+    <div class="toolbarFilters">
+      <div class="toolbarFilter">
+        <span>Filter by Organization:</span>
+        <select id="orgFilterSelect">
+          <option value="">All organizations</option>
+        </select>
+      </div>
+      <div class="importBar" id="importBar" style="display:none;">
+        <span id="importMsg"></span>
+        <button type="button" id="importBtn">Import existing logins</button>
+      </div>
     </div>
   </div>
 
@@ -222,6 +236,7 @@
     <table class="userTable" id="userTable" style="display:none;">
       <thead id="userTableHead">
         <tr>
+          <th data-sort-key="userNumber">User #</th>
           <th data-sort-key="displayName">Name</th>
           <th data-sort-key="organization">Organization</th>
           <th data-sort-key="relationship">Relationship</th>
@@ -312,6 +327,9 @@
     <h2 id="modalTitle">Add User</h2>
     <p class="modalSub" id="modalSub">Fill in what you know — most fields are optional.</p>
     <form id="userForm">
+      <label id="userNumberRow" style="display:none;">User #
+        <input type="text" id="f_userNumber" readonly>
+      </label>
       <label>Full Name
         <input type="text" id="f_name" placeholder="e.g. Jane Smith">
       </label>
@@ -850,6 +868,7 @@
   // ---- Directory table --------------------------------------------------------
   var lastUsers = [];
   var userSortState = { key: null, dir: 1 };
+  var selectedOrgFilter = '';
   window.SortableTable.makeSortableHeaders(document.getElementById('userTableHead'), userSortState, renderTable);
   var ACCESS_LEVEL_LABELS = {
     super_admin: 'Super Admin', admin: 'Admin', team_member: 'Team Member',
@@ -904,25 +923,62 @@
     }
   }
 
+  function populateOrgFilterOptions(){
+    var selectEl = document.getElementById('orgFilterSelect');
+    if (!selectEl) return;
+    var orgs = {};
+    lastUsers.forEach(function(u){
+      var name = (u.organization || '').trim();
+      if (name) orgs[name] = true;
+    });
+    var sortedOrgs = Object.keys(orgs).sort(function(a, b){ return a.localeCompare(b); });
+    var keep = selectedOrgFilter;
+    selectEl.innerHTML = '<option value="">All organizations</option>' + sortedOrgs.map(function(o){
+      var sel = (o === keep) ? ' selected' : '';
+      return '<option value="' + escapeHtml(o) + '"' + sel + '>' + escapeHtml(o) + '</option>';
+    }).join('');
+    if (keep && !orgs[keep]) {
+      selectEl.innerHTML += '<option value="' + escapeHtml(keep) + '" selected>' + escapeHtml(keep) + '</option>';
+    }
+    selectEl.value = keep;
+  }
+  document.getElementById('orgFilterSelect').addEventListener('change', function(){
+    selectedOrgFilter = this.value;
+    renderTable();
+  });
+
+  function formatUserNumber(u){
+    return (typeof u.userNumber === 'number' && u.userNumber >= 1) ? String(u.userNumber) : '—';
+  }
+
   function renderTable(){
     var tableEl = document.getElementById('userTable');
     var bodyEl = document.getElementById('userTableBody');
     var emptyEl = document.getElementById('emptyState');
-    if (!lastUsers.length) {
+    populateOrgFilterOptions();
+    var filtered = lastUsers;
+    if (selectedOrgFilter) {
+      filtered = filtered.filter(function(u){ return (u.organization || '') === selectedOrgFilter; });
+    }
+    if (!filtered.length) {
       emptyEl.style.display = 'block';
       tableEl.style.display = 'none';
+      if (lastUsers.length) emptyEl.textContent = 'No users match the selected filters.';
+      else emptyEl.innerHTML = 'No users yet. Click <strong>Add User</strong> above to add the first one.';
       return;
     }
     emptyEl.style.display = 'none';
     tableEl.style.display = 'table';
 
-    var defaultOrder = lastUsers.slice().sort(function(a, b){
+    var defaultOrder = filtered.slice().sort(function(a, b){
       var an = (a.name || a.username || a.organization || '').toLowerCase();
       var bn = (b.name || b.username || b.organization || '').toLowerCase();
       return an.localeCompare(bn);
     });
     var sorted = window.SortableTable.sortItems(defaultOrder, userSortState, function(u, key){
-      return key === 'displayName' ? (u.name || u.username || u.organization || '') : u[key];
+      if (key === 'displayName') return (u.name || u.username || u.organization || '');
+      if (key === 'userNumber') return (typeof u.userNumber === 'number' ? u.userNumber : null);
+      return u[key];
     });
     window.SortableTable.updateSortIndicators(document.getElementById('userTableHead'), userSortState);
 
@@ -958,6 +1014,7 @@
       }
 
       return '<tr class="' + (u.active ? '' : 'inactive') + '">' +
+        '<td class="userNumber">' + escapeHtml(formatUserNumber(u)) + '</td>' +
         '<td class="userName">' + nameHtml + '</td>' +
         '<td>' + escapeHtml(u.organization) + '</td>' +
         '<td class="relBadge">' + escapeHtml(u.relationship) + '</td>' +
@@ -1210,6 +1267,8 @@
     document.getElementById('f_passwordLoginDisabled').checked = false;
     document.getElementById('f_accessLevel').value = 'team_member';
     document.getElementById('modalError').textContent = '';
+    document.getElementById('userNumberRow').style.display = 'none';
+    document.getElementById('f_userNumber').value = '';
     stampState = { existing: null, pending: null, removed: false };
     renderStampRow();
     updateLoginBlockVisibility();
@@ -1236,6 +1295,8 @@
     document.getElementById('modalSub').textContent = u.migrated === false
       ? 'This login isn\'t in the new list yet — saving will add it.'
       : 'Update this person\'s details.';
+    document.getElementById('userNumberRow').style.display = '';
+    document.getElementById('f_userNumber').value = formatUserNumber(u);
     document.getElementById('f_name').value = u.name || '';
     document.getElementById('f_relationship').value = u.relationship || 'Dessimate Team member';
     document.getElementById('f_organization_text').value = u.organization || '';

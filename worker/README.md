@@ -707,6 +707,14 @@ from the PDIR Portal header) for this — you shouldn't need
 `password_hash_tool.html` or `wrangler secret put STAFF_USERS` again after
 you've deployed this version. Open the Users page, log in, and:
 
+- **User #** — a stable integer (`userNumber` on each `data/users.json`
+  record) assigned automatically on create (max existing + 1) and
+  backfilled for older records the first time Super Admin opens the Users
+  list (or saves anyone). It does not change when the list is sorted or
+  filtered, and the client cannot set it. Shown as a sortable column next
+  to the name (the name itself is still the edit control) and read-only
+  on Edit. Filter the directory by Organization from the toolbar dropdown
+  (**All organizations** by default).
 - **Add User** — for a staff member, tick "Give this person a login" and set
   a username/password; leave it unticked (or pick Supplier/Customer) to just
   keep their contact info on file with no Portal access.
