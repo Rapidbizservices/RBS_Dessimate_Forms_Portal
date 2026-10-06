@@ -867,6 +867,7 @@
         '<td class="docCell">' + docHtml + '</td>' +
         '<td><div class="rowActions">' + (canManageRecords()
           ? '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
+            '<button type="button" class="editBtn" data-make-supplier-po="' + escapeHtml(po.id) + '" title="Start a Dessimate PO to a Supplier with this PO\'s parts, quantities, delivery dates and ship-to filled in">Create Supplier PO</button>' +
             '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>'
           : '<button type="button" class="editBtn" data-view="' + escapeHtml(po.id) + '">View</button>'
         ) + '</div></td>' +
@@ -886,6 +887,13 @@
     });
     bodyEl.querySelectorAll('[data-delete]').forEach(function(btn){
       btn.addEventListener('click', function(){ deletePo(this.getAttribute('data-delete')); });
+    });
+    // The Dessimate POs page does the copying - see its fromCustomerPo
+    // handling. Admin+ only, the same gate as creating a Dessimate PO.
+    bodyEl.querySelectorAll('[data-make-supplier-po]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        window.location.href = 'PDIR_DessimatePOs.html?fromCustomerPo=' + encodeURIComponent(this.getAttribute('data-make-supplier-po'));
+      });
     });
   }
 

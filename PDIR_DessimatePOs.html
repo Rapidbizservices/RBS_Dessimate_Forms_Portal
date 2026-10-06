@@ -353,6 +353,7 @@
         </label>
         <label>Ship To <span style="font-weight:400;">(street on one line, city/state/zip on the next)</span>
           <textarea id="f_shipTo" rows="2" style="display:block; width:100%; margin-top:5px; font-family:inherit; font-size:14px; padding:9px 10px; border:1px solid var(--line); border-radius:6px; resize:vertical;"></textarea>
+          <select id="f_shipToSource" style="display:none; margin-top:6px;" title="Fill Ship To from the Customer PO or one of Dessimate's own addresses"></select>
         </label>
       </div>
       <div class="modalGrid3">
@@ -1326,6 +1327,7 @@
     document.getElementById('f_approver').innerHTML = approverOptions('');
     document.getElementById('f_poNumber').value = '';
     document.getElementById('f_shipmentNumber').value = '';
+    document.getElementById('f_shipToSource').style.display = 'none';
     setNumberFieldsEditable(true);
     initRelatedPoChecklist([], null);
     renderLines();
@@ -1394,6 +1396,7 @@
     document.getElementById('f_paymentTerms').innerHTML = paymentTermsOptions(po.paymentTerms || '');
     document.getElementById('f_notes').value = po.notes || '';
     document.getElementById('f_shipTo').value = po.shipTo || '';
+    document.getElementById('f_shipToSource').style.display = 'none';
     document.getElementById('f_currency').value = po.currency || '';
     document.getElementById('f_incoterms').value = po.incoterms || '';
     document.getElementById('f_approver').innerHTML = approverOptions(po.approverUsername || '');
@@ -1407,12 +1410,117 @@
   }
   function closeModal(){ document.getElementById('poModalOverlay').classList.remove('open'); }
   document.getElementById('addPoBtn').addEventListener('click', function(){
+    prefillQueue = [];
     requireAuthThen(async function(){ await loadDropdownData(); openAddModal(); });
   });
-  document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+  // Cancelling a pre-filled PO stops the rest of its one-per-Supplier run
+  // too, rather than popping the next Supplier's form straight back up.
+  function cancelModal(){ prefillQueue = []; closeModal(); }
+  document.getElementById('modalCancelBtn').addEventListener('click', cancelModal);
   document.getElementById('poModalOverlay').addEventListener('click', function(e){
-    if (e.target.id === 'poModalOverlay') closeModal();
+    if (e.target.id === 'poModalOverlay') cancelModal();
   });
+
+  // ---- Pre-fill from a Customer PO ---------------------------------------------
+  // Opened by the Customer POs list's "Create Supplier PO" button
+  // (PDIR_DessimatePOs.html?fromCustomerPo=<id>). Part, description,
+  // revision, UOM, quantity, delivery date and ship-to are copied into the
+  // Add form, and the Customer PO is ticked. Unit price is deliberately not
+  // copied: the Customer PO's price is Dessimate's sell price, and would show
+  // the Supplier Dessimate's margin. Nothing is saved until the user clicks
+  // Save, so it's an ordinary Add from there on.
+  var fromCustomerPoId = null;
+  try {
+    var fcp = new URLSearchParams(window.location.search).get('fromCustomerPo');
+    if (fcp && fcp.trim()) fromCustomerPoId = fcp.trim();
+  } catch (e) { fromCustomerPoId = null; }
+  var prefillQueue = []; // [{ cpo, supplier, lines, index, total }], one entry per PO still to open
+
+  // Only a Part with exactly one Supplier on file suggests that Supplier -
+  // with several, picking one is a purchasing decision, not something to guess.
+  function soleSupplierFor(partNumber){
+    var part = lastParts.find(function(p){ return p.partNumber === partNumber; });
+    var suppliers = part && Array.isArray(part.suppliers) ? part.suppliers : [];
+    return suppliers.length === 1 ? suppliers[0] : '';
+  }
+  function groupLinesBySupplier(lines){
+    var groups = [], bySupplier = {};
+    lines.forEach(function(l){
+      var supplier = soleSupplierFor(l.partNumber);
+      if (!bySupplier[supplier]) { bySupplier[supplier] = { supplier: supplier, lines: [] }; groups.push(bySupplier[supplier]); }
+      bySupplier[supplier].lines.push(l);
+    });
+    // Lines with no clear Supplier go last, in a PO of their own.
+    return groups.filter(function(g){ return g.supplier; }).concat(groups.filter(function(g){ return !g.supplier; }));
+  }
+  function shipToChoices(cpo){
+    var choices = [];
+    if (cpo.shipTo) choices.push({ label: 'Customer ship-to' + (cpo.customer ? ' (' + cpo.customer + ')' : ''), value: cpo.shipTo });
+    var self = selfOrg();
+    ((self && self.addresses) || []).forEach(function(a){
+      var text = [a.line1, a.line2].filter(Boolean).join('\n');
+      if (text) choices.push({ label: (self.name || 'Dessimate') + (a.label ? ' - ' + a.label : ''), value: text });
+    });
+    return choices;
+  }
+  function openNextPrefilledPo(){
+    var p = prefillQueue.shift();
+    if (!p) return;
+    openAddModal();
+    var cpo = p.cpo;
+    document.getElementById('f_supplier').innerHTML = supplierOrgOptions(p.supplier);
+    document.getElementById('f_customerPoRefs_list').innerHTML = customerPoRefsChecklistOptions(cpo.poNumber ? [cpo.poNumber] : []);
+    lineRows = p.lines.map(function(l){
+      return { partNumber: l.partNumber, description: l.description || '', revision: l.revision || '', uom: l.uom || '',
+        qtyOrdered: l.qtyOrdered || '', unitPrice: '', requestedDeliveryDate: l.promisedDeliveryDate || '' };
+    });
+    renderLines();
+
+    var choices = shipToChoices(cpo);
+    var sourceSel = document.getElementById('f_shipToSource');
+    sourceSel.innerHTML = choices.map(function(c, i){ return '<option value="' + i + '">' + escapeHtml(c.label) + '</option>'; }).join('');
+    sourceSel.style.display = choices.length > 1 ? '' : 'none';
+    sourceSel.onchange = function(){
+      var c = choices[Number(sourceSel.value)];
+      if (c) document.getElementById('f_shipTo').value = c.value;
+    };
+    document.getElementById('f_shipTo').value = choices.length ? choices[0].value : '';
+
+    document.getElementById('modalTitle').textContent = 'Add Dessimate PO from Customer PO ' + (cpo.poNumber || '') +
+      (p.total > 1 ? ' (' + p.index + ' of ' + p.total + ')' : '');
+    document.getElementById('modalSub').textContent =
+      (p.supplier ? '' : 'Select the Supplier - these parts have none, or more than one, on file. ') +
+      'Parts, quantities, delivery dates and ship-to were copied from the Customer PO. Unit prices are blank - enter the Supplier\'s price before saving.';
+  }
+  async function startFromCustomerPo(){
+    var id = fromCustomerPoId;
+    fromCustomerPoId = null;
+    if (!id) return;
+    // Drop the parameter so a refresh doesn't open the same pre-filled form again.
+    try {
+      var cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('fromCustomerPo');
+      history.replaceState(null, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+    } catch (e) { /* cosmetic only */ }
+    if (!canManageRecords()) return;
+    var cpo = lastCustomerPos.find(function(o){ return o.id === id; });
+    if (!cpo) { alert('That Customer PO could not be found - it may have been deleted.'); return; }
+    var lines = (cpo.lines || []).filter(function(l){ return l.partNumber; });
+    if (!lines.length) { alert('Customer PO ' + (cpo.poNumber || '') + ' has no line items to copy.'); return; }
+
+    var groups = groupLinesBySupplier(lines);
+    var named = groups.filter(function(g){ return g.supplier; }).map(function(g){ return g.supplier; });
+    if (groups.length > 1) {
+      var split = await confirmDialog(
+        'The parts on Customer PO ' + (cpo.poNumber || '') + ' come from ' + named.length + ' different Supplier' + (named.length === 1 ? '' : 's') +
+        ' (' + named.join(', ') + ')' + (groups.length > named.length ? ', and some have no single Supplier on file' : '') +
+        '. Create one Dessimate PO per Supplier, opened one after another?',
+        { okLabel: 'One PO per Supplier', cancelLabel: 'One PO with every line' });
+      if (!split) groups = [{ supplier: '', lines: lines }];
+    }
+    prefillQueue = groups.map(function(g, i){ return { cpo: cpo, supplier: g.supplier, lines: g.lines, index: i + 1, total: groups.length }; });
+    openNextPrefilledPo();
+  }
 
   // Collects the current form state and saves it (create or update),
   // uploading any pending attachments along the way, then resyncs local
@@ -1494,6 +1602,7 @@
       await savePo();
       closeModal();
       await loadPos();
+      openNextPrefilledPo();
     } catch (err) {
       errEl.textContent = err && err.message ? err.message : 'Could not save this Dessimate PO.';
     } finally {
@@ -1550,6 +1659,6 @@
   });
   // -----------------------------------------------------------------------------
 
-  requireAuthThen(async function(){ await resolveAccessLevel(); applyAccessLevelUI(); await loadDropdownData(); await loadPos(); });
+  requireAuthThen(async function(){ await resolveAccessLevel(); applyAccessLevelUI(); await loadDropdownData(); await loadPos(); await startFromCustomerPo(); });
 })();
 </script>
