@@ -87,6 +87,7 @@
   table.rfqTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
   table.rfqTable tr:last-child td{ border-bottom:none; }
   .rfqNumber{ font-weight:700; font-variant-numeric:tabular-nums; }
+  .rfqTitle{ max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .rowActions{ display:flex; gap:8px; white-space:nowrap; }
   .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
     border-radius:6px; padding:6px 12px; white-space:nowrap; }
@@ -345,6 +346,9 @@
           <input type="date" id="f_rfqDate">
         </div>
       </div>
+      <label for="f_title" style="margin-top:14px;">Title <span style="font-weight:400;">(a short description so this RFQ is easy to recognize in the list - Customers it's shared with see it too)</span>
+        <input type="text" id="f_title" maxlength="150" placeholder="e.g. Aluminum housings - 2027 program">
+      </label>
 
       <div class="modalSection">
         <h3>Part Number(s) <span style="font-weight:400;">(optional — you can leave this blank and fill it in later)</span></h3>
@@ -1178,6 +1182,12 @@
     }
   }
 
+  function rfqTitleCell(r){
+    return r.title
+      ? '<td class="rfqTitle" title="' + escapeHtml(r.title) + '">' + escapeHtml(r.title) + '</td>'
+      : '<td><span style="color:var(--label);">—</span></td>';
+  }
+
   function renderTable(){
     var tableEl = document.getElementById('rfqTable');
     var headEl = document.getElementById('rfqTableHead');
@@ -1195,7 +1205,7 @@
     });
 
     if (isCustomerUser()) {
-      headEl.innerHTML = '<tr><th data-sort-key="rfqNumber">RFQ Number</th><th data-sort-key="rfqDate">RFQ Date</th><th data-sort-key="lineCount">Parts</th><th>Quote Status</th><th></th></tr>';
+      headEl.innerHTML = '<tr><th data-sort-key="rfqNumber">RFQ Number</th><th data-sort-key="title">Title</th><th data-sort-key="rfqDate">RFQ Date</th><th data-sort-key="lineCount">Parts</th><th>Quote Status</th><th></th></tr>';
       window.SortableTable.makeSortableHeaders(headEl, rfqSortState, renderTable);
       window.SortableTable.updateSortIndicators(headEl, rfqSortState);
       bodyEl.innerHTML = sorted.map(function(r){
@@ -1205,6 +1215,7 @@
           : '<span class="statusPill notStarted">Awaiting Dessimate quote</span>';
         return '<tr>' +
           '<td class="rfqNumber">' + escapeHtml(r.rfqNumber) + '</td>' +
+          rfqTitleCell(r) +
           '<td>' + escapeHtml(fmtDateMDY(r.rfqDate)) + '</td>' +
           '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
           '<td>' + statusHtml + '</td>' +
@@ -1217,7 +1228,7 @@
       return;
     }
 
-    headEl.innerHTML = '<tr><th data-sort-key="rfqNumber">RFQ Number</th><th data-sort-key="rfqDate">RFQ Date</th><th data-sort-key="lineCount">Parts</th><th>Shared With Customers</th><th>Customer Quote</th><th>Files</th><th></th></tr>';
+    headEl.innerHTML = '<tr><th data-sort-key="rfqNumber">RFQ Number</th><th data-sort-key="title">Title</th><th data-sort-key="rfqDate">RFQ Date</th><th data-sort-key="lineCount">Parts</th><th>Shared With Customers</th><th>Customer Quote</th><th>Files</th><th></th></tr>';
     window.SortableTable.makeSortableHeaders(headEl, rfqSortState, renderTable);
     window.SortableTable.updateSortIndicators(headEl, rfqSortState);
     bodyEl.innerHTML = sorted.map(function(r){
@@ -1232,6 +1243,7 @@
       var attCell = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '<span style="color:var(--label);">—</span>';
       return '<tr>' +
         '<td class="rfqNumber">' + escapeHtml(r.rfqNumber) + '</td>' +
+        rfqTitleCell(r) +
         '<td>' + escapeHtml(fmtDateMDY(r.rfqDate)) + '</td>' +
         '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
         '<td>' + sharedCell + '</td>' +
@@ -1671,6 +1683,7 @@
     document.getElementById('f_sharedWithCustomers_list').innerHTML = sharedWithCustomersChecklistOptions([]);
     document.getElementById('f_rfqNumber').value = '';
     document.getElementById('f_rfqDate').value = '';
+    document.getElementById('f_title').value = '';
     document.getElementById('dessimateQuoteSection').style.display = 'none';
     renderLines();
     staffComments.setState([]);
@@ -1702,10 +1715,11 @@
         attachments: (l.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; })
       };
     });
-    document.getElementById('modalTitle').textContent = 'Edit Customer RFQ ' + rfq.rfqNumber;
+    document.getElementById('modalTitle').textContent = 'Edit Customer RFQ ' + rfq.rfqNumber + (rfq.title ? ' — ' + rfq.title : '');
     document.getElementById('modalSub').textContent = 'RFQ Number can be changed any time.';
     document.getElementById('f_rfqNumber').value = rfq.rfqNumber;
     document.getElementById('f_rfqDate').value = rfq.rfqDate || '';
+    document.getElementById('f_title').value = rfq.title || '';
     document.getElementById('f_sharedWithCustomers_list').innerHTML = sharedWithCustomersChecklistOptions(rfq.sharedWithCustomers || []);
     renderLines();
     renderDessimateQuotePanel(rfq);
@@ -1733,6 +1747,7 @@
 
     var baseFields = {
       rfqNumber: document.getElementById('f_rfqNumber').value.trim(),
+      title: document.getElementById('f_title').value.trim(),
       rfqDate: document.getElementById('f_rfqDate').value,
       lines: linesForCreate,
       sharedWithCustomers: getSelectedSharedWithCustomers()
@@ -1807,7 +1822,7 @@
     var rfq = lastRfqs.find(function(x){ return x.id === id; });
     if (!rfq) return;
     customerViewRfqId = id;
-    document.getElementById('customerViewTitle').textContent = 'RFQ ' + rfq.rfqNumber;
+    document.getElementById('customerViewTitle').textContent = 'RFQ ' + rfq.rfqNumber + (rfq.title ? ' — ' + rfq.title : '');
     document.getElementById('customerViewSub').textContent = rfq.rfqDate ? 'RFQ Date: ' + fmtDateMDY(rfq.rfqDate) : '';
 
     var lines = rfq.lines || [];

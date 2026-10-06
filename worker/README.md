@@ -1502,6 +1502,16 @@ change is preserved and still shown (read-only, unattributed, pinned above
 the live thread as an "Earlier note") - `sanitizeRfq` still returns the
 legacy `notes` value for that purpose, it's just frozen from here on.
 
+**Title** - an optional short description (up to 150 characters) so an RFQ
+can be recognized by more than its number. It's shown as its own sortable
+column in the list, in the Edit modal's heading, and in a Supplier's quote
+window. Suppliers the RFQ is shared with see it, so keep customer names
+out of it. Customer RFQ has the same field (seen by the Customers it's
+shared with). Both modules only write `title` when the request includes it
+(`cleanRfqTitle`), so a save from a page that predates the field can't
+blank a title that's already set. RFQs created before this have no title
+and show "—" until someone adds one.
+
 ## Customer RFQ
 
 Dessimate's quoting-to-Customer side - `CustomerRFQ.html`, stored in

@@ -4984,6 +4984,7 @@ function sanitizeRfq(o) {
   return {
     id: o.id,
     rfqNumber: o.rfqNumber,
+    title: o.title || '',
     rfqDate: o.rfqDate || '',
     // Rev2.29: the old single free-text `notes` field is frozen/read-only
     // now (validateRfqFields no longer accepts it) - superseded by the
@@ -5036,6 +5037,16 @@ async function handleListRfqs(env, origin, accessLevel, organization) {
   return json({ rfqs: rfqs }, 200, origin);
 }
 
+// A short label so users can tell RFQs apart by more than their number
+// (shared by the Dessimate and Customer RFQ modules). Optional, like every
+// other RFQ field. Kept out of validateRfqFields/validateCustomerRfqFields
+// and only written when the request actually sends `title`, so a save from
+// a page that predates the field can't blank one that's already set.
+const RFQ_TITLE_MAX = 150;
+function cleanRfqTitle(v) {
+  return (v === undefined || v === null ? '' : String(v)).replace(/\s+/g, ' ').trim().slice(0, RFQ_TITLE_MAX);
+}
+
 // Nothing is required to save an RFQ - "there are no part numbers when RFQ
 // number is created" (product brief). A line is kept if either of its two
 // fields has content (not just Part Number), so a user filling the form out
@@ -5074,7 +5085,7 @@ async function handleCreateRfq(request, env, origin) {
   }
   const rfqNumber = await reserveRfqNumber(env, clientRfqNumber);
   const newRfq = Object.assign(
-    { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments), supplierQuotes: {} },
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, title: cleanRfqTitle(body.title), dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments), supplierQuotes: {} },
     fields
   );
 
@@ -5112,6 +5123,7 @@ async function handleUpdateRfq(request, env, origin, id) {
     if (!target) return null;
     Object.assign(target, fields); // supplierQuotes is never in `fields` - a team_member's edit never touches it
     if (newRfqNumber !== undefined) target.rfqNumber = newRfqNumber;
+    if (body.title !== undefined) target.title = cleanRfqTitle(body.title);
     if (body.dessimateAttachments !== undefined) target.dessimateAttachments = sanitizeOrgDocList(body.dessimateAttachments);
     saved = target;
     return { items: items };
@@ -5391,6 +5403,7 @@ function sanitizeCustomerRfq(o) {
   return {
     id: o.id,
     rfqNumber: o.rfqNumber,
+    title: o.title || '',
     rfqDate: o.rfqDate || '',
     // The old single free-text `notes` field is frozen/staff-only now (see
     // validateCustomerRfqFields, which no longer accepts it) - superseded
@@ -5474,7 +5487,7 @@ async function handleCreateCustomerRfq(request, env, origin) {
   }
   const rfqNumber = await reserveCustomerRfqNumber(env, clientRfqNumber);
   const newRfq = Object.assign(
-    { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments) },
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, title: cleanRfqTitle(body.title), dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments) },
     fields
   );
 
@@ -5507,6 +5520,7 @@ async function handleUpdateCustomerRfq(request, env, origin, id) {
     if (!target) return null;
     Object.assign(target, fields); // dessimateQuote is never in `fields` - a team_member's edit never touches it
     if (newRfqNumber !== undefined) target.rfqNumber = newRfqNumber;
+    if (body.title !== undefined) target.title = cleanRfqTitle(body.title);
     if (body.dessimateAttachments !== undefined) target.dessimateAttachments = sanitizeOrgDocList(body.dessimateAttachments);
     saved = target;
     return { items: items };
