@@ -1621,7 +1621,9 @@ empty cells:
   references all land here. To support another function, add it to
   `XLSX_FUNCS` in `office-viewer.js`.
 - **All sheets render one after another** on one scrolling page, each
-  under its own sticky name, instead of behind tabs.
+  under its own sticky name, instead of behind tabs. The viewer window
+  itself scrolls both ways, so the left/right scrollbar is always at the
+  bottom of the window rather than at the bottom of each sheet.
 - **Layout from the file** - column widths, merged cells, the workbook's
   number formats (e.g. `0.0%`), and row numbers/column letters (so a cell
   showing `=SUM(B2:B9)` can be read). Long text wraps instead of stretching

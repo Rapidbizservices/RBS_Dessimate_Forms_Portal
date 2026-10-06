@@ -623,7 +623,9 @@
     if (showName) {
       var heading = document.createElement('div');
       heading.className = 'officeXlsxSheetName';
-      heading.textContent = name;
+      var headingText = document.createElement('span');
+      headingText.textContent = name;
+      heading.appendChild(headingText);
       section.appendChild(heading);
     }
     var wrap = document.createElement('div');

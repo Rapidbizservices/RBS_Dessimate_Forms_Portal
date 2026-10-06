@@ -8,13 +8,21 @@
 /* Sheets stack one after another down the page (they used to sit behind a tab
    bar, where later sheets went unnoticed), so each one gets a sticky caption
    to keep its name visible while scrolling through a long sheet. */
-#docViewerOffice .officeXlsxSheet{ padding-bottom:18px; }
+/* Sheets deliberately don't scroll on their own: #docViewerOffice scrolls both
+   ways, so the horizontal scrollbar stays pinned to the bottom of the viewer.
+   A per-sheet scroll box put that bar at the bottom of the sheet instead,
+   reachable only after scrolling all the way down a long timing plan. Each
+   sheet is as wide as its own table so the caption bar spans it. */
+#docViewerOffice .officeXlsxSheet{ padding-bottom:18px; width:max-content; min-width:100%; }
 #docViewerOffice .officeXlsxSheetName{
   position:sticky; top:0; z-index:2;
   padding:7px 12px; font-size:12.5px; font-weight:600; color:#333;
   background:#f4f5f7; border-bottom:1px solid #d7dae0;
 }
-#docViewerOffice .officeXlsxTableWrap{ padding:10px; overflow:auto; }
+/* The bar spans the full table width, so its text sticks to the left edge
+   instead of scrolling out of view when panning right. */
+#docViewerOffice .officeXlsxSheetName > span{ display:inline-block; position:sticky; left:12px; }
+#docViewerOffice .officeXlsxTableWrap{ padding:10px; }
 #docViewerOffice .officeXlsxTableWrap table{ border-collapse:collapse; font-size:12px; }
 #docViewerOffice .officeXlsxTableWrap td,
 #docViewerOffice .officeXlsxTableWrap th{
