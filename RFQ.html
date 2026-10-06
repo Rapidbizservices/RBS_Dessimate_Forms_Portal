@@ -95,6 +95,11 @@
   table.rfqTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
   table.rfqTable tr:last-child td{ border-bottom:none; }
   .rfqNumber{ font-weight:700; font-variant-numeric:tabular-nums; }
+  .liveNumber{ font-family:inherit; font-size:inherit; font-weight:inherit; font-variant-numeric:inherit;
+    color:var(--brand); background:none; border:none; padding:0; cursor:pointer;
+    text-decoration:underline; text-underline-offset:2px; }
+  .liveNumber:hover{ text-decoration:underline; }
+  .liveNumber:focus-visible{ outline:2px solid var(--brand); outline-offset:2px; }
   .rfqTitle{ max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .rowActions{ display:flex; gap:8px; white-space:nowrap; }
   .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
@@ -1529,7 +1534,7 @@
           ? '<span class="statusPill submitted">Submitted ' + escapeHtml(fmtDateMDY(quote.submittedAt)) + '</span>'
           : '<span class="statusPill notStarted">Not started</span>';
         return '<tr>' +
-          '<td class="rfqNumber">' + escapeHtml(r.rfqNumber) + '</td>' +
+          '<td class="rfqNumber"><button type="button" class="liveNumber" data-quote="' + escapeHtml(r.id) + '">' + escapeHtml(r.rfqNumber) + '</button></td>' +
           rfqTitleCell(r) +
           '<td>' + escapeHtml(fmtDateMDY(r.rfqDate)) + '</td>' +
           '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
@@ -1559,7 +1564,9 @@
       var extCount = Object.keys(r.supplierDueAt || {}).length;
       var extNote = extCount ? '<div class="quoteMeta" style="font-size:11px; color:var(--label);">' + extCount + ' Supplier extension' + (extCount === 1 ? '' : 's') + '</div>' : '';
       return '<tr>' +
-        '<td class="rfqNumber">' + escapeHtml(r.rfqNumber) + '</td>' +
+        '<td class="rfqNumber">' + (canManageRfqRecords()
+          ? '<button type="button" class="liveNumber" data-edit="' + escapeHtml(r.id) + '">' + escapeHtml(r.rfqNumber) + '</button>'
+          : escapeHtml(r.rfqNumber)) + '</td>' +
         rfqTitleCell(r) +
         '<td>' + escapeHtml(fmtDateMDY(r.rfqDate)) + '</td>' +
         '<td>' + (r.lines ? r.lines.length : 0) + '</td>' +
@@ -1568,7 +1575,6 @@
         '<td>' + quotesCell + '</td>' +
         '<td class="docCell">' + attCell + '</td>' +
         '<td>' + (canManageRfqRecords() ? '<div class="rowActions">' +
-          '<button type="button" class="editBtn" data-edit="' + escapeHtml(r.id) + '">Edit</button>' +
           '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(r.id) + '">Delete</button>' +
         '</div>' : '') + '</td>' +
         '</tr>';

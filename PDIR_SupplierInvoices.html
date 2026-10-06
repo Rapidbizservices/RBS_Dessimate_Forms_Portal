@@ -92,6 +92,11 @@
   table.poTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
   table.poTable tr:last-child td{ border-bottom:none; }
   .poNumber{ font-weight:700; }
+  .liveNumber{ font-family:inherit; font-size:inherit; font-weight:inherit;
+    color:var(--brand); background:none; border:none; padding:0; cursor:pointer;
+    text-decoration:underline; text-underline-offset:2px; }
+  .liveNumber:hover{ text-decoration:underline; }
+  .liveNumber:focus-visible{ outline:2px solid var(--brand); outline-offset:2px; }
   .xrefLink{ color:var(--brand); font-weight:600; text-decoration:none; }
   .xrefLink:hover{ text-decoration:underline; }
   .statusPill{ display:inline-block; font-size:11.5px; font-weight:700; border-radius:5px; padding:3px 9px; }
@@ -790,7 +795,7 @@
         ? '<a class="xrefLink" href="PDIR_DessimatePOs.html?poNumber=' + encodeURIComponent(inv.dessimatePoRef) + '">' + escapeHtml(inv.dessimatePoRef) + '</a>'
         : '<span style="color:var(--label);">—</span>';
       return '<tr>' +
-        '<td class="poNumber">' + escapeHtml(inv.invoiceNumber) + '</td>' +
+        '<td class="poNumber"><button type="button" class="liveNumber" data-edit="' + escapeHtml(inv.id) + '">' + escapeHtml(inv.invoiceNumber) + '</button></td>' +
         '<td>' + escapeHtml(inv.supplier) + '</td>' +
         '<td>' + poRefCell + '</td>' +
         '<td>' + escapeHtml(fmtDateMDY(inv.invoiceDate)) + '</td>' +
@@ -799,7 +804,6 @@
         '<td class="moneyCell">' + escapeHtml(inv.currency || '') + ' ' + money(inv.invoiceTotal) + '</td>' +
         '<td>' + docHtml + '</td>' +
         '<td><div class="rowActions">' +
-          '<button type="button" class="editBtn" data-edit="' + escapeHtml(inv.id) + '">Edit</button>' +
           '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(inv.id) + '">Delete</button>' +
         '</div></td>' +
         '</tr>';

@@ -96,6 +96,11 @@
   table.poTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
   table.poTable tr:last-child td{ border-bottom:none; }
   .poNumber{ font-weight:700; }
+  .liveNumber{ font-family:inherit; font-size:inherit; font-weight:inherit;
+    color:var(--brand); background:none; border:none; padding:0; cursor:pointer;
+    text-decoration:underline; text-underline-offset:2px; }
+  .liveNumber:hover{ text-decoration:underline; }
+  .liveNumber:focus-visible{ outline:2px solid var(--brand); outline-offset:2px; }
   .statusPill{ display:inline-block; font-size:11.5px; font-weight:700; border-radius:5px; padding:3px 9px; }
   .statusPill.started{ color:#5b5f66; background:#eef0f4; }
   .statusPill.internalCompleted{ color:#1c3877; background:#e8ecfa; }
@@ -1153,7 +1158,9 @@
     bodyEl.innerHTML = sorted.map(function(inv){
       var statusClass = STATUS_CLASSES[inv.status] || 'started';
       return '<tr>' +
-        '<td class="poNumber">' + escapeHtml(inv.invoiceNumber) + '</td>' +
+        '<td class="poNumber">' + (canManageRecords()
+          ? '<button type="button" class="liveNumber" data-edit="' + escapeHtml(inv.id) + '">' + escapeHtml(inv.invoiceNumber) + '</button>'
+          : '<button type="button" class="liveNumber" data-view="' + escapeHtml(inv.id) + '">' + escapeHtml(inv.invoiceNumber) + '</button>') + '</td>' +
         '<td>' + escapeHtml(inv.customer) + '</td>' +
         '<td>' + escapeHtml(fmtDateMDY(inv.invoiceDate)) + '</td>' +
         '<td><span class="statusPill ' + statusClass + '">' + escapeHtml(inv.status) + '</span></td>' +
@@ -1161,8 +1168,7 @@
         '<td class="moneyCell">' + escapeHtml(inv.currency || '') + ' ' + money(inv.invoiceTotal) + '</td>' +
         '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(inv.id) + '">View PDF</button></td>' +
         '<td><div class="rowActions">' + (canManageRecords()
-          ? '<button type="button" class="editBtn" data-edit="' + escapeHtml(inv.id) + '">Edit</button>' +
-            '<button type="button" class="editBtn" data-duplicate="' + escapeHtml(inv.id) + '">Duplicate</button>' +
+          ? '<button type="button" class="editBtn" data-duplicate="' + escapeHtml(inv.id) + '">Duplicate</button>' +
             '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(inv.id) + '">Delete</button>'
           : '<button type="button" class="editBtn" data-view="' + escapeHtml(inv.id) + '">View</button>'
         ) + '</div></td>' +

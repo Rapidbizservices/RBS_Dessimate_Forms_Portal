@@ -92,6 +92,11 @@
   table.orgTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
   table.orgTable tr:last-child td{ border-bottom:none; }
   .orgName{ font-weight:700; }
+  .liveNumber{ font-family:inherit; font-size:inherit; font-weight:inherit;
+    color:var(--brand); background:none; border:none; padding:0; cursor:pointer;
+    text-decoration:underline; text-underline-offset:2px; }
+  .liveNumber:hover{ text-decoration:underline; }
+  .liveNumber:focus-visible{ outline:2px solid var(--brand); outline-offset:2px; }
   .relBadge{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
     border-radius:4px; padding:2px 8px; white-space:nowrap; display:inline-block; }
   .relBadge.Supplier{ background:#e6eefc; color:var(--brand); }
@@ -809,14 +814,13 @@
       var addrCountSuffix = (o.addresses || []).length > 1 ? ' <span class="have">(+' + (o.addresses.length - 1) + ' more)</span>' : '';
 
       return '<tr>' +
-        '<td class="orgName">' + escapeHtml(o.name) + '</td>' +
+        '<td class="orgName"><button type="button" class="liveNumber" data-edit="' + escapeHtml(o.id) + '">' + escapeHtml(o.name) + '</button></td>' +
         '<td><span class="relBadge ' + escapeHtml(o.relationship) + '">' + escapeHtml(o.relationship) + '</span></td>' +
         '<td>' + escapeHtml(addrDisplay) + addrCountSuffix + '</td>' +
         '<td>' + escapeHtml(o.phone) + '</td>' +
         '<td>' + linkify(o.website) + '</td>' +
         '<td>' + docsHtml + '</td>' +
         '<td><div class="rowActions">' +
-          '<button type="button" class="editBtn" data-edit="' + escapeHtml(o.id) + '">Edit</button>' +
           '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(o.id) + '">Delete</button>' +
         '</div></td>' +
         '</tr>';

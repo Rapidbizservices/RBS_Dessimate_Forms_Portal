@@ -92,6 +92,11 @@
   table.partTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
   table.partTable tr:last-child td{ border-bottom:none; }
   .partNumber{ font-weight:700; }
+  .liveNumber{ font-family:inherit; font-size:inherit; font-weight:inherit;
+    color:var(--brand); background:none; border:none; padding:0; cursor:pointer;
+    text-decoration:underline; text-underline-offset:2px; }
+  .liveNumber:hover{ text-decoration:underline; }
+  .liveNumber:focus-visible{ outline:2px solid var(--brand); outline-offset:2px; }
   .statusBadge{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
     border-radius:4px; padding:2px 8px; white-space:nowrap; display:inline-block; }
   .statusBadge.Active{ background:#e6f4ea; color:#187b46; }
@@ -980,7 +985,7 @@
       var docHtml = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '—';
       var customerCell = isSupplierUser ? '' : '<td>' + escapeHtml(p.customer || '—') + '</td>';
       return '<tr>' +
-        '<td class="partNumber">' + escapeHtml(p.partNumber) + '</td>' +
+        '<td class="partNumber"><button type="button" class="liveNumber" data-edit="' + escapeHtml(p.id) + '">' + escapeHtml(p.partNumber) + '</button></td>' +
         '<td>' + escapeHtml(p.name) + '</td>' +
         '<td>' + escapeHtml(p.customerPartNumber) + '</td>' +
         '<td>' + escapeHtml(p.revision) + '</td>' +
@@ -989,7 +994,6 @@
         '<td class="supplierList">' + suppliersText + '</td>' +
         '<td class="docCell">' + docHtml + '</td>' +
         '<td><div class="rowActions">' +
-          '<button type="button" class="editBtn" data-edit="' + escapeHtml(p.id) + '">Edit</button>' +
           '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(p.id) + '">Delete</button>' +
         '</div></td>' +
         '</tr>';

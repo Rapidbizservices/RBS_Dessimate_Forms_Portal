@@ -92,6 +92,11 @@
   table.poTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
   table.poTable tr:last-child td{ border-bottom:none; }
   .poNumber{ font-weight:700; }
+  .liveNumber{ font-family:inherit; font-size:inherit; font-weight:inherit;
+    color:var(--brand); background:none; border:none; padding:0; cursor:pointer;
+    text-decoration:underline; text-underline-offset:2px; }
+  .liveNumber:hover{ text-decoration:underline; }
+  .liveNumber:focus-visible{ outline:2px solid var(--brand); outline-offset:2px; }
   .shipmentPill{ display:inline-block; font-size:11.5px; font-weight:700; color:var(--brand);
     background:#eef1fa; border-radius:5px; padding:3px 8px; font-variant-numeric:tabular-nums; }
   a.shipmentPill{ text-decoration:none; }
@@ -1050,7 +1055,9 @@
       var attCount = (po.attachments || []).length;
       var attCell = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '<span style="color:var(--label);">—</span>';
       return '<tr' + (po.poNumber ? ' data-ponum="' + escapeHtml(po.poNumber) + '"' : '') + '>' +
-        '<td class="poNumber">' + escapeHtml(po.poNumber) + '</td>' +
+        '<td class="poNumber">' + (canManageRecords()
+          ? '<button type="button" class="liveNumber" data-edit="' + escapeHtml(po.id) + '">' + escapeHtml(po.poNumber) + '</button>'
+          : '<button type="button" class="liveNumber" data-view="' + escapeHtml(po.id) + '">' + escapeHtml(po.poNumber) + '</button>') + '</td>' +
         '<td>' + shipmentCell + '</td>' +
         '<td>' + escapeHtml(po.supplier) + '</td>' +
         '<td>' + customerPoCell + '</td>' +
@@ -1061,8 +1068,7 @@
         '<td><button type="button" class="pdfBtn" data-pdf="' + escapeHtml(po.id) + '">View PDF</button></td>' +
         '<td class="docCell">' + attCell + '</td>' +
         '<td><div class="rowActions">' + (canManageRecords()
-          ? '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
-            '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>'
+          ? '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>'
           : '<button type="button" class="editBtn" data-view="' + escapeHtml(po.id) + '">View</button>'
         ) + '</div></td>' +
         '</tr>';

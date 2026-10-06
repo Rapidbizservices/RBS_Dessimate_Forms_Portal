@@ -92,6 +92,11 @@
   table.poTable td{ padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
   table.poTable tr:last-child td{ border-bottom:none; }
   .poNumber{ font-weight:700; }
+  .liveNumber{ font-family:inherit; font-size:inherit; font-weight:inherit;
+    color:var(--brand); background:none; border:none; padding:0; cursor:pointer;
+    text-decoration:underline; text-underline-offset:2px; }
+  .liveNumber:hover{ text-decoration:underline; }
+  .liveNumber:focus-visible{ outline:2px solid var(--brand); outline-offset:2px; }
   tr.xrefHighlight td{ background:#fff7d6 !important; }
   .rowActions{ display:flex; gap:8px; white-space:nowrap; }
   .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
@@ -859,15 +864,16 @@
       var attCount = (po.attachments || []).length;
       var docHtml = attCount ? '<span class="have">' + attCount + (attCount === 1 ? ' file' : ' files') + '</span>' : '—';
       return '<tr' + (po.poNumber ? ' data-ponum="' + escapeHtml(po.poNumber) + '"' : '') + '>' +
-        '<td class="poNumber">' + escapeHtml(po.poNumber) + '</td>' +
+        '<td class="poNumber">' + (canManageRecords()
+          ? '<button type="button" class="liveNumber" data-edit="' + escapeHtml(po.id) + '">' + escapeHtml(po.poNumber) + '</button>'
+          : '<button type="button" class="liveNumber" data-view="' + escapeHtml(po.id) + '">' + escapeHtml(po.poNumber) + '</button>') + '</td>' +
         '<td>' + escapeHtml(po.customer) + '</td>' +
         '<td>' + escapeHtml(fmtDateMDY(po.poDate)) + '</td>' +
         '<td>' + (po.lines ? po.lines.length : 0) + '</td>' +
         '<td class="moneyCell">' + escapeHtml(po.currency || '') + ' ' + money(po.poTotal) + '</td>' +
         '<td class="docCell">' + docHtml + '</td>' +
         '<td><div class="rowActions">' + (canManageRecords()
-          ? '<button type="button" class="editBtn" data-edit="' + escapeHtml(po.id) + '">Edit</button>' +
-            '<button type="button" class="editBtn" data-make-supplier-po="' + escapeHtml(po.id) + '" title="Start a Dessimate PO to a Supplier with this PO\'s parts, quantities, delivery dates and ship-to filled in">Create Supplier PO</button>' +
+          ? '<button type="button" class="editBtn" data-make-supplier-po="' + escapeHtml(po.id) + '" title="Start a Dessimate PO to a Supplier with this PO\'s parts, quantities, delivery dates and ship-to filled in">Create Supplier PO</button>' +
             '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(po.id) + '">Delete</button>'
           : '<button type="button" class="editBtn" data-view="' + escapeHtml(po.id) + '">View</button>'
         ) + '</div></td>' +
