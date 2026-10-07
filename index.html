@@ -56,6 +56,28 @@
   .sideBrand .name{ font-size:14.5px; font-weight:800; color:#fff; letter-spacing:.01em; line-height:1.2; }
   .sideBrand .tag{ font-size:10.5px; color:var(--side-text-dim); margin-top:2px; letter-spacing:.02em; }
 
+  /* Customer-only pin: hidden for every other access level. */
+  .pinSidebarBtn{
+    display:none; align-items:center; justify-content:center; gap:6px;
+    width:calc(100% - 24px); margin:0 12px 10px;
+    font-family:inherit; font-size:12px; font-weight:700; color:var(--side-text);
+    background:var(--side-bg-raised); border:1px solid var(--side-line); border-radius:7px;
+    padding:7px 10px; cursor:pointer;
+  }
+  body.dscm-customer .pinSidebarBtn{ display:flex; }
+  .pinSidebarBtn:hover{ background:#1c3160; color:#fff; }
+  .pinSidebarBtn[aria-pressed="true"]{
+    color:#fff; background:var(--brand); border-color:rgba(255,255,255,.18);
+  }
+  .pinSidebarBtn:focus-visible{ outline:2px solid #fff; outline-offset:2px; }
+
+  /* Pinned = docked column so the overlay no longer covers the module. */
+  body.dscm-nav-pinned .sidebar{
+    position:relative; transform:none; box-shadow:none; z-index:auto;
+  }
+  body.dscm-nav-pinned .sideScrim{ display:none !important; }
+  body.dscm-nav-pinned .hamburgerBtn{ display:none; }
+
   .installAppBtn{
     display:flex; align-items:center; gap:9px; width:calc(100% - 24px); margin:2px 12px 10px;
     font-family:inherit; font-size:13px; font-weight:700; color:#fff;
@@ -156,6 +178,8 @@
         <div class="tag">Dessimate Supply Chain</div>
       </div>
     </div>
+
+    <button type="button" class="pinSidebarBtn" id="pinSidebarBtn" aria-label="Pin sidebar" aria-pressed="false">Pin sidebar</button>
 
     <button type="button" class="installAppBtn" id="installAppBtn" style="display:none;">
       <span class="installAppIcon">&#11123;</span>
@@ -354,6 +378,8 @@
   // Worker; it must match the value used in every other HTML file.
   var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
+  var NAV_PIN_STORAGE_KEY = 'dscm_nav_pinned';
+  var currentAccessLevel = '';
   // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
   // worker/README.md) instead of hand-typed here - this fills it in once
   // fetched, leaving the hardcoded text above as the offline fallback.
@@ -1050,6 +1076,9 @@
     document.getElementById('welcomeState').style.display = 'flex';
     document.getElementById('openTabLink').style.display = 'none';
     document.getElementById('mTitle').textContent = 'Welcome';
+    currentAccessLevel = '';
+    syncNavPinUi();
+    closeSidebar();
     requireAuthThen(resolveAccessAndRenderNav);
   });
   // -------------------------------------------------------------------------
@@ -1167,7 +1196,7 @@
     document.querySelectorAll('.sideItem').forEach(function(el){
       el.classList.toggle('active', el.getAttribute('data-href') === href);
     });
-    closeSidebar();
+    if (!isCustomerNavPinned()) closeSidebar();
     try { sessionStorage.setItem('dscm_last_module', href); } catch (e) {}
   }
 
@@ -1222,6 +1251,8 @@
         }
       } catch (e) { console.error('Could not resolve access level', e); }
     }
+    currentAccessLevel = accessLevel;
+    syncNavPinUi();
     renderNav(accessLevel);
   }
   // -------------------------------------------------------------------------
@@ -1229,16 +1260,64 @@
   // ---- Sidebar drawer -------------------------------------------------
   // Hidden by default at all screen widths - opened on demand via the
   // hamburger button, closed via the scrim or after picking a module.
+  // Customer accounts can pin the drawer so it stays docked (no auto-hide
+  // on navigate / click-away). Other access levels keep the overlay as-is
+  // and ignore any leftover localStorage pin flag.
+  function isCustomerAccess(){
+    return currentAccessLevel === 'customer';
+  }
+  function readNavPinned(){
+    try { return localStorage.getItem(NAV_PIN_STORAGE_KEY) === '1'; } catch (e) { return false; }
+  }
+  function writeNavPinned(pinned){
+    try {
+      if (pinned) localStorage.setItem(NAV_PIN_STORAGE_KEY, '1');
+      else localStorage.setItem(NAV_PIN_STORAGE_KEY, '0');
+    } catch (e) {}
+  }
+  function isCustomerNavPinned(){
+    return isCustomerAccess() && readNavPinned();
+  }
+  function syncNavPinUi(){
+    var pinned = isCustomerNavPinned();
+    var isCustomer = isCustomerAccess();
+    var btn = document.getElementById('pinSidebarBtn');
+    var sidebar = document.getElementById('sidebar');
+    var scrim = document.getElementById('sideScrim');
+    document.body.classList.toggle('dscm-customer', isCustomer);
+    document.body.classList.toggle('dscm-nav-pinned', pinned);
+    if (btn) {
+      btn.setAttribute('aria-pressed', pinned ? 'true' : 'false');
+      btn.setAttribute('aria-label', pinned ? 'Unpin sidebar' : 'Pin sidebar');
+      btn.textContent = pinned ? 'Unpin sidebar' : 'Pin sidebar';
+    }
+    if (pinned) {
+      sidebar.classList.add('open');
+      scrim.classList.remove('open');
+    } else if (!isCustomer) {
+      sidebar.classList.remove('open');
+      scrim.classList.remove('open');
+    } else if (sidebar.classList.contains('open')) {
+      scrim.classList.add('open');
+    }
+  }
+
   function openSidebar(){
     document.getElementById('sidebar').classList.add('open');
-    document.getElementById('sideScrim').classList.add('open');
+    if (!isCustomerNavPinned()) document.getElementById('sideScrim').classList.add('open');
   }
   function closeSidebar(){
+    if (isCustomerNavPinned()) return;
     document.getElementById('sidebar').classList.remove('open');
     document.getElementById('sideScrim').classList.remove('open');
   }
   document.getElementById('hamburgerBtn').addEventListener('click', openSidebar);
   document.getElementById('sideScrim').addEventListener('click', closeSidebar);
+  document.getElementById('pinSidebarBtn').addEventListener('click', function(){
+    if (!isCustomerAccess()) return;
+    writeNavPinned(!readNavPinned());
+    syncNavPinUi();
+  });
   // -------------------------------------------------------------------------
 
   // ---- Install as desktop app ------------------------------------------
