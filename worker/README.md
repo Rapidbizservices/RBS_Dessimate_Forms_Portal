@@ -947,6 +947,19 @@ Parts directories, so add the organization or part there first if it's
 missing. Choosing a Part Number auto-fills its Description, which you can
 still edit by hand.
 
+**Title** - an optional short description (up to 150 characters, same
+`cleanTitle` helper as RFQ) so a PO or invoice can be recognized by more
+than its number. Shown as its own sortable column immediately after the
+number in every list (staff, Supplier, and Customer/view-only), in the
+Add/Edit form just below the number, and in the modal heading when a
+record is open. Older records with no title show "—". The worker only
+writes `title` when the request includes it, so a save from a page that
+predates the field can't blank one that's already set. Customer POs are
+staff + that Customer (Suppliers never see this list); Dessimate PO title
+is visible to the Supplier that PO is issued to; Dessimate Invoice title
+is visible to the billed Customer once submitted; Supplier Invoice title
+is visible to that Supplier.
+
 ### Automatic numbering (Dessimate PO / Dessimate Invoice)
 
 A single counters file, `data/counters.json`, tracks three sequences so
@@ -1589,7 +1602,7 @@ column in the list, in the Edit modal's heading, and in a Supplier's quote
 window. Suppliers the RFQ is shared with see it, so keep customer names
 out of it. Customer RFQ has the same field (seen by the Customers it's
 shared with). Both modules only write `title` when the request includes it
-(`cleanRfqTitle`), so a save from a page that predates the field can't
+(`cleanTitle`), so a save from a page that predates the field can't
 blank a title that's already set. RFQs created before this have no title
 and show "—" until someone adds one.
 

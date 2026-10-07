@@ -4345,6 +4345,17 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
 const CUSTOMER_POS_FILE_PATH = 'data/customer_pos.json';
 const CUSTOMER_PO_DOC_FOLDER = 'customer_po_docs';
 
+// Optional short label so users can tell POs, invoices, and RFQs apart by
+// more than their number. Shared by RFQ, Customer RFQ, Customer PO,
+// Dessimate PO, Dessimate Invoice, and Supplier Invoice. Kept out of the
+// per-module validate*Fields and only written when the request actually
+// sends `title`, so a save from a page that predates the field can't blank
+// one that's already set.
+const TITLE_MAX = 150;
+function cleanTitle(v) {
+  return (v === undefined || v === null ? '' : String(v)).replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX);
+}
+
 // Used by isContentsPathAllowedForExternal to gate a Customer's raw
 // /contents/ access to their own Customer PO's attachments - returns the
 // org name on file, or null if the PO doesn't exist (treated as "not
@@ -4384,6 +4395,7 @@ function sanitizeCustomerPo(o) {
   return {
     id: o.id,
     poNumber: o.poNumber || '',
+    title: o.title || '',
     poDate: o.poDate || '',
     customer: o.customer || '',
     buyerName: o.buyerName || '',
@@ -4444,7 +4456,7 @@ async function handleCreateCustomerPo(request, env, origin) {
   const fields = validateCustomerPoFields(body, origin);
   if (fields.error) return fields.error;
 
-  const newPo = Object.assign({ id: cryptoRandomId(), createdAt: new Date().toISOString(), attachments: sanitizeOrgDocList(body.attachments) }, fields);
+  const newPo = Object.assign({ id: cryptoRandomId(), createdAt: new Date().toISOString(), title: cleanTitle(body.title), attachments: sanitizeOrgDocList(body.attachments) }, fields);
 
   const result = await mutateJsonArrayFile(env, CUSTOMER_POS_FILE_PATH, function (items) {
     items.push(newPo);
@@ -4465,6 +4477,7 @@ async function handleUpdateCustomerPo(request, env, origin, id) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
     Object.assign(target, fields);
+    if (body.title !== undefined) target.title = cleanTitle(body.title);
     if (body.attachments !== undefined) {
       target.attachments = sanitizeOrgDocList(body.attachments);
       // A record moving from the old single-sourcePdf shape to the new
@@ -4669,6 +4682,7 @@ function sanitizeDessimatePo(o) {
   return {
     id: o.id,
     poNumber: o.poNumber,
+    title: o.title || '',
     shipmentNumber: o.shipmentNumber || '',
     poDate: o.poDate || '',
     supplier: o.supplier || '',
@@ -4816,7 +4830,7 @@ async function handleCreateDessimatePo(request, env, origin) {
 
   const numbers = await reserveDessimatePoNumbers(env, clientPoNumber, clientShipmentNumber);
   const newPo = Object.assign(
-    { id: cryptoRandomId(), createdAt: new Date().toISOString(), poNumber: numbers.poNumber, shipmentNumber: numbers.shipmentNumber, attachments: sanitizeDessimatePoAttachments(body.attachments) },
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), poNumber: numbers.poNumber, shipmentNumber: numbers.shipmentNumber, title: cleanTitle(body.title), attachments: sanitizeDessimatePoAttachments(body.attachments) },
     fields
   );
 
@@ -4840,6 +4854,7 @@ async function handleUpdateDessimatePo(request, env, origin, id) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
     Object.assign(target, fields); // poNumber/shipmentNumber are never in `fields` - immutable once assigned
+    if (body.title !== undefined) target.title = cleanTitle(body.title);
     if (body.attachments !== undefined) target.attachments = sanitizeDessimatePoAttachments(body.attachments);
     syncRelatedPoLinks(items, id, fields.relatedPoIds);
     saved = target;
@@ -5506,16 +5521,6 @@ async function handleListRfqs(env, origin, accessLevel, organization) {
   return json({ rfqs: rfqs, serverNow: new Date().toISOString() }, 200, origin);
 }
 
-// A short label so users can tell RFQs apart by more than their number
-// (shared by the Dessimate and Customer RFQ modules). Optional, like every
-// other RFQ field. Kept out of validateRfqFields/validateCustomerRfqFields
-// and only written when the request actually sends `title`, so a save from
-// a page that predates the field can't blank one that's already set.
-const RFQ_TITLE_MAX = 150;
-function cleanRfqTitle(v) {
-  return (v === undefined || v === null ? '' : String(v)).replace(/\s+/g, ' ').trim().slice(0, RFQ_TITLE_MAX);
-}
-
 // Nothing is required to save an RFQ - "there are no part numbers when RFQ
 // number is created" (product brief). A line is kept if either of its two
 // fields has content (not just Part Number), so a user filling the form out
@@ -5554,7 +5559,7 @@ async function handleCreateRfq(request, env, origin) {
   }
   const rfqNumber = await reserveRfqNumber(env, clientRfqNumber);
   const newRfq = Object.assign(
-    { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, title: cleanRfqTitle(body.title), dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments), supplierQuotes: {} },
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, title: cleanTitle(body.title), dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments), supplierQuotes: {} },
     fields
   );
   newRfq.quoteDueAt = cleanDueAt(body.quoteDueAt);
@@ -5599,7 +5604,7 @@ async function handleUpdateRfq(request, env, origin, id) {
     prevShared.forEach(function (org) { prevDueByOrg[org] = rfqDueAtFor(before, org); });
     Object.assign(target, fields); // supplierQuotes is never in `fields` - a team_member's edit never touches it
     if (newRfqNumber !== undefined) target.rfqNumber = newRfqNumber;
-    if (body.title !== undefined) target.title = cleanRfqTitle(body.title);
+    if (body.title !== undefined) target.title = cleanTitle(body.title);
     // Same only-when-sent rule as title, so a page that predates due dates
     // can't clear them. Extensions for a Supplier no longer shared with are
     // dropped.
@@ -6041,7 +6046,7 @@ async function handleCreateCustomerRfq(request, env, origin) {
   }
   const rfqNumber = await reserveCustomerRfqNumber(env, clientRfqNumber);
   const newRfq = Object.assign(
-    { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, title: cleanRfqTitle(body.title), dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments) },
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, title: cleanTitle(body.title), dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments) },
     fields
   );
   newRfq.quoteDueAt = cleanDueAt(body.quoteDueAt);
@@ -6081,7 +6086,7 @@ async function handleUpdateCustomerRfq(request, env, origin, id) {
     prevShared.forEach(function (org) { prevDueByOrg[org] = customerRfqDueAtFor(before, org); });
     Object.assign(target, fields); // dessimateQuote is never in `fields` - a team_member's edit never touches it
     if (newRfqNumber !== undefined) target.rfqNumber = newRfqNumber;
-    if (body.title !== undefined) target.title = cleanRfqTitle(body.title);
+    if (body.title !== undefined) target.title = cleanTitle(body.title);
     if (body.quoteDueAt !== undefined) target.quoteDueAt = cleanDueAt(body.quoteDueAt);
     target.customerDueAt = cleanSupplierDueAt(body.customerDueAt !== undefined ? body.customerDueAt : target.customerDueAt, target.sharedWithCustomers);
     if (body.dessimateAttachments !== undefined) target.dessimateAttachments = sanitizeOrgDocList(body.dessimateAttachments);
@@ -9187,6 +9192,7 @@ function sanitizeSupplierInvoice(o) {
   return {
     id: o.id,
     invoiceNumber: o.invoiceNumber || '',
+    title: o.title || '',
     invoiceDate: o.invoiceDate || '',
     dueDate: o.dueDate || '',
     supplier: o.supplier || '',
@@ -9243,7 +9249,7 @@ async function handleCreateSupplierInvoice(request, env, origin) {
   const fields = validateSupplierInvoiceFields(body, origin);
   if (fields.error) return fields.error;
 
-  const newInv = Object.assign({ id: cryptoRandomId(), createdAt: new Date().toISOString(), sourcePdf: sanitizeOrgDoc(body.sourcePdf) }, fields);
+  const newInv = Object.assign({ id: cryptoRandomId(), createdAt: new Date().toISOString(), title: cleanTitle(body.title), sourcePdf: sanitizeOrgDoc(body.sourcePdf) }, fields);
 
   const result = await mutateJsonArrayFile(env, SUPPLIER_INVOICES_FILE_PATH, function (items) {
     items.push(newInv);
@@ -9264,6 +9270,7 @@ async function handleUpdateSupplierInvoice(request, env, origin, id) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
     Object.assign(target, fields);
+    if (body.title !== undefined) target.title = cleanTitle(body.title);
     if (body.sourcePdf !== undefined) target.sourcePdf = sanitizeOrgDoc(body.sourcePdf);
     saved = target;
     return { items: items };
@@ -9414,6 +9421,7 @@ function sanitizeDessimateInvoice(o) {
   return {
     id: o.id,
     invoiceNumber: o.invoiceNumber,
+    title: o.title || '',
     invoiceDate: o.invoiceDate || '',
     customer: o.customer || '',
     customerPoRef: customerPoRefs[0] || '', // kept for any old client still reading the singular field
@@ -9515,7 +9523,7 @@ async function handleCreateDessimateInvoice(request, env, origin) {
   }
   const invoiceNumber = await reserveDessimateInvoiceNumber(env, clientInvoiceNumber);
   const newInv = Object.assign(
-    { id: cryptoRandomId(), createdAt: new Date().toISOString(), invoiceNumber: invoiceNumber, deleted: false, deletedAt: null },
+    { id: cryptoRandomId(), createdAt: new Date().toISOString(), invoiceNumber: invoiceNumber, title: cleanTitle(body.title), deleted: false, deletedAt: null },
     fields
   );
 
@@ -9555,6 +9563,7 @@ async function handleUpdateDessimateInvoice(request, env, origin, id) {
     if (!target) return null;
     Object.assign(target, fields);
     if (newInvoiceNumber !== undefined) target.invoiceNumber = newInvoiceNumber;
+    if (body.title !== undefined) target.title = cleanTitle(body.title);
     saved = target;
     return { items: items };
   }, { requireFound: true });
