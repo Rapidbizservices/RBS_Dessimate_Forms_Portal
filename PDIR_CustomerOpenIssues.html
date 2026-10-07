@@ -1061,7 +1061,36 @@
 
   // ---- List table --------------------------------------------------------------
   var lastIssues = [];
-  var issueSortState = { key: null, dir: 1 };
+  // Default (and post-filter) order is always Priority A, then B, then C,
+  // then blank/none/unprioritized. Issue number is the stable secondary
+  // within the same priority. Column-header clicks still override for the
+  // rest of this visit; clicking Priority uses A-B-C (not alpha) with
+  // unprioritized last in both directions.
+  function openIssuePriorityRank(priority){
+    var p = String(priority || '').trim().toUpperCase();
+    if (p === 'A') return 0;
+    if (p === 'B') return 1;
+    if (p === 'C') return 2;
+    return 3;
+  }
+  function compareOpenIssueNumbers(a, b){
+    return String(a.issueNumber || '').localeCompare(String(b.issueNumber || ''), undefined, { numeric: true });
+  }
+  function sortOpenIssuesByPriority(issues){
+    return issues.slice().sort(function(a, b){
+      var d = openIssuePriorityRank(a.priority) - openIssuePriorityRank(b.priority);
+      if (d) return d;
+      return compareOpenIssueNumbers(a, b);
+    });
+  }
+  function issueSortValue(issue, key){
+    if (key === 'priority') {
+      var p = String(issue.priority || '').trim().toUpperCase();
+      return (p === 'A' || p === 'B' || p === 'C') ? p : '';
+    }
+    return issue[key];
+  }
+  var issueSortState = { key: 'priority', dir: 1 };
   window.SortableTable.makeSortableHeaders(document.getElementById('issueTableHead'), issueSortState, renderTable);
 
   // ---- Filter by Part Number (multi-select) - persists across navigation
@@ -1338,8 +1367,8 @@
     }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var defaultOrder = filteredIssues.slice().sort(function(a, b){ return String(a.issueNumber || '').localeCompare(String(b.issueNumber || ''), undefined, { numeric: true }); });
-    var sorted = window.SortableTable.sortItems(defaultOrder, issueSortState, function(issue, key){ return issue[key]; });
+    var defaultOrder = sortOpenIssuesByPriority(filteredIssues);
+    var sorted = window.SortableTable.sortItems(defaultOrder, issueSortState, issueSortValue);
     window.SortableTable.updateSortIndicators(document.getElementById('issueTableHead'), issueSortState);
 
     bodyEl.innerHTML = sorted.map(function(issue){
@@ -2201,9 +2230,7 @@
     var originalText = btn.textContent;
     btn.disabled = true; btn.textContent = 'Preparing…';
     try {
-      var exportIssues = getFilteredIssues().slice().sort(function(a, b){
-        return String(a.issueNumber || '').localeCompare(String(b.issueNumber || ''), undefined, { numeric: true });
-      });
+      var exportIssues = sortOpenIssuesByPriority(getFilteredIssues());
       var bytes = await buildOpenIssuesXlsxBytes(exportIssues);
       var blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       var url = URL.createObjectURL(blob);
