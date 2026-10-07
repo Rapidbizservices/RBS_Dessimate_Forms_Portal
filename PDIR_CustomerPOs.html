@@ -97,6 +97,7 @@
     text-decoration:underline; text-underline-offset:2px; }
   .liveNumber:hover{ text-decoration:underline; }
   .liveNumber:focus-visible{ outline:2px solid var(--brand); outline-offset:2px; }
+  .rfqTitle{ max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   tr.xrefHighlight td{ background:#fff7d6 !important; }
   .rowActions{ display:flex; gap:8px; white-space:nowrap; }
   .rowActions button{ font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
@@ -267,6 +268,7 @@
       <thead id="poTableHead">
         <tr>
           <th data-sort-key="poNumber">PO Number</th>
+          <th data-sort-key="title">Title</th>
           <th data-sort-key="customer">Customer</th>
           <th data-sort-key="poDate">PO Date</th>
           <th data-sort-key="lineCount">Lines</th>
@@ -317,6 +319,9 @@
           <select id="f_customer" required></select>
         </label>
       </div>
+      <label for="f_title">Title <span style="font-weight:400;">(a short description so this PO is easy to recognize in the list)</span>
+        <input type="text" id="f_title" maxlength="150" placeholder="e.g. Aluminum housings - 2027 program">
+      </label>
       <div class="modalGrid3">
         <label>Buyer Name
           <input type="text" id="f_buyerName">
@@ -713,6 +718,14 @@
       return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
     });
   }
+  function titleCell(rec){
+    return rec.title
+      ? '<td class="rfqTitle" title="' + escapeHtml(rec.title) + '">' + escapeHtml(rec.title) + '</td>'
+      : '<td><span style="color:var(--label);">—</span></td>';
+  }
+  function titleHeadingSuffix(rec){
+    return rec && rec.title ? ' — ' + rec.title : '';
+  }
   // Display-only date formatting (MM/DD/YYYY, site-wide standard) - never
   // changes what's actually stored. Handles a plain "YYYY-MM-DD" (from an
   // <input type="date">) without going through a Date object at all, to
@@ -867,6 +880,7 @@
         '<td class="poNumber">' + (canManageRecords()
           ? '<button type="button" class="liveNumber" data-edit="' + escapeHtml(po.id) + '">' + escapeHtml(po.poNumber) + '</button>'
           : '<button type="button" class="liveNumber" data-view="' + escapeHtml(po.id) + '">' + escapeHtml(po.poNumber) + '</button>') + '</td>' +
+        titleCell(po) +
         '<td>' + escapeHtml(po.customer) + '</td>' +
         '<td>' + escapeHtml(fmtDateMDY(po.poDate)) + '</td>' +
         '<td>' + (po.lines ? po.lines.length : 0) + '</td>' +
@@ -1109,9 +1123,10 @@
         qtyOrdered: l.qtyOrdered, unitPrice: l.unitPrice, promisedDeliveryDate: l.promisedDeliveryDate };
     }) : [newLineRow()];
     renderAttachmentsList();
-    document.getElementById('modalTitle').textContent = 'Edit Customer PO';
+    document.getElementById('modalTitle').textContent = 'Edit Customer PO ' + (po.poNumber || '') + titleHeadingSuffix(po);
     document.getElementById('modalSub').textContent = 'Update this Customer PO\'s details.';
     document.getElementById('f_poNumber').value = po.poNumber || '';
+    document.getElementById('f_title').value = po.title || '';
     document.getElementById('f_poDate').value = po.poDate || '';
     document.getElementById('f_customer').innerHTML = customerOrgOptions(po.customer || '');
     document.getElementById('f_buyerName').value = po.buyerName || '';
@@ -1144,7 +1159,8 @@
   }
   function openViewModal(id){
     openEditModal(id);
-    document.getElementById('modalTitle').textContent = 'View Customer PO';
+    var po = lastPos.find(function(x){ return x.id === id; });
+    document.getElementById('modalTitle').textContent = 'View Customer PO ' + ((po && po.poNumber) || '') + titleHeadingSuffix(po);
     document.getElementById('modalSub').textContent = 'Read-only — contact your Dessimate contact for any changes.';
     applyModalReadOnlyMode(true);
   }
@@ -1165,6 +1181,7 @@
 
     var baseFields = {
       poNumber: document.getElementById('f_poNumber').value.trim(),
+      title: document.getElementById('f_title').value.trim(),
       poDate: document.getElementById('f_poDate').value,
       customer: document.getElementById('f_customer').value,
       buyerName: document.getElementById('f_buyerName').value.trim(),

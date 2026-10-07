@@ -97,6 +97,7 @@
     text-decoration:underline; text-underline-offset:2px; }
   .liveNumber:hover{ text-decoration:underline; }
   .liveNumber:focus-visible{ outline:2px solid var(--brand); outline-offset:2px; }
+  .rfqTitle{ max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .xrefLink{ color:var(--brand); font-weight:600; text-decoration:none; }
   .xrefLink:hover{ text-decoration:underline; }
   .statusPill{ display:inline-block; font-size:11.5px; font-weight:700; border-radius:5px; padding:3px 9px; }
@@ -245,6 +246,7 @@
       <thead id="invTableHead">
         <tr>
           <th data-sort-key="invoiceNumber">Invoice #</th>
+          <th data-sort-key="title">Title</th>
           <th data-sort-key="supplier">Supplier</th>
           <th data-sort-key="dessimatePoRef">Dessimate PO</th>
           <th data-sort-key="invoiceDate">Invoice Date</th>
@@ -297,6 +299,9 @@
           <input type="date" id="f_dueDate">
         </label>
       </div>
+      <label for="f_title">Title <span style="font-weight:400;">(a short description so this invoice is easy to recognize in the list)</span>
+        <input type="text" id="f_title" maxlength="150" placeholder="e.g. Aluminum housings - 2027 program">
+      </label>
       <div class="modalGrid3">
         <label>Supplier
           <select id="f_supplier" required></select>
@@ -666,6 +671,14 @@
       return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
     });
   }
+  function titleCell(rec){
+    return rec.title
+      ? '<td class="rfqTitle" title="' + escapeHtml(rec.title) + '">' + escapeHtml(rec.title) + '</td>'
+      : '<td><span style="color:var(--label);">—</span></td>';
+  }
+  function titleHeadingSuffix(rec){
+    return rec && rec.title ? ' — ' + rec.title : '';
+  }
   // Display-only date formatting (MM/DD/YYYY, site-wide standard) - never
   // changes what's actually stored. Handles a plain "YYYY-MM-DD" (from an
   // <input type="date">) without going through a Date object at all, to
@@ -796,6 +809,7 @@
         : '<span style="color:var(--label);">—</span>';
       return '<tr>' +
         '<td class="poNumber"><button type="button" class="liveNumber" data-edit="' + escapeHtml(inv.id) + '">' + escapeHtml(inv.invoiceNumber) + '</button></td>' +
+        titleCell(inv) +
         '<td>' + escapeHtml(inv.supplier) + '</td>' +
         '<td>' + poRefCell + '</td>' +
         '<td>' + escapeHtml(fmtDateMDY(inv.invoiceDate)) + '</td>' +
@@ -992,9 +1006,10 @@
       return { partNumber: l.partNumber, description: l.description, uom: l.uom, qtyInvoiced: l.qtyInvoiced, unitPrice: l.unitPrice };
     }) : [newLineRow()];
     renderSourcePdfRow();
-    document.getElementById('modalTitle').textContent = 'Edit Supplier Invoice';
+    document.getElementById('modalTitle').textContent = 'Edit Supplier Invoice ' + (inv.invoiceNumber || '') + titleHeadingSuffix(inv);
     document.getElementById('modalSub').textContent = 'Update this Supplier Invoice\'s details.';
     document.getElementById('f_invoiceNumber').value = inv.invoiceNumber || '';
+    document.getElementById('f_title').value = inv.title || '';
     document.getElementById('f_invoiceDate').value = inv.invoiceDate || '';
     document.getElementById('f_dueDate').value = inv.dueDate || '';
     document.getElementById('f_supplier').innerHTML = supplierOrgOptions(inv.supplier || '');
@@ -1022,6 +1037,7 @@
 
     var baseFields = {
       invoiceNumber: document.getElementById('f_invoiceNumber').value.trim(),
+      title: document.getElementById('f_title').value.trim(),
       invoiceDate: document.getElementById('f_invoiceDate').value,
       dueDate: document.getElementById('f_dueDate').value,
       supplier: document.getElementById('f_supplier').value,
