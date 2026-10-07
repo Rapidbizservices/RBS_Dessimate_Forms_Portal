@@ -870,7 +870,7 @@
 
   // ---- Directory table --------------------------------------------------------
   var lastUsers = [];
-  var userSortState = { key: null, dir: 1 };
+  var userSortState = { key: 'userNumber', dir: 1 };
   var selectedOrgFilter = '';
   window.SortableTable.makeSortableHeaders(document.getElementById('userTableHead'), userSortState, renderTable);
   var ACCESS_LEVEL_LABELS = {
@@ -974,9 +974,9 @@
     tableEl.style.display = 'table';
 
     var defaultOrder = filtered.slice().sort(function(a, b){
-      var an = (a.name || a.username || a.organization || '').toLowerCase();
-      var bn = (b.name || b.username || b.organization || '').toLowerCase();
-      return an.localeCompare(bn);
+      var an = (typeof a.userNumber === 'number' ? a.userNumber : Infinity);
+      var bn = (typeof b.userNumber === 'number' ? b.userNumber : Infinity);
+      return an - bn;
     });
     var sorted = window.SortableTable.sortItems(defaultOrder, userSortState, function(u, key){
       if (key === 'displayName') return (u.name || u.username || u.organization || '');
