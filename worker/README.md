@@ -880,7 +880,10 @@ index response is true only for that tagged-org case.
 
 Suppliers can **create** a new PDIR (Portal **Create a PDIR**, or a blank
 Form Filler) only when **nothing** exists under that title: no index row,
-no draft, no PDF, and no files under `pdir_docs/<title>/`. The new record
+no draft, no PDF, and no files under `pdir_docs/<title>/`. That check
+ignores upper/lower case, the same way the index matches titles - so "abc"
+can't be created while a storage-only "ABC" exists, which would otherwise
+tag an index row that also matches "ABC". The new record
 is tagged to **their** org and a **part they supply**. The draft is written
 first (that creates the index tag); PDF and supporting files are refused
 until that draft exists, so a file PUT cannot skip the visibility check.

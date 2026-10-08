@@ -4248,14 +4248,42 @@ async function inspectPdirTitle(env, title) {
   const pdfHead = await env.FILES.head('pdirs/' + title + '.pdf');
   const docsListing = await env.FILES.list({ prefix: 'pdir_docs/' + title + '/', limit: 1 });
   const hasDocs = !!(docsListing.objects && docsListing.objects.length);
+  let exists = !!(entry || draftHead || pdfHead || hasDocs);
+  // The index matches titles case-insensitively but R2 keys are exact, so
+  // "abc" must not count as brand-new while a storage-only "ABC" exists -
+  // creating it would tag an index row that resolvePdirIndexEntry("ABC")
+  // then matches, handing the creator the other PDIR. Only checked when
+  // the exact lookups found nothing, so ordinary saves skip the listing.
+  const caseCollision = !exists && await pdirTitleExistsInStorageIgnoringCase(env, title);
+  if (caseCollision) exists = true;
   return {
     entry: entry,
     hasIndex: !!entry,
     hasDraft: !!draftHead,
     hasPdf: !!pdfHead,
     hasDocs: hasDocs,
-    exists: !!(entry || draftHead || pdfHead || hasDocs)
+    caseCollision: caseCollision,
+    exists: exists
   };
+}
+
+// True if any draft, finished PDF, or pdir_docs/<title>/ folder exists whose
+// title equals `title` ignoring case.
+async function pdirTitleExistsInStorageIgnoringCase(env, title) {
+  const lower = title.toLowerCase();
+  const stored = await listPdirTitlesFromStorage(env);
+  if (stored.some(function (t) { return t.toLowerCase() === lower; })) return true;
+  let cursor;
+  do {
+    const listing = await env.FILES.list({ prefix: 'pdir_docs/', delimiter: '/', limit: 1000, cursor: cursor });
+    const folders = listing.delimitedPrefixes || [];
+    for (let i = 0; i < folders.length; i++) {
+      const name = folders[i].slice('pdir_docs/'.length).replace(/\/$/, '');
+      if (name.toLowerCase() === lower) return true;
+    }
+    cursor = listing.truncated ? listing.cursor : undefined;
+  } while (cursor);
+  return false;
 }
 
 async function createSupplierOwnedPdirIndex(env, title, organization, shipmentNumber, partNumber) {
