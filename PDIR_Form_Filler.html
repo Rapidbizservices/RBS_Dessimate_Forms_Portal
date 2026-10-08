@@ -312,12 +312,12 @@
     </label>
   </div>
 
-  <div class="card">
+  <div class="card" id="dispositionCard">
     <h2>Disposition</h2>
     <div class="choices">
-      <span class="choice"><input type="checkbox" name="disposition_approved"> Approved for Shipment</span>
-      <span class="choice"><input type="checkbox" name="disposition_rework"> Rework Required</span>
-      <span class="choice"><input type="checkbox" name="disposition_hold"> Hold for Review</span>
+      <span class="choice" id="dispositionApprovedChoice"><input type="checkbox" name="disposition_approved"> Approved for Shipment</span>
+      <span class="choice" id="dispositionReworkChoice"><input type="checkbox" name="disposition_rework"> Rework Required</span>
+      <span class="choice" id="dispositionHoldChoice"><input type="checkbox" name="disposition_hold"> Hold for Review</span>
     </div>
   </div>
 
@@ -346,7 +346,7 @@
           </div>
         </label>
       </div>
-      <div class="signoff-group">
+      <div class="signoff-group" id="dessimateSignoffGroup">
         <h3>Dessimate Sign-off</h3>
         <div class="grid3 row">
           <label class="field">Prepared by
@@ -433,6 +433,14 @@
   var GH_DRAFT_FOLDER = 'pdir_drafts';
   var GH_DOC_FOLDER = 'pdir_docs';
   var SESSION_KEY = 'dessimate_session';
+  var currentAccessLevel = 'team_member';
+  var currentOrganization = '';
+  var PDIR_STAFF_FIELD_NAMES = [
+    'quality_approval_username', 'quality_approval_signature', 'quality_approval_print_name',
+    'dessimate_sign_date', 'title'
+  ];
+  var PDIR_DISPOSITION_FIELD_NAMES = ['disposition_approved', 'disposition_rework', 'disposition_hold'];
+  var supplierPdfLocked = false;
 
   function getSession(){
     try{
@@ -470,9 +478,79 @@
   // page's directory (Suppliers only — PDIRs are inspections of a supplier's
   // shipment). Must finish before any saved value is applied to the form, or
   // that value has no matching <option> yet and silently fails to select.
+  async function resolveMe(){
+    try {
+      var res = await apiFetch('me');
+      if (!res.ok) return;
+      var data = await res.json();
+      currentAccessLevel = data.accessLevel || 'team_member';
+      currentOrganization = data.organization || '';
+    } catch (e) { /* stay on defaults */ }
+  }
+  function isSupplierEditor(){ return currentAccessLevel === 'supplier'; }
+  function isCustomerViewer(){ return currentAccessLevel === 'customer'; }
+  function pdirDraftHasDessimateDecision(fields, docs){
+    fields = fields || {};
+    docs = docs || {};
+    if (fields.disposition_approved || fields.disposition_rework || fields.disposition_hold) return true;
+    if (fields.quality_approval_username || fields.quality_approval_signature || fields.quality_approval_print_name) return true;
+    if (fields.dessimate_sign_date || (fields.title && String(fields.title).trim())) return true;
+    if (docs.dessimate_stamp) return true;
+    return false;
+  }
+  function applySupplierPdfLock(fields, docs){
+    if (!isSupplierEditor()) return;
+    supplierPdfLocked = pdirDraftHasDessimateDecision(fields, docs);
+    var createBtn = document.getElementById('createBtn');
+    var status = document.getElementById('status');
+    if (supplierPdfLocked) {
+      if (createBtn) createBtn.style.display = 'none';
+      if (status) {
+        status.className = '';
+        status.textContent = 'Dessimate has already recorded a disposition or sign-off. You can save your information as a draft; only Dessimate staff can replace the finished PDF.';
+      }
+    }
+  }
+  function applyRoleChrome(){
+    var dispCard = document.getElementById('dispositionCard');
+    var dessimateGroup = document.getElementById('dessimateSignoffGroup');
+    var clearBtn = document.getElementById('clearBtn');
+    var saveBtn = document.getElementById('saveDraftBtn');
+    var createBtn = document.getElementById('createBtn');
+    if (isSupplierEditor() || isCustomerViewer()) {
+      if (dispCard) dispCard.style.display = 'none';
+      if (dessimateGroup) dessimateGroup.style.display = 'none';
+      if (clearBtn) clearBtn.style.display = 'none';
+    }
+    if (isCustomerViewer()) {
+      if (saveBtn) saveBtn.style.display = 'none';
+      if (createBtn) createBtn.style.display = 'none';
+      form.querySelectorAll('input, textarea, select').forEach(function(el){ el.disabled = true; });
+    }
+  }
+  function lockSupplierIdentityFields(){
+    if (!isSupplierEditor()) return;
+    var orgEl = document.getElementById('f_pdir_org_select');
+    var shipEl = form.querySelector('[name="shipment_number"]');
+    if (orgEl) {
+      if (currentOrganization) {
+        ensureOrgSelectHasValue(currentOrganization);
+        orgEl.value = currentOrganization;
+      }
+      orgEl.disabled = true;
+    }
+    if (shipEl) shipEl.disabled = true;
+  }
+
   async function loadOrgOptions(){
     var selectEl = document.getElementById('f_pdir_org_select');
     if (!selectEl) return;
+    if (isSupplierEditor() && currentOrganization) {
+      selectEl.innerHTML = '<option value="' + escapeHtmlLite(currentOrganization) + '">' + escapeHtmlLite(currentOrganization) + '</option>';
+      selectEl.value = currentOrganization;
+      selectEl.disabled = true;
+      return;
+    }
     try {
       var res = await apiFetch('organizations');
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1909,6 +1987,13 @@
     var fields = {};
     form.querySelectorAll('input[type="text"], textarea, select').forEach(function(el){ fields[el.name] = el.value; });
     form.querySelectorAll('input[type="checkbox"]').forEach(function(el){ fields[el.name] = el.checked; });
+    // Supplier save must not send Dessimate sign-off / approve — the worker
+    // merges and keeps those from the existing draft. Omitting them here
+    // matches "writes only when fields present in body".
+    if (isSupplierEditor()) {
+      PDIR_STAFF_FIELD_NAMES.forEach(function(k){ delete fields[k]; });
+      PDIR_DISPOSITION_FIELD_NAMES.forEach(function(k){ delete fields[k]; });
+    }
     var photos = {};
     for (var p = 1; p <= 9; p++) {
       var pd = photoData[p];
@@ -1942,6 +2027,7 @@
   async function persistDirtyDocs(title, shipmentLabel){
     for (var i = 0; i < ALL_DOC_FIELDS.length; i++) {
       var key = ALL_DOC_FIELDS[i][0], label = ALL_DOC_FIELDS[i][1];
+      if (isSupplierEditor() && key === 'dessimate_stamp') continue;
       if (DOC_FIELD_KEYS.indexOf(key) !== -1) {
         var arr = docData[key] || [];
         for (var j = 0; j < arr.length; j++) {
@@ -2059,13 +2145,25 @@
   // load that shipment's saved draft from GitHub. Otherwise fall back to
   // whatever this browser last had in progress.
   async function initForm(){
-    await loadOrgOptions();
-    await loadPartOptions();
-    await loadPeopleOptions();
-    await loadSupplierInvoicesForDropdown();
-    hideInvoiceAwbFieldForCustomers();
+    await resolveMe();
+    applyRoleChrome();
     var params = new URLSearchParams(window.location.search);
     var shipmentParam = params.get('shipment');
+    if (isSupplierEditor() && !shipmentParam) {
+      var saveBtn = document.getElementById('saveDraftBtn');
+      var createBtn = document.getElementById('createBtn');
+      if (saveBtn) saveBtn.style.display = 'none';
+      if (createBtn) createBtn.style.display = 'none';
+      await loadOrgOptions();
+      await loadPartOptions();
+      updateDraftStatus('Dessimate creates PDIRs. Open one of your parts from the PDIR Portal to add your information.', 'off');
+      return;
+    }
+    await loadOrgOptions();
+    await loadPartOptions();
+    if (!isSupplierEditor() && !isCustomerViewer()) await loadPeopleOptions();
+    await loadSupplierInvoicesForDropdown();
+    hideInvoiceAwbFieldForCustomers();
     if (shipmentParam) {
       updateDraftStatus('Loading saved draft…', 'saving');
       try {
@@ -2083,7 +2181,14 @@
           await loadPreparedByOptions(payload.fields.organization_name, payload.fields.prepared_by_signature);
           renderInvoiceAwbOptions(payload.fields.organization_name, payload.fields.invoice_awb_no);
           updateDraftStatus('Loaded saved draft' + (payload.savedAt ? ' (last saved ' + new Date(payload.savedAt).toLocaleString() + ')' : '') + '.', 'ok');
+          applySupplierPdfLock(payload.fields, payload.docs);
         } else {
+          if (isSupplierEditor()) {
+            var shipElBlank = form.querySelector('[name="shipment_number"]');
+            var fromTitle = /^PDIR for Shipment # (.+)$/.exec(shipmentParam);
+            if (shipElBlank && fromTitle) shipElBlank.value = fromTitle[1];
+            currentDraftTitle = shipmentParam;
+          }
           updateDraftStatus('No saved draft found for that shipment yet — starting blank.', 'off');
         }
       } catch (e) {
@@ -2093,10 +2198,11 @@
     } else {
       load();
     }
+    lockSupplierIdentityFields();
     // Whichever path filled the Quality Approval dropdown's value (a restored
     // draft, or the localStorage autosave via load()), resolve the matching
     // stamp now — the dropdown's own change event never fires for either.
-    resolveQualityApproverStamp();
+    if (!isSupplierEditor() && !isCustomerViewer()) resolveQualityApproverStamp();
   }
   requireAuthThen(initForm);
   // ---------------------------------------------------------------------------
@@ -2107,6 +2213,11 @@
     var portalLink = document.getElementById('portalLink');
     downloadLink.style.display = 'none';
     portalLink.style.display = 'none';
+    if (isSupplierEditor() && supplierPdfLocked) {
+      status.className = 'error';
+      status.textContent = 'Dessimate has already decided this PDIR. Only Dessimate staff can replace the finished PDF.';
+      return;
+    }
     if (autosaveTimer) clearTimeout(autosaveTimer);
     btn.disabled = true; btn.textContent = 'Creating PDF...'; status.className = ''; status.textContent = '';
     try {

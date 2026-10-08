@@ -813,20 +813,25 @@
       return data.accessLevel || 'team_member';
     } catch (e) { return 'team_member'; }
   }
-  // A Supplier or Customer login (Rev2.1: Customer logins were granted PDIR
-  // read access) is read-only here and only ever sees its own scoped shipments
-  // (enforced server-side by GET /pdir-index) - Create/Modify/Delete/Restore
-  // and "Show removed" all assume write access these accounts don't have, so
-  // they're hidden rather than shown and then failing.
-  function isReadOnlyExternal(){
-    return currentAccessLevel === 'supplier' || currentAccessLevel === 'customer';
+  // Customers stay view-only. Suppliers can open Modify on their own parts'
+  // PDIRs (fill in their sections) but cannot create a new title, delete, or
+  // restore — Dessimate creates the master PDIR. List scope is enforced by
+  // GET /pdir-index (part + org), not just hidden buttons.
+  function isCustomerViewer(){
+    return currentAccessLevel === 'customer';
+  }
+  function isSupplierEditor(){
+    return currentAccessLevel === 'supplier';
+  }
+  function isExternalListSource(){
+    return isSupplierEditor() || isCustomerViewer();
   }
   function applyAccessLevelToChrome(){
-    var readOnly = isReadOnlyExternal();
+    var hideStaffWrite = isExternalListSource();
     var createBtn = document.querySelector('.createBtn');
     var hiddenToggleLabel = document.querySelector('.hiddenToggle');
-    if (createBtn) createBtn.style.display = readOnly ? 'none' : '';
-    if (hiddenToggleLabel) hiddenToggleLabel.style.display = readOnly ? 'none' : '';
+    if (createBtn) createBtn.style.display = hideStaffWrite ? 'none' : '';
+    if (hiddenToggleLabel) hiddenToggleLabel.style.display = hideStaffWrite ? 'none' : '';
   }
 
   function renderList(){
@@ -861,10 +866,10 @@
         : '<span class="pill pill-draft">Draft</span>';
       if (e.hidden) pill += '<span class="pill pill-hidden">Removed</span>';
       var modifyHref = 'PDIR_Form_Filler.html?shipment=' + encodeURIComponent(e.title);
-      // A Supplier or Customer login is read-only - it never gets
-      // Modify/Delete/Restore, only the same View PDF action any staff level
-      // also gets.
-      var isSupplier = isReadOnlyExternal();
+      // Customers stay view-only. Suppliers get Modify (complete their
+      // sections) but never Delete/Restore. Staff keep every action.
+      var hideModify = isCustomerViewer();
+      var hideStaffRowActions = isExternalListSource();
 
       var row = document.createElement('div');
       row.className = 'pdir-row' + (e.hidden ? ' is-hidden' : '');
@@ -876,8 +881,8 @@
         '<div class="pdir-actions">' +
           (e.pdf ? '<button type="button" class="pdir-view">View PDF</button>' : '') +
           '<button type="button" class="pdir-attachments">Supporting Documents</button>' +
-          (isSupplier ? '' : '<a class="pdir-modify" href="' + modifyHref + '">Modify PDIR</a>') +
-          (isSupplier ? '' : (e.hidden
+          (hideModify ? '' : '<a class="pdir-modify" href="' + modifyHref + '">Modify PDIR</a>') +
+          (hideStaffRowActions ? '' : (e.hidden
             ? '<button type="button" class="pdir-restore">Restore</button>'
             : '<button type="button" class="pdir-delete">Delete</button>')) +
         '</div>';
@@ -889,7 +894,7 @@
       row.querySelector('.pdir-attachments').addEventListener('click', function(){
         openAttachmentsModal(e.title);
       });
-      if (!isSupplier) {
+      if (!hideStaffRowActions) {
         if (e.hidden) {
           row.querySelector('.pdir-restore').addEventListener('click', function(){
             setHidden(e.title, false);
@@ -921,16 +926,15 @@
       applyAccessLevelToChrome();
 
       var entries;
-      if (isReadOnlyExternal()) {
+      if (isExternalListSource()) {
         // A Supplier or Customer login can't list the pdirs/ or pdir_drafts/
         // folders directly (that would expose every other organization's
         // shipment titles too) - the backend's own PDIR index is already
-        // scoped to this account (by organization for a Supplier, by which
-        // Part Numbers the organization is the customer of for a Customer -
-        // Rev2.1), so it's the list source instead. Every entry is shown
-        // with a "View PDF" action; if a title turns out to be a draft with
-        // no finished PDF yet, the viewer below reports that plainly rather
-        // than erroring the whole list.
+        // scoped to this account (Supplier: their org + parts they supply;
+        // Customer: Part Numbers they buy — Rev2.1), so it's the list source
+        // instead. Every entry is shown with a "View PDF" action; if a title
+        // turns out to be a draft with no finished PDF yet, the viewer below
+        // reports that plainly rather than erroring the whole list.
         var idxRes = await apiFetch('pdir-index');
         if (!idxRes.ok) throw new Error('HTTP ' + idxRes.status);
         var idxData = await idxRes.json();
@@ -976,8 +980,10 @@
       if (!entries.length) {
         loadingEl.style.display = 'none';
         emptyEl.style.display = 'block';
-        emptyEl.textContent = isReadOnlyExternal()
-          ? 'No PDIRs have been tagged to your organization yet.'
+        emptyEl.textContent = isExternalListSource()
+          ? (isSupplierEditor()
+            ? 'No PDIRs for your parts yet. Dessimate creates the PDIR; when one is ready you can open it here and add your information.'
+            : 'No PDIRs have been tagged to your organization yet.')
           : 'No PDIRs yet. Click "Create a PDIR" above to make the first one.';
         lastEntries = [];
         return;

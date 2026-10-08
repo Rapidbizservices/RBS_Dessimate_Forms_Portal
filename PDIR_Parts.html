@@ -458,7 +458,12 @@
   // competitively sensitive info a Supplier shouldn't see about a part they
   // make - matches how a Supplier never sees Customer-side detail elsewhere
   // in this app. The column is hidden client-side only for that role.
+  // Suppliers/Customers do not get Parts write chrome (Add/Delete/Save) —
+  // the master list stays Dessimate-owned; they only view their scoped parts.
   var currentAccessLevel = null;
+  function isExternalPartsViewer(){
+    return currentAccessLevel === 'supplier' || currentAccessLevel === 'customer';
+  }
   async function resolveAccessLevel(){
     var session = getSession();
     if (!session) { currentAccessLevel = null; return; }
@@ -968,6 +973,8 @@
     var tableEl = document.getElementById('partTable');
     var bodyEl = document.getElementById('partTableBody');
     var emptyEl = document.getElementById('emptyState');
+    var addBtn = document.getElementById('addPartBtn');
+    if (addBtn) addBtn.style.display = isExternalPartsViewer() ? 'none' : '';
     if (!lastParts.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
@@ -994,7 +1001,7 @@
         '<td class="supplierList">' + suppliersText + '</td>' +
         '<td class="docCell">' + docHtml + '</td>' +
         '<td><div class="rowActions">' +
-          '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(p.id) + '">Delete</button>' +
+          (isExternalPartsViewer() ? '' : '<button type="button" class="deleteBtn" data-delete="' + escapeHtml(p.id) + '">Delete</button>') +
         '</div></td>' +
         '</tr>';
     }).join('');
@@ -1152,8 +1159,12 @@
     document.getElementById('attachError').textContent = '';
     attachmentsState = (p.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
     renderAttachmentsList();
-    document.getElementById('modalTitle').textContent = 'Edit Part';
-    document.getElementById('modalSub').textContent = 'Update this part\'s details.';
+    document.getElementById('modalTitle').textContent = isExternalPartsViewer() ? 'View Part' : 'Edit Part';
+    document.getElementById('modalSub').textContent = isExternalPartsViewer()
+      ? 'Your organization\'s part — read-only. Dessimate maintains the master record.'
+      : 'Update this part\'s details.';
+    var saveBtn = document.getElementById('modalSaveBtn');
+    if (saveBtn) saveBtn.style.display = isExternalPartsViewer() ? 'none' : '';
     document.getElementById('f_partNumber').value = p.partNumber || '';
     document.getElementById('f_customerPartNumber').value = p.customerPartNumber || '';
     document.getElementById('f_manufacturer').value = p.manufacturer || '';
