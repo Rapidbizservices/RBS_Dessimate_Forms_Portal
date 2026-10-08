@@ -174,8 +174,9 @@
  *                                        in storage are left in place, same as PDIRs do when
  *                                        a document is replaced - nothing here deletes stored
  *                                        file content, only the directory record).
- *   GET    /parts                     - auth required (any signed-in user); full parts
- *                                        directory.
+ *   GET    /parts                     - auth required (any signed-in user); scoped parts
+ *                                        directory (scopeParts: a Supplier sees parts listing
+ *                                        their org, a Customer sees parts they buy).
  *   POST   /parts                     - team_member or above required; create a part.
  *   PUT    /parts/<id>                - team_member or above required; update one.
  *   DELETE /parts/<id>                - team_member or above required; remove one (its
@@ -365,10 +366,29 @@
  *                                        comment), OR the assigned Supplier (their own comment
  *                                        only); edits that entry's text. No delete route.
  *   DELETE /supplier-open-issues/<id>  - team_member or above required.
+ *   GET    /pdir-index                - any signed-in user; list of PDIR title tags
+ *                                        (organization + partNumber). A Supplier sees only
+ *                                        PDIRs tagged to their org whose Part lists them as a
+ *                                        supplier; a Customer sees only PDIRs for Parts they
+ *                                        buy. Team Member+ sees every entry.
+ *   GET    /pdir-index/<title>        - same read scope as the list; 404 if the title is
+ *                                        outside the caller's scope (does not leak existence).
+ *   POST   /pdir-index                - team_member or above can upsert any title (create or
+ *                                        update the tag). A Supplier may update an existing
+ *                                        title they can already see (force their own org;
+ *                                        fields only applied when present) - they cannot
+ *                                        create a new PDIR title. Customer: 403.
  *   GET    /contents/<path...>        - reads one file from R2 (blocked for anything
  *                                        under data/ - see above), or lists a "directory"
  *                                        prefix, in a shape mirroring GitHub's old API.
  *   PUT    /contents/<path...>        - writes one file to R2 (same data/ block as above).
+ *                                        A Supplier may PUT pdir_drafts / pdir_docs for an
+ *                                        existing PDIR they can see (merge draft so omitted
+ *                                        staff fields are kept; all three dispositions and
+ *                                        Dessimate sign-off cannot be changed). PUT of
+ *                                        pdirs/<title>.pdf is allowed only before Dessimate
+ *                                        has recorded a decision; after that, 403. A
+ *                                        Customer stays read-only.
  *   GET    /commits?path=<path>       - "last modified" info for a path (D1 row's
  *                                        updated_at, or an R2 object's upload time).
  *
@@ -431,6 +451,23 @@ async function resolvePartOwnership(env, partId) {
 // every other module now is. It does not replace or duplicate the PDIR
 // record itself (still the PDF/draft/docs in R2) - just tags it.
 const PDIR_INDEX_FILE_PATH = 'data/pdir_index.json';
+// Form-field names on a PDIR draft that are Dessimate-only (Sign-off /
+// approve). A Supplier PUT that tries to change these is rejected; omitted
+// keys are kept from the existing draft so a supplier save cannot wipe them.
+const PDIR_STAFF_FIELD_NAMES = [
+  'quality_approval_username',
+  'quality_approval_signature',
+  'quality_approval_print_name',
+  'dessimate_sign_date',
+  'title'
+];
+// All three Disposition checkboxes are Dessimate-only. A Supplier cannot
+// set or clear Approved / Rework / Hold — merge keeps the stored values.
+const PDIR_DISPOSITION_FIELD_NAMES = [
+  'disposition_approved',
+  'disposition_rework',
+  'disposition_hold'
+];
 
 // Rev2.2: the "DSCM vX.X" footer/sidebar stamp used to be hand-typed into
 // every page's HTML - bumping it meant re-uploading all 11 pages just to
@@ -474,12 +511,19 @@ const APQP_ITEM_LABELS = {
 // super_admin - Users + Organizations modules, plus everything below
 // admin       - Customer PO + Dessimate Invoice (admin section), plus below
 // team_member - Dessimate PO, Supplier Invoice, PDIR, Parts (read/write), APQP
-// supplier    - read-only, own-organization records only: Parts, Dessimate
-//               POs, Supplier Invoices, APQP, PDIRs (via data/pdir_index.json)
+// supplier    - own-organization records only: Parts, Dessimate POs, Supplier
+//               Invoices, APQP (read), and PDIRs (via data/pdir_index.json,
+//               scoped to parts they supply). PDIR drafts/docs/PDF for an
+//               existing title they can see are writable; they cannot create
+//               a new PDIR title, change any Disposition (Approved / Rework /
+//               Hold), or change Dessimate Sign-off. Finished PDF replace is
+//               blocked once Dessimate has recorded a decision. Other modules
+//               stay as documented on each route.
 // customer    - read-only, own-organization records only: Parts, Customer
 //               POs, APQP, PDIRs (via data/pdir_index.json, scoped by Part
-//               Number rather than organization - see resolveCustomerVisible-
+//               Number rather than organization - see resolveVisible-
 //               PartNumbers). Rev2.1: no longer sees Dessimate Invoices.
+//               Customers do not gain PDIR staff write or approve.
 const ACCESS_LEVELS = ['super_admin', 'admin', 'team_member', 'supplier', 'customer'];
 // Accounts that predate the accessLevel field (or were migrated from the old
 // STAFF_USERS secret before it existed) fall back to this bootstrap list so
@@ -558,14 +602,25 @@ export default {
       }
 
       // Rev2.1: the PDIR Sign-Off's "Prepared By" dropdown (Supplier side) is
-      // filtered by the shipment's Supplier/Organization - a lighter-weight,
-      // staff-only lookup than GET /admin/users (which is super_admin-gated
-      // and returns full PII for every relationship), scoped to just the
-      // Supplier contacts of one named organization.
+      // filtered by the shipment's Supplier/Organization - a lighter-weight
+      // lookup than GET /admin/users (which is super_admin-gated and returns
+      // full PII for every relationship), scoped to just the Supplier
+      // contacts of one named organization. Staff can query any org; a
+      // Supplier can only query their own (so they can fill Prepared By on
+      // their PDIR). A Customer has no role here.
       if (url.pathname === '/org-contacts' && request.method === 'GET') {
-        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        const auth = await requireAuthWithScope(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleListOrgContacts(env, origin, url.searchParams.get('organization') || '');
+        const requestedOrg = url.searchParams.get('organization') || '';
+        if (auth.accessLevel === 'customer') {
+          return json({ message: 'You don\'t have access to this.' }, 403, origin);
+        }
+        if (auth.accessLevel === 'supplier') {
+          if (!auth.organization || requestedOrg !== auth.organization) {
+            return json({ contacts: [] }, 200, origin);
+          }
+        }
+        return await handleListOrgContacts(env, origin, requestedOrg);
       }
 
       if (url.pathname === '/me' && request.method === 'GET') {
@@ -768,9 +823,27 @@ export default {
           return await handleListPdirIndex(env, origin, auth.accessLevel, auth.organization);
         }
         if (request.method === 'POST') {
-          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          if (auth.accessLevel === 'customer') {
+            return json({ message: 'You don\'t have access to this.' }, 403, origin);
+          }
+          if (auth.accessLevel === 'supplier') {
+            return await handleSupplierUpsertPdirIndexEntry(request, env, origin, auth.organization);
+          }
+          if (['super_admin', 'admin', 'team_member'].indexOf(auth.accessLevel) === -1) {
+            return json({ message: 'You don\'t have access to this.' }, 403, origin);
+          }
           return await handleUpsertPdirIndexEntry(request, env, origin);
+        }
+      }
+
+      if (url.pathname.startsWith('/pdir-index/')) {
+        if (request.method === 'GET') {
+          const auth = await requireAuthWithScope(request, env);
+          if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+          const title = decodeURIComponent(url.pathname.slice('/pdir-index/'.length));
+          return await handleGetPdirIndexEntry(env, origin, title, auth.accessLevel, auth.organization);
         }
       }
 
@@ -1382,17 +1455,26 @@ export default {
         // This proxy has no access control of its own beyond "signed in" -
         // it will fetch or write whatever storage path it's given. That was
         // fine while only trusted Dessimate staff could sign in at all; now
-        // that Supplier/Customer logins exist, a Supplier/Customer account
-        // is restricted to read-only access, and only to the small set of
-        // PDIR files their own organization is tagged as owning (see
-        // isContentsPathAllowedForExternal) - never another organization's
-        // PDIRs, drawings, invoices, or anything else in storage.
-        if (auth.accessLevel === 'supplier' || auth.accessLevel === 'customer') {
+        // that Supplier/Customer logins exist, those accounts are restricted
+        // to the small set of files isContentsPathAllowedForExternal allows.
+        // A Customer stays read-only. A Supplier may PUT an existing PDIR
+        // they can see (draft merge + no approve) - never another org's
+        // files, and never a brand-new PDIR title.
+        if (auth.accessLevel === 'customer') {
           if (request.method !== 'GET') {
             return json({ message: 'Your account has read-only access.' }, 403, origin);
           }
           const allowed = await isContentsPathAllowedForExternal(env, ghPath, auth.accessLevel, auth.organization);
           if (!allowed) return json({ message: 'Not accessible with your account.' }, 403, origin);
+        } else if (auth.accessLevel === 'supplier') {
+          if (request.method === 'GET') {
+            const allowed = await isContentsPathAllowedForExternal(env, ghPath, auth.accessLevel, auth.organization);
+            if (!allowed) return json({ message: 'Not accessible with your account.' }, 403, origin);
+          } else if (request.method === 'PUT') {
+            return await handleSupplierPdirContentsPut(request, env, origin, ghPath, auth.organization);
+          } else {
+            return json({ message: 'Your account has read-only access.' }, 403, origin);
+          }
         }
         return await proxyContents(request, env, origin, ghPath);
       }
@@ -4082,23 +4164,57 @@ function sanitizePdirIndexEntry(e) {
   };
 }
 
-// A Customer login has no relationship to PDIRs (Supplier shipment
-// inspections) at all, so it never sees any entries here. A Supplier login
-// sees only entries tagged with their own organization.
+// Shared "which Part Numbers can this org see" set - same scopeParts rule
+// used by Parts / APQP. A Supplier sees parts listing them; a Customer sees
+// parts they buy. Used to scope PDIR list, get-by-id, and file access so a
+// Supplier never sees another supplier's PDIR even on a shared part.
+async function resolveVisiblePartNumbers(env, accessLevel, organization) {
+  const partsState = await readJsonArrayFile(env, PARTS_FILE_PATH);
+  const visibleParts = scopeParts(partsState.items.map(sanitizePart), accessLevel, organization);
+  return new Set(visibleParts.map(function (p) { return (p.partNumber || '').toLowerCase(); }));
+}
+
+function pdirIndexVisibleToCaller(entry, accessLevel, organization, visiblePartNumbers) {
+  if (!entry) return false;
+  if (accessLevel === 'supplier') {
+    if (!organization || entry.organization !== organization) return false;
+    const pn = (entry.partNumber || '').toLowerCase();
+    if (!pn) return true;
+    return visiblePartNumbers.has(pn);
+  }
+  if (accessLevel === 'customer') {
+    return visiblePartNumbers.has((entry.partNumber || '').toLowerCase());
+  }
+  return true;
+}
+
+// A Supplier sees only PDIRs tagged to their org whose Part lists them as a
+// supplier (no other suppliers' PDIRs, even on a multi-supplier part). A
+// Customer is scoped through Part Numbers they buy (Rev2.1). Staff see all.
 async function handleListPdirIndex(env, origin, accessLevel, organization) {
   const state = await readJsonArrayFile(env, PDIR_INDEX_FILE_PATH);
   let entries = state.items.map(sanitizePdirIndexEntry);
-  if (accessLevel === 'supplier') {
-    entries = entries.filter(function (e) { return organization && e.organization === organization; });
-  } else if (accessLevel === 'customer') {
-    // Rev2.1: Customer logins were granted read access to PDIR. A Customer
-    // has no direct tie to a PDIR's Supplier organization, so it's scoped
-    // instead through which Part Numbers their organization is the customer
-    // of - the same lookup APQP customer-scoping already uses.
-    const visiblePartNumbers = organization ? await resolveCustomerVisiblePartNumbers(env, organization) : new Set();
-    entries = entries.filter(function (e) { return visiblePartNumbers.has((e.partNumber || '').toLowerCase()); });
+  if (accessLevel === 'supplier' || accessLevel === 'customer') {
+    const visiblePartNumbers = organization ? await resolveVisiblePartNumbers(env, accessLevel, organization) : new Set();
+    entries = entries.filter(function (e) {
+      return pdirIndexVisibleToCaller(e, accessLevel, organization, visiblePartNumbers);
+    });
   }
   return json({ pdirIndex: entries }, 200, origin);
+}
+
+async function handleGetPdirIndexEntry(env, origin, title, accessLevel, organization) {
+  const wanted = (title || '').toString().trim();
+  if (!wanted) return json({ message: 'Not found.' }, 404, origin);
+  const entry = await resolvePdirIndexEntry(env, wanted);
+  if (!entry) return json({ message: 'Not found.' }, 404, origin);
+  if (accessLevel === 'supplier' || accessLevel === 'customer') {
+    const visiblePartNumbers = organization ? await resolveVisiblePartNumbers(env, accessLevel, organization) : new Set();
+    if (!pdirIndexVisibleToCaller(entry, accessLevel, organization, visiblePartNumbers)) {
+      return json({ message: 'Not found.' }, 404, origin);
+    }
+  }
+  return json(sanitizePdirIndexEntry(entry), 200, origin);
 }
 
 // Upserts (by title, PDIR's one stable identifier) the tag for a single PDIR
@@ -4134,6 +4250,47 @@ async function handleUpsertPdirIndexEntry(request, env, origin) {
   return json(sanitizePdirIndexEntry(saved), 200, origin);
 }
 
+// A Supplier may retag an existing PDIR they already own (part + org), so
+// Save Draft keeps the index in sync. They cannot mint a new title - Dessimate
+// creates the master PDIR. Fields are applied only when present in the body
+// so a partial save doesn't wipe shipmentNumber/partNumber. Organization is
+// always forced to the caller's org.
+async function handleSupplierUpsertPdirIndexEntry(request, env, origin, organization) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const title = (body.title || '').toString().trim();
+  if (!title) return json({ message: 'A title is required.' }, 400, origin);
+  if (!organization) return json({ message: 'Your account isn\'t linked to a Supplier organization.' }, 403, origin);
+
+  const visiblePartNumbers = await resolveVisiblePartNumbers(env, 'supplier', organization);
+  const existing = await resolvePdirIndexEntry(env, title);
+  if (!existing) return json({ message: 'Only Dessimate staff can create a new PDIR.' }, 403, origin);
+  if (!pdirIndexVisibleToCaller(existing, 'supplier', organization, visiblePartNumbers)) {
+    return json({ message: 'Not found.' }, 404, origin);
+  }
+  if (body.partNumber !== undefined) {
+    const pn = (body.partNumber || '').toString().trim();
+    if (pn && !visiblePartNumbers.has(pn.toLowerCase())) {
+      return json({ message: 'Not found.' }, 404, origin);
+    }
+  }
+
+  let saved = null;
+  const result = await mutateJsonArrayFile(env, PDIR_INDEX_FILE_PATH, function (items) {
+    const target = items.find(function (e) { return (e.title || '').toLowerCase() === title.toLowerCase(); });
+    if (!target) return null;
+    if (body.shipmentNumber !== undefined) target.shipmentNumber = (body.shipmentNumber || '').toString().trim();
+    if (body.partNumber !== undefined) target.partNumber = (body.partNumber || '').toString().trim();
+    target.organization = organization;
+    target.updatedAt = new Date().toISOString();
+    saved = target;
+    return { items: items };
+  }, { requireFound: true });
+  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
+  if (!result.ok) return json({ message: result.message }, 500, origin);
+  return json(sanitizePdirIndexEntry(saved), 200, origin);
+}
+
 // Looks up the PDIR index entry (organization + Part Number) a title is
 // tagged with, if any. Used to gate a Supplier/Customer login's raw
 // /contents/ access to that PDIR's own files (pdirs/pdir_drafts/pdir_docs) -
@@ -4147,26 +4304,181 @@ async function resolvePdirIndexOrganization(env, title) {
   const entry = await resolvePdirIndexEntry(env, title);
   return entry ? (entry.organization || '') : '';
 }
-// A Customer login has no direct tie to a PDIR's Supplier organization - it's
-// scoped instead through the Part Number the PDIR is for, the same "which
-// Parts is this organization the customer of" lookup APQP customer-scoping
-// uses (scopeParts). Returns the set of Part Numbers (lowercased) a Customer
-// organization is allowed to see PDIRs for.
+// Kept as a thin wrapper so existing customer-scoping comments still point
+// at a named helper. Same set resolveVisiblePartNumbers already computes.
 async function resolveCustomerVisiblePartNumbers(env, organization) {
-  const partsState = await readJsonArrayFile(env, PARTS_FILE_PATH);
-  const visibleParts = scopeParts(partsState.items.map(sanitizePart), 'customer', organization);
-  return new Set(visibleParts.map(function (p) { return (p.partNumber || '').toLowerCase(); }));
+  return resolveVisiblePartNumbers(env, 'customer', organization);
+}
+
+function decodePdirTitleFromContentsPath(decoded) {
+  const m = /^pdirs\/(.+)\.pdf$/.exec(decoded) ||
+    /^pdir_drafts\/(.+)\.json$/.exec(decoded) ||
+    /^pdir_docs\/([^/]+)\/.+$/.exec(decoded);
+  return m ? m[1] : null;
+}
+
+function isDessimateStampDocPath(decoded) {
+  return /^pdir_docs\/[^/]+\/dessimate_stamp(\/|\.|$)/.test(decoded);
+}
+
+function pdirHasDessimateDecision(fields, docs) {
+  const f = fields && typeof fields === 'object' ? fields : {};
+  const d = docs && typeof docs === 'object' ? docs : {};
+  if (PDIR_DISPOSITION_FIELD_NAMES.some(function (k) { return !!f[k]; })) return true;
+  if (f.quality_approval_username || f.quality_approval_signature || f.quality_approval_print_name) return true;
+  if (f.dessimate_sign_date || (f.title && String(f.title).trim())) return true;
+  if (d.dessimate_stamp) return true;
+  return false;
+}
+
+async function readPdirDraftDecisionState(env, title) {
+  const obj = await env.FILES.get('pdir_drafts/' + title + '.json');
+  if (!obj) return { fields: {}, docs: {} };
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(new Uint8Array(await obj.arrayBuffer())));
+    return {
+      fields: parsed.fields && typeof parsed.fields === 'object' ? parsed.fields : {},
+      docs: parsed.docs && typeof parsed.docs === 'object' ? parsed.docs : {}
+    };
+  } catch (e) {
+    return { fields: {}, docs: {} };
+  }
+}
+
+// Supplier PUT of an existing PDIR they can see: draft JSON is merged so
+// omitted staff fields stay put; all three dispositions and Dessimate
+// sign-off cannot be changed. Docs for that title are allowed except
+// dessimate_stamp. Finished PDF (pdirs/<title>.pdf) is allowed only until
+// Dessimate records a decision; after that, 403. A title that is not
+// already in the index cannot be created here.
+async function handleSupplierPdirContentsPut(request, env, origin, ghPath, organization) {
+  let decoded;
+  try { decoded = ghPath.split('/').map(decodeURIComponent).join('/'); } catch (e) {
+    return json({ message: 'Not accessible with your account.' }, 403, origin);
+  }
+  const title = decodePdirTitleFromContentsPath(decoded);
+  if (!title) return json({ message: 'Your account has read-only access.' }, 403, origin);
+  if (!organization) return json({ message: 'Your account isn\'t linked to a Supplier organization.' }, 403, origin);
+
+  const entry = await resolvePdirIndexEntry(env, title);
+  if (!entry) return json({ message: 'Only Dessimate staff can create a new PDIR.' }, 403, origin);
+  const visiblePartNumbers = await resolveVisiblePartNumbers(env, 'supplier', organization);
+  if (!pdirIndexVisibleToCaller(entry, 'supplier', organization, visiblePartNumbers)) {
+    return json({ message: 'Not found.' }, 404, origin);
+  }
+  if (isDessimateStampDocPath(decoded)) {
+    return json({ message: 'Suppliers cannot approve a PDIR or change Dessimate sign-off.' }, 403, origin);
+  }
+  if (/^pdir_drafts\/.+\.json$/.test(decoded)) {
+    return await handleSupplierPdirDraftPut(request, env, origin, ghPath, organization, visiblePartNumbers);
+  }
+  if (/^pdirs\/.+\.pdf$/.test(decoded)) {
+    const state = await readPdirDraftDecisionState(env, title);
+    if (pdirHasDessimateDecision(state.fields, state.docs)) {
+      return json({ message: 'Dessimate has already recorded a disposition or sign-off on this PDIR. Only Dessimate staff can replace the finished PDF.' }, 403, origin);
+    }
+  }
+  return await proxyContents(request, env, origin, ghPath);
+}
+
+async function handleSupplierPdirDraftPut(request, env, origin, ghPath, organization, visiblePartNumbers) {
+  let body;
+  try { body = JSON.parse(await request.text()); } catch (e) {
+    return json({ message: 'Invalid request body.' }, 400, origin);
+  }
+  let bytes;
+  try { bytes = base64ToBytes(body.content || ''); } catch (e) {
+    return json({ message: 'Invalid file content.' }, 400, origin);
+  }
+
+  let incoming;
+  try { incoming = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) {
+    return json({ message: 'Invalid PDIR draft.' }, 400, origin);
+  }
+
+  const existingObj = await env.FILES.get(ghPath);
+  let existing = { fields: {}, photos: {}, docs: {} };
+  if (existingObj) {
+    try {
+      existing = JSON.parse(new TextDecoder().decode(new Uint8Array(await existingObj.arrayBuffer())));
+    } catch (e) { existing = { fields: {}, photos: {}, docs: {} }; }
+    if (body.sha) {
+      const current = await env.FILES.head(ghPath);
+      if (!current || current.etag !== body.sha) {
+        return json({ message: 'sha does not match current file - refresh and retry.' }, 409, origin);
+      }
+    }
+  }
+
+  const incomingFields = incoming.fields && typeof incoming.fields === 'object' ? incoming.fields : {};
+  const existingFields = existing.fields && typeof existing.fields === 'object' ? existing.fields : {};
+
+  for (let di = 0; di < PDIR_DISPOSITION_FIELD_NAMES.length; di++) {
+    const dk = PDIR_DISPOSITION_FIELD_NAMES[di];
+    if (incomingFields[dk] !== undefined && !!incomingFields[dk] !== !!existingFields[dk]) {
+      return json({ message: 'Suppliers cannot change PDIR disposition. Dessimate staff decide Approved, Rework, and Hold.' }, 403, origin);
+    }
+  }
+  for (let si = 0; si < PDIR_STAFF_FIELD_NAMES.length; si++) {
+    const sk = PDIR_STAFF_FIELD_NAMES[si];
+    if (incomingFields[sk] !== undefined && incomingFields[sk] !== '' && incomingFields[sk] !== existingFields[sk]) {
+      return json({ message: 'Suppliers cannot approve a PDIR or change Dessimate sign-off.' }, 403, origin);
+    }
+  }
+
+  const mergedFields = Object.assign({}, existingFields);
+  Object.keys(incomingFields).forEach(function (k) {
+    if (PDIR_STAFF_FIELD_NAMES.indexOf(k) !== -1) return;
+    if (PDIR_DISPOSITION_FIELD_NAMES.indexOf(k) !== -1) return;
+    mergedFields[k] = incomingFields[k];
+  });
+  mergedFields.organization_name = organization;
+  if (existingFields.shipment_number) mergedFields.shipment_number = existingFields.shipment_number;
+  if (mergedFields.part_number) {
+    if (!visiblePartNumbers.has(String(mergedFields.part_number).toLowerCase())) {
+      return json({ message: 'Not found.' }, 404, origin);
+    }
+  }
+
+  const existingDocs = existing.docs && typeof existing.docs === 'object' ? existing.docs : {};
+  const incomingDocs = incoming.docs && typeof incoming.docs === 'object' ? incoming.docs : {};
+  if (incoming.docs !== undefined && incomingDocs.dessimate_stamp &&
+      JSON.stringify(incomingDocs.dessimate_stamp) !== JSON.stringify(existingDocs.dessimate_stamp || null)) {
+    return json({ message: 'Suppliers cannot approve a PDIR or change Dessimate sign-off.' }, 403, origin);
+  }
+  const mergedDocs = incoming.docs !== undefined ? Object.assign({}, existingDocs) : existingDocs;
+  if (incoming.docs !== undefined) {
+    Object.keys(incomingDocs).forEach(function (k) {
+      if (k === 'dessimate_stamp') return;
+      mergedDocs[k] = incomingDocs[k];
+    });
+    if (existingDocs.dessimate_stamp) mergedDocs.dessimate_stamp = existingDocs.dessimate_stamp;
+  }
+
+  const mergedPhotos = incoming.photos !== undefined ? incoming.photos : (existing.photos || {});
+  const merged = {
+    fields: mergedFields,
+    photos: mergedPhotos,
+    docs: mergedDocs,
+    savedAt: incoming.savedAt || new Date().toISOString()
+  };
+
+  const outBytes = new TextEncoder().encode(JSON.stringify(merged));
+  const put = await env.FILES.put(ghPath, outBytes);
+  const head = put || (await env.FILES.head(ghPath));
+  const name = ghPath.split('/').pop();
+  return json({ content: { sha: head.etag, path: ghPath, name: name, size: outBytes.length }, sha: head.etag }, 200, origin);
 }
 
 // Gates the generic /contents/ proxy for a Supplier/Customer login (see the
 // comment where this is called). Only the three PDIR file locations - the
 // finished PDF, the resumable draft, and its supporting documents/photos -
-// are ever reachable: a Supplier only for a title its own organization is
-// tagged as owning in the PDIR index, a Customer only for a title whose Part
-// Number their organization is the customer of (Rev2.1). Everything else in
-// storage (other organizations' PDIRs, drawings, invoices, org/user
-// documents...) is refused, even though this proxy has no path allowlist of
-// its own.
+// are ever reachable: a Supplier only for a title tagged to their org whose
+// Part lists them as a supplier (same rule as GET /pdir-index), a Customer
+// only for a title whose Part Number their organization is the customer of
+// (Rev2.1). Everything else in storage (other organizations' PDIRs,
+// drawings, invoices, org/user documents...) is refused, even though this
+// proxy has no path allowlist of its own.
 async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organization) {
   if ((accessLevel !== 'supplier' && accessLevel !== 'customer') || !organization) return false;
   let decoded;
@@ -4178,9 +4490,8 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
     const title = m[1];
     const entry = await resolvePdirIndexEntry(env, title);
     if (!entry) return false;
-    if (accessLevel === 'supplier') return !!entry.organization && entry.organization === organization;
-    const visiblePartNumbers = await resolveCustomerVisiblePartNumbers(env, organization);
-    return visiblePartNumbers.has((entry.partNumber || '').toLowerCase());
+    const visiblePartNumbers = await resolveVisiblePartNumbers(env, accessLevel, organization);
+    return pdirIndexVisibleToCaller(entry, accessLevel, organization, visiblePartNumbers);
   }
 
   // A Supplier/Customer can read the attachments (drawings, .stp/.step

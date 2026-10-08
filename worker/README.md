@@ -565,10 +565,12 @@ the backend itself (not just hidden buttons):
 - **Team Member** — Dessimate PO, Supplier Invoice, PDIR, Parts (read and
   write), APQP. This is the default for any Dessimate Team member who
   hasn't been given a different level.
-- **Supplier** / **Customer** — read-only, and automatically scoped to that
-  organization's own data (their own Parts, POs, Invoices, and PDIRs only —
-  never anyone else's). See **Rev2 changes** below for how this scoping
-  works and how to turn on a real login for one.
+- **Supplier** / **Customer** — automatically scoped to that organization's
+  own data (their own Parts, POs, Invoices, and PDIRs only — never anyone
+  else's). Customers stay read-only on PDIR. Suppliers can complete PDIR
+  sections on their parts (see **PDIR: Supplier edit** below) but cannot
+  create a new PDIR title or approve. See **Rev2 changes** below for how
+  this scoping works and how to turn on a real login for one.
 
 You set someone's level from their **Access Level** dropdown on the Users
 page (only shown for Dessimate Team members — a Supplier or Customer
@@ -860,6 +862,32 @@ Users, Organizations and now Parts are all linked by organization name,
 simply be "is my organization the Customer or one of the Suppliers on this
 part" — no new permission system needed when that's built.
 
+### PDIR: Supplier edit
+
+A Supplier login sees only PDIRs for **parts that list their organization
+as a supplier**, and only shipments tagged to **their** org (so a
+multi-supplier part never leaks another supplier's PDIR). List, get-by-id
+(`GET /pdir-index/<title>`), and file GET/PUT (`/contents/` for
+`pdir_drafts` / `pdir_docs` / `pdirs`) all use that same scope.
+
+Dessimate still creates the master PDIR (Portal **Create a PDIR** stays
+staff-only). The Supplier opens **Modify PDIR** on their part and fills
+their data-entry sections: inspection checklist, measurements/comments,
+supporting documents, photos, remarks, and Supplier Sign-off. They can
+**Create PDF** on that existing title only until Dessimate records a
+decision.
+
+They cannot change **disposition** — **Approved for Shipment**, **Rework
+Required**, and **Hold for Review** are all Dessimate-only (hidden in the
+form; a supplier write that tries to set or clear any of the three is
+rejected 403; the stored values are kept). The whole **Dessimate Sign-off**
+(including Dessimate stamp) is the same. After any of those dispositions is
+true, or Dessimate sign-off/stamp/approver is already set, a supplier
+`PUT` of `pdirs/<title>.pdf` is 403 so they cannot overwrite an approved
+report. A supplier draft save only applies fields present in the body;
+staff/disposition fields already on the draft are kept. Customers do not
+gain PDIR write or approve.
+
 ## APQP (pre-production sign-off, per Part)
 
 The **APQP** page (Pre-Production Modules in the sidebar) tracks the
@@ -1070,13 +1098,14 @@ ignored once every login in it has been migrated.
 
 Logs a change either a Supplier is requesting of Dessimate, or Dessimate is
 requesting of a Supplier — `PDIR_ChangeRequests.html`, stored in
-`data/change_requests.json`. **The one Production Module a Supplier login
-can create and edit records in directly**, not just view: "each supplier
-should be able to see only their name in their dropdown when they initiate
-the change request" is enforced both ways — the Supplier dropdown is locked
-to their own organization in the browser, and the backend independently
-forces it server-side no matter what's submitted, the same as every other
-place in this app where a Supplier or Customer write is narrowly trusted.
+`data/change_requests.json`. A Supplier login can create and edit their own
+CRs (and can complete existing PDIRs for their parts — see **PDIR: Supplier
+edit** above) rather than only view: "each supplier should be able to see
+only their name in their dropdown when they initiate the change request" is
+enforced both ways — the Supplier dropdown is locked to their own
+organization in the browser, and the backend independently forces it
+server-side no matter what's submitted, the same as every other place in
+this app where a Supplier or Customer write is narrowly trusted.
 
 A Supplier can fill in everything about the request itself (part numbers,
 phase, product/process type, before/after reference images, details and
