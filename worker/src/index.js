@@ -356,12 +356,20 @@
  *                                        assigned to its own org; a Customer login sees none).
  *                                        Separate storage/counter from Customer Open Issues -
  *                                        see the module comment near SUPPLIER_OPEN_ISSUES_FILE_PATH.
- *   POST   /supplier-open-issues       - team_member or above required (a Supplier never
- *                                        creates one, only views/comments - see module comment).
+ *   POST   /supplier-open-issues       - team_member or above, OR a Supplier. A Supplier's
+ *                                        new issue is forced to their own organization (a
+ *                                        different supplierOrg in the body is ignored).
+ *                                        Issue Number is auto-assigned for a Supplier; a
+ *                                        number they send is ignored. Staff may still supply
+ *                                        a custom number. See the module comment.
  *   GET    /supplier-open-issues/peek-number - team_member or above required; preview of the
  *                                        next auto-assigned Issue Number (does not consume it).
- *   PUT    /supplier-open-issues/<id>  - team_member or above required (a Supplier never
- *                                        edits the record itself, only comments).
+ *   PUT    /supplier-open-issues/<id>  - team_member or above, OR the assigned Supplier.
+ *                                        A Supplier may edit the same fields as staff on an
+ *                                        issue assigned to their org. A different supplierOrg
+ *                                        is ignored (the stored org stays). A supplier-sent
+ *                                        issueNumber is ignored (the stored number stays).
+ *                                        Another supplier's issue, or a miss, is 404.
  *   POST   /supplier-open-issues/<id>/comments - team_member or above, OR the assigned
  *                                        Supplier; appends one authored/timestamped entry to
  *                                        the Notes/Comments thread.
@@ -398,7 +406,12 @@
  *                                        staff fields; dispositions and Dessimate sign-off
  *                                        cannot be changed. PUT of pdirs/<title>.pdf is
  *                                        allowed only before a Dessimate decision; after
- *                                        that, 403. A Customer stays read-only.
+ *                                        that, 403. A Supplier may also PUT
+ *                                        supplier_open_issue_docs/<issueId>/... when that
+ *                                        issue is already assigned to their organization
+ *                                        (the picture and attachments saved with the issue).
+ *                                        A missing issue, or another supplier's, is 404.
+ *                                        A Customer stays read-only.
  *   GET    /commits?path=<path>       - "last modified" info for a path (D1 row's
  *                                        updated_at, or an R2 object's upload time).
  *
@@ -1312,9 +1325,9 @@ export default {
         }
       }
 
-      // ---- Supplier Open Issues List - mirrors the routes above with the
-      // roles flipped (Supplier instead of Customer) - see the module
-      // comment near SUPPLIER_OPEN_ISSUES_FILE_PATH.
+      // ---- Supplier Open Issues List - a Supplier can create and edit
+      // issues for their own org. Delete and 8D stay staff-only. See the
+      // module comment near SUPPLIER_OPEN_ISSUES_FILE_PATH.
       if (url.pathname === '/supplier-open-issues') {
         if (request.method === 'GET') {
           // Any signed-in user is "ok" here - scopeSupplierOpenIssues
@@ -1325,11 +1338,12 @@ export default {
           return await handleListSupplierOpenIssues(env, origin, auth.accessLevel, auth.organization);
         }
         if (request.method === 'POST') {
-          // Staff-only - a Supplier never creates an open issue, see the
-          // module comment above.
-          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          // Staff, or a Supplier filing an issue for their own org. The
+          // handler forces supplierOrg and ignores a client issue number
+          // for a Supplier - see the module comment above.
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateSupplierOpenIssue(request, env, origin, auth.username);
+          return await handleCreateSupplierOpenIssue(request, env, origin, auth.username, auth.accessLevel);
         }
       }
 
@@ -1366,9 +1380,11 @@ export default {
       if (url.pathname.startsWith('/supplier-open-issues/')) {
         const id = decodeURIComponent(url.pathname.slice('/supplier-open-issues/'.length));
         if (request.method === 'PUT') {
-          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+          // Staff, or the Supplier the issue is assigned to. Delete stays
+          // in the staff-only branch below. A miss for a Supplier is 404.
+          const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleUpdateSupplierOpenIssue(request, env, origin, id);
+          return await handleUpdateSupplierOpenIssue(request, env, origin, id, auth.accessLevel, auth.username);
         }
         if (request.method === 'DELETE') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
@@ -1483,7 +1499,9 @@ export default {
         // index org tag is their org (draft merge + no approve), or start
         // a brand-new title by writing the draft first. Untagged titles
         // and titles that already have files/index they do not own are
-        // refused — never another org's files.
+        // refused — never another org's files. A Supplier may also PUT
+        // supplier_open_issue_docs for an issue already assigned to their
+        // org (picture and attachments). A miss there is 404.
         if (auth.accessLevel === 'customer') {
           if (request.method !== 'GET') {
             return json({ message: 'Your account has read-only access.' }, 403, origin);
@@ -1495,6 +1513,9 @@ export default {
             const allowed = await isContentsPathAllowedForExternal(env, ghPath, auth.accessLevel, auth.organization);
             if (!allowed) return json({ message: 'Not accessible with your account.' }, 403, origin);
           } else if (request.method === 'PUT') {
+            const issueDocs = await supplierOpenIssueDocsPutAccess(env, ghPath, auth.organization);
+            if (issueDocs && issueDocs.ok) return await proxyContents(request, env, origin, ghPath);
+            if (issueDocs && issueDocs.status) return json({ message: issueDocs.message }, issueDocs.status, origin);
             return await handleSupplierPdirContentsPut(request, env, origin, ghPath, auth.organization);
           } else {
             return json({ message: 'Your account has read-only access.' }, 403, origin);
@@ -9449,9 +9470,17 @@ async function resolveCustomerOpenIssueRecord(env, id) {
 }
 
 // ---- Supplier Open Issues List - a running log of open production/quality
-// issues tied to a Supplier's parts, tracked entirely by Dessimate staff (a
-// Supplier never creates or edits one - only views issues assigned to their
-// own org and adds to the comment thread). Mirrors Customer Open Issues'
+// issues tied to a Supplier's parts. Team Member+ creates, edits, and
+// deletes every issue. A Supplier can create an issue, forced to their own
+// organization, and can edit issues already assigned to that organization
+// (the same fields staff edit). They cannot move supplierOrg to another
+// organization: a different org on update is ignored and the stored org
+// stays. Issue Number stays staff-owned — a Supplier create always
+// auto-assigns (a number they send is ignored), and a supplier-sent
+// issueNumber on update is ignored so the stored number stays. They cannot
+// see, edit, or delete another supplier's issues; a miss is 404. Delete
+// stays Team Member+. Notes/Comments are unchanged: the assigned Supplier
+// can add a note and edit their own. 8D stays Team Member+. Mirrors Customer Open Issues'
 // architecture closely (same record shape, same attachments/comments/picture
 // handling - reusing that module's generic, shape-agnostic sanitizers below)
 // with the roles flipped and entirely separate storage (own file path, own
@@ -9530,7 +9559,9 @@ function sanitizeSupplierOpenIssue(o) {
   };
 }
 
-// Staff-only end to end (a Supplier never creates/edits, only comments).
+// Shared field check for staff and the assigned Supplier. supplierOrg and
+// issueNumber are applied by the create/update handlers, which enforce the
+// supplier write rules (own org only; issue number staff-owned).
 function validateSupplierOpenIssueFields(body) {
   return {
     supplierOrg: (body.supplierOrg || '').toString().trim(),
@@ -9568,16 +9599,25 @@ async function handleListSupplierOpenIssues(env, origin, accessLevel, organizati
   return json({ openIssues: items }, 200, origin);
 }
 
-async function handleCreateSupplierOpenIssue(request, env, origin, username) {
+async function handleCreateSupplierOpenIssue(request, env, origin, username, accessLevel) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateSupplierOpenIssueFields(body);
-  if (!fields.supplierOrg) return json({ message: 'Supplier Organization is required.' }, 400, origin);
+  const isSupplier = accessLevel === 'supplier';
+  if (isSupplier) {
+    const callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Supplier organization.' }, 403, origin);
+    fields.supplierOrg = callerOrg;
+  } else if (!fields.supplierOrg) {
+    return json({ message: 'Supplier Organization is required.' }, 400, origin);
+  }
   const priority = parseOpenIssuePriority(body.priority);
   if (priority === undefined) return json({ message: OPEN_ISSUE_PRIORITY_ERROR }, 400, origin);
   fields.priority = priority;
 
-  const clientIssueNumber = (body.issueNumber || '').toString().trim();
+  // A Supplier cannot pick the number (that would let them claim or skip
+  // ahead in the series). Blank means auto-assign, which is all they get.
+  const clientIssueNumber = isSupplier ? '' : (body.issueNumber || '').toString().trim();
   if (clientIssueNumber && await supplierOpenIssueNumberTaken(env, clientIssueNumber, null)) {
     return json({ message: 'That Issue Number is already in use.' }, 409, origin);
   }
@@ -9596,10 +9636,16 @@ async function handleCreateSupplierOpenIssue(request, env, origin, username) {
   return json(sanitizeSupplierOpenIssue(newIssue), 201, origin);
 }
 
-async function handleUpdateSupplierOpenIssue(request, env, origin, id) {
+async function handleUpdateSupplierOpenIssue(request, env, origin, id, accessLevel, username) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateSupplierOpenIssueFields(body);
+  const isSupplier = accessLevel === 'supplier';
+  let callerOrg = '';
+  if (isSupplier) {
+    callerOrg = await resolveUserOrganization(env, username);
+    if (!callerOrg) return json({ message: 'Your account isn’t linked to a Supplier organization.' }, 403, origin);
+  }
   // Only touch priority when the client sends the key, so a PUT from a
   // page cached before Rev2.36 (no Priority field) can't wipe it.
   if (body.priority !== undefined) {
@@ -9609,7 +9655,9 @@ async function handleUpdateSupplierOpenIssue(request, env, origin, id) {
   }
 
   let newIssueNumber; // undefined = leave as-is
-  if (body.issueNumber !== undefined) {
+  // Issue Number edits stay staff-only. A supplier-sent number is ignored
+  // so they cannot overwrite the stored number (or take someone else's).
+  if (!isSupplier && body.issueNumber !== undefined) {
     const requested = (body.issueNumber === null ? '' : String(body.issueNumber)).trim();
     if (!requested) return json({ message: 'Issue Number is required.' }, 400, origin);
     if (await supplierOpenIssueNumberTaken(env, requested, id)) {
@@ -9622,6 +9670,9 @@ async function handleUpdateSupplierOpenIssue(request, env, origin, id) {
   const result = await mutateJsonArrayFile(env, SUPPLIER_OPEN_ISSUES_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
+    // Same 404 as a missing id — do not leak that another org's issue exists.
+    if (isSupplier && target.supplierOrg !== callerOrg) return null;
+    if (isSupplier) fields.supplierOrg = target.supplierOrg;
     Object.assign(target, fields);
     if (newIssueNumber !== undefined) target.issueNumber = newIssueNumber;
     saved = target;
@@ -9725,6 +9776,21 @@ async function handleEditSupplierOpenIssueComment(request, env, origin, id, comm
 async function resolveSupplierOpenIssueRecord(env, id) {
   const state = await readJsonArrayFile(env, SUPPLIER_OPEN_ISSUES_FILE_PATH);
   return state.items.find(function (o) { return o.id === id; }) || null;
+}
+
+// Supplier PUT of /contents/supplier_open_issue_docs/<issueId>/... — only
+// after the issue exists and is assigned to their org (Save creates the
+// record first, then uploads the picture and attachments). ghPath is already
+// decoded by the /contents/ route. null means this path is not an open-issue
+// doc, so the caller falls through to the PDIR write check. A missing issue
+// or another supplier's issue is 404.
+async function supplierOpenIssueDocsPutAccess(env, ghPath, organization) {
+  const m = /^supplier_open_issue_docs\/([^/]+)\/.+$/.exec(ghPath || '');
+  if (!m) return null;
+  if (!organization) return { status: 403, message: 'Your account isn’t linked to a Supplier organization.' };
+  const issue = await resolveSupplierOpenIssueRecord(env, m[1]);
+  if (!issue || issue.supplierOrg !== organization) return { status: 404, message: 'Not found.' };
+  return { ok: true };
 }
 
 // ---- 8D report -------------------------------------------------------------

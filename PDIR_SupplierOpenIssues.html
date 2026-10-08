@@ -177,8 +177,6 @@
   .modalSection{ margin:18px 0 4px; }
   .modalSection h3{ font-size:13px; margin:0 0 10px; color:var(--ink); border-top:1px solid var(--line); padding-top:16px; }
   .modalSectionHint{ font-size:12px; color:var(--label); margin:2px 0 8px; }
-  .supplierSectionNote{ font-size:12px; color:var(--brand); font-weight:600; margin:2px 0 8px; }
-
   .radioGroup, .checkGroup{ display:flex; gap:16px; flex-wrap:wrap; margin-top:5px; }
   .radioGroup label, .checkGroup label{ display:flex; align-items:center; gap:6px; font-size:13px; font-weight:400;
     color:var(--ink); margin:0; cursor:pointer; }
@@ -523,7 +521,6 @@
 
       <div class="modalSection" id="notesWrap">
         <h3>Notes / Comments</h3>
-        <p class="supplierSectionNote" id="supplierSectionNote" style="display:none;">You can view this issue and add notes below.</p>
         <div id="reviewCommentsList" class="reviewCommentsList"></div>
         <div class="addCommentRow" id="addCommentRow" style="display:none;">
           <input type="text" id="f_newComment" placeholder="Add a note…">
@@ -590,14 +587,15 @@
   function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
   function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
 
-  // Staff-only end to end, except a Supplier login can view issues
-  // assigned to their own org (server-side scoped - see
-  // worker/README.md) and add to the Notes/Comments thread. No Customer
-  // role in this module at all.
+  // Staff can create, edit, and delete every issue. A Supplier can create
+  // and edit issues for their own organization (server-enforced — they
+  // cannot reassign supplierOrg or change the Issue Number). Delete and
+  // 8D stay staff-only. No Customer role in this module at all.
   var currentAccessLevel = null;
   var currentOrganization = '';
   function canManageAll(){ return currentAccessLevel === 'team_member' || currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
   function isSupplierUser(){ return currentAccessLevel === 'supplier'; }
+  function canEditIssues(){ return canManageAll() || isSupplierUser(); }
   async function resolveMe(){
     var session = getSession();
     if (!session) { currentAccessLevel = null; currentOrganization = ''; return; }
@@ -612,7 +610,7 @@
   }
   function applyAccessLevelUI(){
     var addBtn = document.getElementById('addIssueBtn');
-    if (addBtn) addBtn.style.display = canManageAll() ? '' : 'none';
+    if (addBtn) addBtn.style.display = canEditIssues() ? '' : 'none';
     // Download Excel is available to anyone who can see this list at all
     // (staff or a Supplier viewing their own org's issues) - it just
     // exports whatever rows loadIssues() already scoped server-side.
@@ -956,11 +954,10 @@
   // login accounts, so the value stored per champion is the username (not a
   // display name) - championDisplayName resolves a username to a friendly
   // name wherever one is known.
-  // /org-contacts is staff-only server-side (requireRole team_member+), so
-  // a Supplier login (read-only here - canManageAll() is false) never
-  // calls it; the picker just lists the issue's already-stored usernames as
-  // disabled, unfetched entries for that role instead of trying to load the
-  // full roster.
+  // /org-contacts lets a Supplier query their own org (anyone else gets an
+  // empty list). Staff and a Supplier editing their own issue both load the
+  // live roster; a role that cannot edit the record only sees the names
+  // already stored.
   var orgContactsCache = {}; // orgName -> [{username,name}] | [] (not found / forbidden)
   var championNameByUsername = {}; // username -> name, merged from every source seen so far
   function indexPeopleForNames(list){
@@ -992,11 +989,11 @@
   async function renderChampionPicker(currentValues){
     var values = Array.isArray(currentValues) ? currentValues.filter(Boolean) : [];
     updateChampionToggleLabel(values);
-    document.getElementById('championToggleBtn').disabled = !canManageAll();
+    document.getElementById('championToggleBtn').disabled = !canEditIssues();
     var listEl = document.getElementById('f_championResponsible_list');
 
-    if (!canManageAll()) {
-      // Read-only (Supplier) view - just show who's assigned, no fetch.
+    if (!canEditIssues()) {
+      // Read-only view - just show who's assigned, no fetch.
       if (!values.length) {
         listEl.innerHTML = '<div class="emptyNote">No one assigned yet.</div>';
       } else {
@@ -1068,6 +1065,15 @@
       html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Organizations list)</option>';
     }
     return html;
+  }
+  // A Supplier cannot assign another organization. The dropdown is only
+  // their own org, and applyRoleUIForModal disables it. Staff still see
+  // the full Supplier list.
+  function supplierOrgOptionsForCaller(currentValue){
+    if (!isSupplierUser()) return supplierOrgOptions(currentValue);
+    var org = currentOrganization || currentValue || '';
+    if (!org) return '<option value="">— Select Supplier —</option>';
+    return '<option value="' + escapeHtml(org) + '" selected>' + escapeHtml(org) + '</option>';
   }
   function partOptions(currentValue){
     var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
@@ -1335,12 +1341,10 @@
       var data = await res.json();
       lastIssues = Array.isArray(data.openIssues) ? data.openIssues : [];
       indexPeopleForNames(lastDessimatePeople);
-      // For staff viewing every org at once, prefetch each distinct
-      // supplierOrg's contacts up front so the table/export can show
-      // friendly champion names instead of raw usernames. A Supplier login
-      // can't call /org-contacts (staff-only server-side) - its own
-      // champion usernames just render as-is for that role.
-      if (canManageAll()) {
+      // Prefetch each distinct supplierOrg's contacts so the table and
+      // export can show friendly champion names. A Supplier can load
+      // contacts for their own org only (the list is already scoped to it).
+      if (canEditIssues()) {
         var orgsToFetch = {};
         lastIssues.forEach(function(issue){ if (issue.supplierOrg) orgsToFetch[issue.supplierOrg] = true; });
         await Promise.all(Object.keys(orgsToFetch).map(fetchOrgContacts));
@@ -1403,7 +1407,7 @@
         ? 'No open issues match the search.'
         : (selectedSupplierFilter || selectedPartFilters.length || selectedPriorityFilters.length || searchQ)
         ? 'No open issues match the selected filters.'
-        : (isSupplierUser() ? 'No open issues assigned to your organization yet.' : 'No open issues yet. Click Add an Open Issue above to add the first one.');
+        : (isSupplierUser() ? 'No open issues assigned to your organization yet. Click Add an Open Issue above to add one.' : 'No open issues yet. Click Add an Open Issue above to add the first one.');
       return;
     }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
@@ -1488,15 +1492,18 @@
     }).join('');
     wrap.querySelectorAll('[data-part-idx]').forEach(function(row){
       var idx = parseInt(row.getAttribute('data-part-idx'), 10);
-      row.querySelector('[data-part-select]').addEventListener('change', function(){ partNumberRows[idx] = this.value; });
+      var select = row.querySelector('[data-part-select]');
+      select.disabled = !canEditIssues();
+      select.addEventListener('change', function(){ partNumberRows[idx] = this.value; });
     });
     wrap.querySelectorAll('[data-part-remove]').forEach(function(btn){
+      btn.disabled = !canEditIssues();
       btn.addEventListener('click', function(){
         partNumberRows.splice(parseInt(this.getAttribute('data-part-remove'), 10), 1);
         renderPartNumbers();
       });
     });
-    document.getElementById('addPartBtn').disabled = partNumberRows.length >= PART_NUMBERS_MAX || !canManageAll();
+    document.getElementById('addPartBtn').disabled = partNumberRows.length >= PART_NUMBERS_MAX || !canEditIssues();
   }
   document.getElementById('addPartBtn').addEventListener('click', function(){
     if (partNumberRows.length >= PART_NUMBERS_MAX) return;
@@ -1522,7 +1529,7 @@
         var viewBtn = entry.kind === 'pending'
           ? '<button type="button" data-preview-idx="' + idx + '">Preview</button>'
           : '<button type="button" data-view-idx="' + idx + '">View</button>';
-        var removeLinkHtml = canManageAll() ? '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' : '';
+        var removeLinkHtml = canEditIssues() ? '<span class="removeLink" style="cursor:pointer;" data-remove-idx="' + idx + '">Remove</span>' : '';
         return '<div class="attachRow">' +
           '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
           '<div class="attachLinks">' + viewBtn + removeLinkHtml +
@@ -1531,11 +1538,11 @@
           '</div>';
       }).join('');
     }
-    inputEl.disabled = count >= ATTACHMENTS_MAX || !canManageAll();
+    inputEl.disabled = count >= ATTACHMENTS_MAX || !canEditIssues();
     inputEl.title = count >= ATTACHMENTS_MAX ? 'Maximum of ' + ATTACHMENTS_MAX + ' attachments reached.' : '';
 
     listEl.querySelectorAll('[data-comment-idx]').forEach(function(input){
-      input.disabled = !canManageAll();
+      input.disabled = !canEditIssues();
       input.addEventListener('input', function(){
         var entry = attachmentsState[Number(input.getAttribute('data-comment-idx'))];
         if (!entry) return;
@@ -1595,7 +1602,7 @@
     var wrap = document.getElementById('picSlotWrap');
     if (!picState) {
       wrap.innerHTML = '<div class="attachEmpty">No picture attached.</div>' +
-        (canManageAll() ? '<input type="file" accept="image/png,image/jpeg" id="picInput" style="margin-top:8px;">' : '');
+        (canEditIssues() ? '<input type="file" accept="image/png,image/jpeg" id="picInput" style="margin-top:8px;">' : '');
       var input = document.getElementById('picInput');
       if (input) input.addEventListener('change', async function(){
         var file = this.files && this.files[0];
@@ -1615,7 +1622,7 @@
     var name = picState.kind === 'pending' ? picState.filename : picState.doc.filename;
     var nameClass = picState.kind === 'pending' ? 'attachName pending' : 'attachName';
     var label = picState.kind === 'pending' ? escapeHtml(name) + ' (will upload on Save)' : escapeHtml(name);
-    var removeLinkHtml = canManageAll() ? '<span class="removeLink" style="cursor:pointer;" data-pic-remove>Remove</span>' : '';
+    var removeLinkHtml = canEditIssues() ? '<span class="removeLink" style="cursor:pointer;" data-pic-remove>Remove</span>' : '';
     wrap.innerHTML = '<div class="attachRow">' +
       '<span class="' + nameClass + '" title="' + escapeHtml(name) + '">' + label + '</span>' +
       '<div class="attachLinks"><button type="button" id="picViewBtn">View</button>' + removeLinkHtml + '</div>' +
@@ -1699,7 +1706,6 @@
     var canComment = (canManageAll() || isSupplierUser()) && !!editingId;
     document.getElementById('addCommentRow').style.display = canComment ? 'flex' : 'none';
     document.getElementById('addCommentHint').style.display = (!editingId && (canManageAll() || isSupplierUser())) ? '' : 'none';
-    document.getElementById('supplierSectionNote').style.display = isSupplierUser() ? '' : 'none';
   }
   document.getElementById('f_newComment').addEventListener('keydown', function(e){
     if (e.key === 'Enter') { e.preventDefault(); document.getElementById('addCommentBtn').click(); }
@@ -1747,13 +1753,16 @@
   });
 
   function applyRoleUIForModal(){
+    var canEdit = canEditIssues();
     setNumberFieldEditable(canManageAll());
     var allInputs = document.querySelectorAll('#issueForm input, #issueForm select, #issueForm textarea');
     allInputs.forEach(function(el){
       if (el.id === 'f_issueNumber' || el.id === 'f_newComment') return;
-      el.disabled = !canManageAll();
+      // A Supplier files and edits only under their own organization.
+      if (el.id === 'f_supplierOrg') { el.disabled = isSupplierUser() || !canEdit; return; }
+      el.disabled = !canEdit;
     });
-    document.getElementById('modalSaveBtn').style.display = canManageAll() ? '' : 'none';
+    document.getElementById('modalSaveBtn').style.display = canEdit ? '' : 'none';
     document.getElementById('modalEightDBtn').style.display = canManageAll() ? '' : 'none';
     renderPartNumbers();
     renderAttachmentsList();
@@ -1765,7 +1774,7 @@
     document.getElementById('issueForm').reset();
     document.getElementById('modalError').textContent = '';
     document.getElementById('attachError').textContent = '';
-    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions('');
+    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptionsForCaller(isSupplierUser() ? currentOrganization : '');
     document.getElementById('f_issueNumber').value = '';
     partNumberRows = [];
     attachmentsState = [];
@@ -1782,7 +1791,9 @@
     editingId = null;
     resetForm();
     document.getElementById('modalTitle').textContent = 'Add an Open Issue';
-    document.getElementById('modalSub').textContent = 'Issue Number is optional — leave blank to assign automatically, or type your own.';
+    document.getElementById('modalSub').textContent = isSupplierUser()
+      ? 'Issue Number is assigned when you save. The issue is filed under your organization.'
+      : 'Issue Number is optional — leave blank to assign automatically, or type your own.';
     document.getElementById('issueModalOverlay').classList.add('open');
   }
   function openEditModal(id){
@@ -1793,10 +1804,12 @@
     document.getElementById('modalError').textContent = '';
     document.getElementById('attachError').textContent = '';
 
-    document.getElementById('modalTitle').textContent = (canManageAll() ? 'Edit ' : 'View ') + 'Open Issue ' + issue.issueNumber;
-    document.getElementById('modalSub').textContent = canManageAll() ? 'Issue Number can be corrected any time.' : 'You can view this issue and add notes below.';
+    document.getElementById('modalTitle').textContent = (canEditIssues() ? 'Edit ' : 'View ') + 'Open Issue ' + issue.issueNumber;
+    document.getElementById('modalSub').textContent = canManageAll()
+      ? 'Issue Number can be corrected any time.'
+      : (isSupplierUser() ? 'You can update this issue. The issue number and supplier organization stay as assigned.' : 'You can view this issue and add notes below.');
     document.getElementById('f_issueNumber').value = issue.issueNumber;
-    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptions(issue.supplierOrg || '');
+    document.getElementById('f_supplierOrg').innerHTML = supplierOrgOptionsForCaller(issue.supplierOrg || '');
     closeChampionPanel();
     renderChampionPicker(issue.championResponsible || []);
     document.getElementById('f_status').value = issue.status === 'closed' ? 'closed' : 'open';
@@ -1841,6 +1854,7 @@
       status: document.getElementById('f_status').value,
       priority: document.getElementById('f_priority').value
     };
+    if (isSupplierUser()) baseFields.supplierOrg = currentOrganization || baseFields.supplierOrg;
     if (!baseFields.supplierOrg) throw new Error('Select a Supplier Organization.');
 
     var issueId = editingId;
@@ -1853,8 +1867,9 @@
       issueId = createData.id;
       editingId = issueId;
       // Reflect the system-assigned Issue Number (when the field was left
-      // blank) back into the form before the finalize-PUT below, which
-      // requires a non-empty issueNumber on every save.
+      // blank) back into the form before the finalize-PUT below. Staff
+      // saves send that number. A Supplier's number is ignored server-side
+      // and the stored number stays.
       document.getElementById('f_issueNumber').value = createData.issueNumber;
     }
 
