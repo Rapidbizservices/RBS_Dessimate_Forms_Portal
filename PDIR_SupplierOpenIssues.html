@@ -276,6 +276,9 @@
   .saveBtn:disabled{ background:#9fb0d8; cursor:wait; }
   .cancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
   .cancelBtn:hover{ background:#f4f5f8; }
+  .eightDBtn{ color:#fff; background:#101d3a; border:none; }
+  .eightDBtn:hover{ background:#1c3877; }
+  .eightDBtn:disabled{ background:#8b97b3; cursor:wait; }
 
   /* In-page document viewer */
   .viewerOverlay{
@@ -532,6 +535,7 @@
       <div class="modalError" id="modalError"></div>
       <div class="modalBtns" id="modalBtnsWrap">
         <button type="button" class="cancelBtn" id="modalCancelBtn">Cancel</button>
+        <button type="button" class="eightDBtn" id="modalEightDBtn">8D</button>
         <button type="submit" class="saveBtn" id="modalSaveBtn">Save</button>
       </div>
     </form>
@@ -1750,6 +1754,7 @@
       el.disabled = !canManageAll();
     });
     document.getElementById('modalSaveBtn').style.display = canManageAll() ? '' : 'none';
+    document.getElementById('modalEightDBtn').style.display = canManageAll() ? '' : 'none';
     renderPartNumbers();
     renderAttachmentsList();
     renderPicSlot();
@@ -1908,6 +1913,43 @@
       errEl.textContent = err && err.message ? err.message : 'Could not save this open issue.';
     } finally {
       saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  });
+  document.getElementById('modalEightDBtn').addEventListener('click', async function(){
+    var btn = this;
+    var errEl = document.getElementById('modalError');
+    errEl.textContent = '';
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      await saveIssue();
+      btn.textContent = 'Writing 8D…';
+      var res = await apiFetch('supplier-open-issues/' + encodeURIComponent(editingId) + '/8d', { method: 'POST' });
+      if (!res.ok) {
+        var data = {}; try { data = await res.json(); } catch (e) {}
+        throw new Error(data.message || ('HTTP ' + res.status));
+      }
+      var blob = await res.blob();
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      var num = (document.getElementById('f_issueNumber').value || 'issue').trim().replace(/[^\w.-]+/g, '_');
+      a.download = '8D-' + (num || 'issue') + '.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 1500);
+      try {
+        var listRes = await apiFetch('supplier-open-issues');
+        if (listRes.ok) {
+          var listData = await listRes.json();
+          lastIssues = Array.isArray(listData.openIssues) ? listData.openIssues : lastIssues;
+          renderTable();
+        }
+      } catch (e) {}
+    } catch (err) {
+      errEl.textContent = err && err.message ? err.message : 'Could not generate the 8D.';
+    } finally {
+      btn.disabled = false; btn.textContent = '8D';
     }
   });
   // -----------------------------------------------------------------------------

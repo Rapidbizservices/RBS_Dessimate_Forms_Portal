@@ -47,6 +47,12 @@ crons = ["*/15 * * * *"]
 #                     and "step-up" tokens, and is the key material for
 #                     encrypting TOTP secrets at rest. See worker/README.md's
 #                     Multi-factor authentication section.
+#   ANTHROPIC_API_KEY - from console.anthropic.com (a paid Anthropic
+#                     organization). Required for the 8D button on Customer
+#                     and Supplier Open Issues. The key stays only as a
+#                     Cloudflare secret. Issue text, photos, and the PDF are
+#                     not stored in git. Optional var ANTHROPIC_MODEL
+#                     overrides the default model (claude-sonnet-5-5).
 #   RESEND_API_KEY  - from your Resend account (resend.com, free tier).
 #                     Sends MFA email one-time codes AND RFQ quote-due
 #                     extension/reminder emails. Once set, every account

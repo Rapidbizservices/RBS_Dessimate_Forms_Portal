@@ -87,6 +87,18 @@ only needed once you actually use multi-factor authentication (see
 **Multi-factor authentication (MFA)** below), but it's fine to set it now.
 
 ```
+npx wrangler secret put ANTHROPIC_API_KEY
+```
+Required for the **8D** button on Customer and Supplier Open Issues. In the
+[Anthropic Console](https://console.anthropic.com) for your paid organization,
+create an API key and paste it here. The key stays only as a Cloudflare
+secret. Issue text, photos, and the PDF are not committed to the GitHub repo.
+The only external send is this worker calling Anthropic under that key, so the
+call is billed to that Anthropic account. The default model is
+`claude-sonnet-5-5`. To use a different one, add `ANTHROPIC_MODEL` under
+`[vars]` in `wrangler.toml` and deploy again.
+
+```
 npx wrangler secret put RESEND_API_KEY
 ```
 Optional — only needed if you want MFA's email-code fallback active. Create
@@ -1818,10 +1830,12 @@ empty cells:
   the timing plans' planned/actual shading. Text on a dark fill is switched
   to white, since the file's own font colour isn't available.
 - **Freeze Panes carry over** - rows and columns frozen in Excel stay put
-  while the rest of the sheet scrolls, read straight from each sheet's XML
-  (SheetJS doesn't expose them). Row numbers and column letters always stay
-  on screen too, as in Excel. A plain split (not frozen) is ignored, and a
-  workbook whose panes can't be read just shows unfrozen.
+  while the rest of the sheet scrolls, read from each sheet's own `<pane>`
+  in the .xlsx zip (SheetJS skips that tag, and its OLE reader can't open
+  an .xlsx, which is why this used to show every sheet unfrozen). Row
+  numbers and column letters always stay on screen too, as in Excel. A
+  plain split (not frozen) is ignored, and a workbook whose panes can't be
+  read just shows unfrozen.
 - **Not yet carried over:** font colour/bold and borders (the free SheetJS
   build can't read them), and conditional formatting - Excel saves only the
   rules, not the resulting colours, so rule-coloured cells show unfilled.

@@ -347,6 +347,9 @@
  *   PUT    /customer-open-issues/<id>/comments/<commentId> - team_member or above (any
  *                                        comment), OR the owning Customer (their own comment
  *                                        only); edits that entry's text. No delete route.
+ *   POST   /customer-open-issues/<id>/8d - team_member or above required. Reads the
+ *                                        saved issue (text, picture, attachments) and returns
+ *                                        a generated 8D PDF. Does not change the issue.
  *   DELETE /customer-open-issues/<id>  - team_member or above required.
  *   GET    /supplier-open-issues       - any signed-in user; scoped (team_member or above sees
  *                                        every open issue; a Supplier login sees only ones
@@ -365,6 +368,8 @@
  *   PUT    /supplier-open-issues/<id>/comments/<commentId> - team_member or above (any
  *                                        comment), OR the assigned Supplier (their own comment
  *                                        only); edits that entry's text. No delete route.
+ *   POST   /supplier-open-issues/<id>/8d - team_member or above required. Same 8D PDF
+ *                                        as the customer route, from this issue's own record.
  *   DELETE /supplier-open-issues/<id>  - team_member or above required.
  *   GET    /pdir-index                - any signed-in user; list of PDIR title tags
  *                                        (organization + partNumber), plus untagged titles
@@ -1286,6 +1291,12 @@ export default {
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         return await handleEditOpenIssueComment(request, env, origin, id, commentId, auth.accessLevel, auth.username);
       }
+      if (/^\/customer-open-issues\/[^/]+\/8d$/.test(url.pathname) && request.method === 'POST') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleGenerateOpenIssue8d(env, origin, id, 'customer');
+      }
 
       if (url.pathname.startsWith('/customer-open-issues/')) {
         const id = decodeURIComponent(url.pathname.slice('/customer-open-issues/'.length));
@@ -1344,6 +1355,12 @@ export default {
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         return await handleEditSupplierOpenIssueComment(request, env, origin, id, commentId, auth.accessLevel, auth.username);
+      }
+      if (/^\/supplier-open-issues\/[^/]+\/8d$/.test(url.pathname) && request.method === 'POST') {
+        const id = decodeURIComponent(url.pathname.split('/')[2]);
+        const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleGenerateOpenIssue8d(env, origin, id, 'supplier');
       }
 
       if (url.pathname.startsWith('/supplier-open-issues/')) {
@@ -9074,7 +9091,8 @@ async function handleGetCustomerDmrPdf(env, origin, id, accessLevel, organizatio
 // their own org's issues and adds to the comment thread). A future
 // "Dessimate Open Issues List" sibling module (internal-only issues, no
 // Customer org) is planned but not built yet - see the prompt this was
-// built from. No PDF generation - not requested for this module.
+// built from. POST /customer-open-issues/<id>/8d writes an 8D PDF from the
+// saved record; it does not change the issue.
 const CUSTOMER_OPEN_ISSUES_FILE_PATH = 'data/customer_open_issues.json';
 const CUSTOMER_OPEN_ISSUE_DOC_FOLDER = 'customer_open_issue_docs';
 const OPEN_ISSUE_PART_NUMBERS_MAX = 5;
@@ -9707,6 +9725,424 @@ async function handleEditSupplierOpenIssueComment(request, env, origin, id, comm
 async function resolveSupplierOpenIssueRecord(env, id) {
   const state = await readJsonArrayFile(env, SUPPLIER_OPEN_ISSUES_FILE_PATH);
   return state.items.find(function (o) { return o.id === id; }) || null;
+}
+
+// ---- 8D report -------------------------------------------------------------
+// Staff clicks 8D on a saved Customer or Supplier open issue. This reads that
+// record (and its picture / attachments from R2), asks the model to write a
+// complete 8D from whatever was filled in, and returns a PDF. It does not
+// write anything back onto the issue.
+const EIGHT_D_KEYS = ['d1_team', 'd2_problem', 'd3_containment', 'd4_root_cause', 'd5_corrective_action', 'd6_implementation', 'd7_prevention', 'd8_closure'];
+const EIGHT_D_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    d1_team: { type: 'string' },
+    d2_problem: { type: 'string' },
+    d3_containment: { type: 'string' },
+    d4_root_cause: { type: 'string' },
+    d5_corrective_action: { type: 'string' },
+    d6_implementation: { type: 'string' },
+    d7_prevention: { type: 'string' },
+    d8_closure: { type: 'string' }
+  },
+  required: EIGHT_D_KEYS
+};
+const EIGHT_D_INSTRUCTIONS = [
+  'You write customer-ready 8D reports for Dessimate, a manufacturing supply-chain company.',
+  'The issue form is source notes and is often only partly filled in. Write all eight sections as a finished report.',
+  'Use every filled field, the photo, and any attached documents as the facts of the case.',
+  'Where a section was left blank, complete it from the problem, the photo, the root cause, and the countermeasures, in the language a quality engineer uses on a real 8D.',
+  'Each section is one to three paragraphs, specific to this issue.',
+  'Keep the issue number, organization, part numbers, priority, and any dates, quantities, lot codes, or measurements exactly as given.',
+  'Do not invent a quantity, date, lot code, serial number, or measurement that is not in the source. When one is missing, describe the action without a made-up figure.',
+  'D1 names the champion and the functions a problem of this type needs, without inventing personal names that were not given.',
+  'D2 describes the defect, including what the photo shows when a photo is attached.',
+  'D8 closes the report in a professional tone. If the issue is still open, state what remains before closure.',
+  'Write plain paragraphs. No markdown headings.'
+].join(' ');
+const EIGHT_D_SECTION_TITLES = [
+  ['d1_team', 'D1  Team'],
+  ['d2_problem', 'D2  Problem description'],
+  ['d3_containment', 'D3  Interim containment'],
+  ['d4_root_cause', 'D4  Root cause'],
+  ['d5_corrective_action', 'D5  Permanent corrective action'],
+  ['d6_implementation', 'D6  Implementation and validation'],
+  ['d7_prevention', 'D7  Prevention'],
+  ['d8_closure', 'D8  Closure']
+];
+
+function pdfSafe(str) {
+  return String(str == null ? '' : str)
+    .replace(/\r\n/g, '\n')
+    .replace(/[\u2018\u2019\u2032]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/[\u2022\u00B7]/g, '-')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[^\n\x20-\x7E]/g, '');
+}
+function pdfWrapLines(str, maxWidth, size, font) {
+  const out = [];
+  pdfSafe(str).split('\n').forEach(function (raw) {
+    const words = raw.split(/\s+/).filter(Boolean);
+    if (!words.length) { out.push(''); return; }
+    let cur = '';
+    words.forEach(function (word) {
+      let piece = word;
+      while (piece && font.widthOfTextAtSize(piece, size) > maxWidth) {
+        let cut = piece.length - 1;
+        while (cut > 1 && font.widthOfTextAtSize(piece.slice(0, cut), size) > maxWidth) cut--;
+        if (cur) { out.push(cur); cur = ''; }
+        out.push(piece.slice(0, cut));
+        piece = piece.slice(cut);
+      }
+      if (!piece) return;
+      const attempt = cur ? cur + ' ' + piece : piece;
+      if (cur && font.widthOfTextAtSize(attempt, size) > maxWidth) { out.push(cur); cur = piece; }
+      else cur = attempt;
+    });
+    if (cur) out.push(cur);
+  });
+  return out;
+}
+function openIssueStatusLabel(status) {
+  return status === 'closed' ? 'Closed' : 'Open';
+}
+function eightDFilename(issueNumber) {
+  const safe = String(issueNumber || 'issue').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'issue';
+  return '8D-' + safe + '.pdf';
+}
+function isoDay(value) {
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(value || ''));
+  return m ? m[1] : '';
+}
+
+function openIssueMediaMime(doc) {
+  const mime = String((doc && doc.mimeType) || '').toLowerCase();
+  const name = String((doc && doc.filename) || '');
+  if (mime.indexOf('png') !== -1 || /\.png$/i.test(name)) return 'image/png';
+  if (mime.indexOf('webp') !== -1 || /\.webp$/i.test(name)) return 'image/webp';
+  if (mime.indexOf('gif') !== -1 || /\.gif$/i.test(name)) return 'image/gif';
+  if (mime.indexOf('jpeg') !== -1 || mime.indexOf('jpg') !== -1 || /\.jpe?g$/i.test(name)) return 'image/jpeg';
+  if (mime === 'application/pdf' || /\.pdf$/i.test(name)) return 'application/pdf';
+  if (mime.indexOf('text/') === 0 || /\.(txt|csv|md|json)$/i.test(name)) return 'text/plain';
+  return mime || 'application/octet-stream';
+}
+
+async function loadOpenIssueMedia(env, issue, folder) {
+  const images = [];
+  const files = [];
+  const notes = [];
+  async function consider(doc, role) {
+    if (!doc || !doc.path) return;
+    if (doc.path.indexOf(folder + '/') !== 0 || doc.path.indexOf('..') !== -1) return;
+    const name = doc.filename || 'file';
+    let bytes = null;
+    try { bytes = await readGithubFileBytes(env, doc.path); } catch (e) { bytes = null; }
+    if (!bytes) {
+      notes.push(role + ' "' + name + '" is listed but could not be loaded.');
+      return;
+    }
+    const mime = openIssueMediaMime(doc);
+    if (mime.indexOf('image/') === 0 && images.length < 4 && bytes.length <= 4 * 1024 * 1024) {
+      images.push({ bytes: bytes, mime: mime, filename: name, role: role });
+    } else if (mime === 'application/pdf' && files.length < 2 && bytes.length <= 3 * 1024 * 1024) {
+      files.push({ bytes: bytes, filename: name });
+    } else if (mime === 'text/plain' && bytes.length <= 100000) {
+      let text = '';
+      try { text = new TextDecoder().decode(bytes).slice(0, 12000); } catch (e) { text = ''; }
+      if (text.trim()) notes.push(role + ' "' + name + '":\n' + text.trim());
+    } else {
+      notes.push(role + ' "' + name + '" is on file' + (doc.comment ? ' (' + doc.comment + ')' : '') + '.');
+    }
+  }
+  await consider(issue.issuePicture, 'Issue picture');
+  const attachments = Array.isArray(issue.attachments) ? issue.attachments : [];
+  for (let i = 0; i < attachments.length; i++) await consider(attachments[i], 'Attachment');
+  return { images: images, files: files, notes: notes.join('\n') };
+}
+
+function buildEightDSourceText(issue, partyLabel, partyName, mediaNotes) {
+  const champions = Array.isArray(issue.championResponsible) ? issue.championResponsible.filter(Boolean).join(', ') : '';
+  const comments = (Array.isArray(issue.comments) ? issue.comments : []).map(function (c) {
+    return '- ' + (c.authorUsername || 'note') + (c.createdAt ? ' (' + c.createdAt + ')' : '') + ': ' + (c.text || '');
+  }).join('\n');
+  const attachments = (Array.isArray(issue.attachments) ? issue.attachments : []).map(function (a) {
+    return '- ' + (a.filename || a.path || 'file') + (a.comment ? ' - ' + a.comment : '');
+  }).join('\n');
+  return [
+    'Write a complete 8D from these issue notes.',
+    '',
+    'Issue number: ' + (issue.issueNumber || ''),
+    'Status: ' + openIssueStatusLabel(issue.status),
+    'Priority: ' + (issue.priority || 'not set'),
+    partyLabel + ': ' + (partyName || ''),
+    'Part numbers: ' + ((issue.partNumbers || []).join(', ') || 'not listed'),
+    'Champions / responsible: ' + (champions || 'not listed'),
+    'Opened: ' + (isoDay(issue.createdAt) || 'not recorded'),
+    'Opened by: ' + (issue.createdBy || ''),
+    'Title: ' + (issue.issueTitle || ''),
+    '',
+    'Issue description:',
+    issue.issueDescription || '(blank)',
+    '',
+    'Interim corrective measure:',
+    issue.interimCM || '(blank)',
+    '',
+    'Root cause:',
+    issue.rootCause || '(blank)',
+    '',
+    'Permanent corrective measure:',
+    issue.permCM || '(blank)',
+    '',
+    'Next action:',
+    issue.nextAction || '(blank)',
+    '',
+    'Notes:',
+    comments || '(none)',
+    '',
+    'Attachments on file:',
+    attachments || '(none)',
+    '',
+    mediaNotes || ''
+  ].join('\n');
+}
+
+function claudeMessageText(data) {
+  const parts = data && Array.isArray(data.content) ? data.content : [];
+  return parts.map(function (part) { return part && part.type === 'text' && part.text ? part.text : ''; }).join('');
+}
+function parseEightDReport(text) {
+  let raw = String(text || '').trim();
+  const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(raw);
+  if (fence) raw = fence[1];
+  const report = JSON.parse(raw);
+  const out = {};
+  EIGHT_D_KEYS.forEach(function (key) {
+    out[key] = report && typeof report[key] === 'string' ? report[key].trim() : '';
+  });
+  if (!EIGHT_D_KEYS.some(function (key) { return out[key]; })) throw new Error('empty');
+  return out;
+}
+async function callEightDModel(env, content) {
+  const model = String(env.ANTHROPIC_MODEL || 'claude-sonnet-5-5').trim() || 'claude-sonnet-5-5';
+  // If a safety classifier declines a legitimate report, Anthropic re-routes
+  // it to a suitable model instead of failing. Only these models accept the
+  // "default" fallback form; an ANTHROPIC_MODEL override to anything else
+  // just runs without it.
+  const useFallback = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-fable-5-1'].indexOf(model) !== -1;
+  const headers = {
+    'x-api-key': env.ANTHROPIC_API_KEY,
+    'anthropic-version': '2023-06-01',
+    'content-type': 'application/json'
+  };
+  if (useFallback) headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify(Object.assign({
+      model: model,
+      // Thinking is on by default on current Claude models and counts
+      // toward max_tokens, so leave room for it plus all eight sections.
+      // (No temperature: current models reject sampling parameters.)
+      max_tokens: 16000,
+      system: EIGHT_D_INSTRUCTIONS,
+      messages: [{ role: 'user', content: content }],
+      output_config: { format: { type: 'json_schema', schema: EIGHT_D_SCHEMA } }
+    }, useFallback ? { fallbacks: 'default' } : {})),
+    signal: AbortSignal.timeout(90000)
+  });
+  const raw = await res.text();
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch (e) { data = null; }
+  if (!res.ok) {
+    const message = data && data.error && data.error.message ? String(data.error.message) : ('Report service returned HTTP ' + res.status + '.');
+    const err = new Error(message.slice(0, 300));
+    err.status = res.status;
+    throw err;
+  }
+  if (data && data.stop_reason === 'refusal') {
+    const err = new Error('The report service declined to write this report. Try rewording the issue details.');
+    err.status = 502;
+    throw err;
+  }
+  if (data && data.stop_reason === 'max_tokens') {
+    const err = new Error('The report was cut off before it finished. Try again.');
+    err.status = 502;
+    throw err;
+  }
+  try {
+    return parseEightDReport(claudeMessageText(data));
+  } catch (e) {
+    const err = new Error('The report came back in an unexpected format. Try again.');
+    err.status = 502;
+    throw err;
+  }
+}
+
+async function buildEightDPdf(meta, report, picture) {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const pageWidth = 612, pageHeight = 792, margin = 48;
+  const brandBlue = rgb(0.169, 0.306, 0.639);
+  const bandBg = rgb(0.925, 0.941, 0.976);
+  const ink = rgb(0.11, 0.11, 0.12);
+  const labelGray = rgb(0.36, 0.38, 0.42);
+  const rule = rgb(0.85, 0.86, 0.89);
+
+  let logoImg = null;
+  try { logoImg = await pdfDoc.embedJpg(base64ToBytes(DESSIMATE_LOGO_JPG_BASE64)); } catch (e) { logoImg = null; }
+  let photo = null;
+  if (picture && picture.bytes) {
+    try {
+      if (picture.mime === 'image/png') photo = await pdfDoc.embedPng(picture.bytes);
+      else if (picture.mime === 'image/jpeg') photo = await pdfDoc.embedJpg(picture.bytes);
+    } catch (e) { photo = null; }
+  }
+
+  let page = pdfDoc.addPage([pageWidth, pageHeight]);
+  let y = pageHeight - margin;
+  function newPage() {
+    page = pdfDoc.addPage([pageWidth, pageHeight]);
+    y = pageHeight - margin;
+  }
+  function ensure(need) {
+    if (y - need < margin + 18) newPage();
+  }
+  function drawLines(lines, size, useFont, color, x, gap) {
+    lines.forEach(function (line) {
+      ensure(size + gap);
+      page.drawText(line, { x: x, y: y - size, size: size, font: useFont, color: color });
+      y -= size + gap;
+    });
+  }
+
+  page.drawRectangle({ x: 0, y: pageHeight - 86, width: pageWidth, height: 86, color: bandBg });
+  if (logoImg) {
+    const dims = logoImg.scaleToFit(96, 42);
+    page.drawImage(logoImg, { x: margin, y: pageHeight - 22 - dims.height, width: dims.width, height: dims.height });
+  }
+  page.drawText('8D REPORT', { x: margin + 112, y: pageHeight - 40, size: 18, font: fontBold, color: brandBlue });
+  page.drawText(pdfSafe(meta.issueNumber || ''), { x: margin + 112, y: pageHeight - 58, size: 11, font: font, color: ink });
+  const titleLines = pdfWrapLines(meta.issueTitle || '', pageWidth - margin - (margin + 112), 10, font);
+  if (titleLines.length && titleLines[0]) {
+    page.drawText(titleLines[0], { x: margin + 112, y: pageHeight - 74, size: 10, font: font, color: labelGray });
+  }
+  y = pageHeight - 106;
+
+  function drawMeta(label, value) {
+    const size = 10;
+    const lines = pdfWrapLines(value || '-', pageWidth - margin - (margin + 148), size, font);
+    if (!lines.length) lines.push('-');
+    lines.forEach(function (line, i) {
+      ensure(size + 4);
+      if (i === 0) page.drawText(label, { x: margin, y: y - size, size: size, font: fontBold, color: labelGray });
+      page.drawText(line, { x: margin + 148, y: y - size, size: size, font: font, color: ink });
+      y -= size + 4;
+    });
+  }
+  drawMeta('Organization', meta.partyName || '-');
+  drawMeta('Part numbers', (meta.partNumbers || []).join(', ') || '-');
+  drawMeta('Priority', meta.priority || '-');
+  drawMeta('Status', meta.statusLabel || '-');
+  drawMeta('Champion', meta.champions || '-');
+  drawMeta('Opened', meta.opened || '-');
+  y -= 8;
+
+  if (photo) {
+    const dims = photo.scaleToFit(220, 160);
+    ensure(dims.height + 18);
+    page.drawImage(photo, { x: margin, y: y - dims.height, width: dims.width, height: dims.height });
+    y -= dims.height + 8;
+    page.drawText('Issue picture', { x: margin, y: y - 9, size: 8, font: font, color: labelGray });
+    y -= 20;
+  }
+
+  EIGHT_D_SECTION_TITLES.forEach(function (pair) {
+    ensure(56);
+    y -= 6;
+    page.drawLine({ start: { x: margin, y: y }, end: { x: pageWidth - margin, y: y }, thickness: 0.6, color: rule });
+    y -= 16;
+    page.drawText(pair[1], { x: margin, y: y - 11, size: 11, font: fontBold, color: brandBlue });
+    y -= 18;
+    const body = report[pair[0]] || '';
+    const lines = pdfWrapLines(body, pageWidth - margin * 2, 10, font);
+    drawLines(lines.length ? lines : ['-'], 10, font, ink, margin, 3);
+    y -= 6;
+  });
+
+  const pages = pdfDoc.getPages();
+  const footer = 'Dessimate  ·  8D report  ·  Review before release';
+  pages.forEach(function (p, i) {
+    p.drawText(footer, { x: margin, y: 28, size: 8, font: font, color: labelGray });
+    const pageLabel = 'Page ' + (i + 1) + ' of ' + pages.length;
+    p.drawText(pageLabel, { x: pageWidth - margin - font.widthOfTextAtSize(pageLabel, 8), y: 28, size: 8, font: font, color: labelGray });
+  });
+  return await pdfDoc.save();
+}
+
+async function handleGenerateOpenIssue8d(env, origin, id, kind) {
+  if (!env.ANTHROPIC_API_KEY) {
+    return json({ message: '8D reports need an Anthropic API key on the server. Set ANTHROPIC_API_KEY from your Anthropic account at console.anthropic.com, then deploy the worker.' }, 503, origin);
+  }
+  const isSupplier = kind === 'supplier';
+  const raw = isSupplier ? await resolveSupplierOpenIssueRecord(env, id) : await resolveCustomerOpenIssueRecord(env, id);
+  if (!raw) return json({ message: 'Not found.' }, 404, origin);
+  const issue = isSupplier ? sanitizeSupplierOpenIssue(raw) : sanitizeCustomerOpenIssue(raw);
+  const hasNotes = issue.issueTitle || issue.issueDescription || issue.rootCause || issue.interimCM || issue.permCM || issue.nextAction || (issue.issuePicture && issue.issuePicture.path);
+  if (!hasNotes) return json({ message: 'Add a title, description, photo, or corrective action before generating an 8D.' }, 400, origin);
+
+  const folder = isSupplier ? SUPPLIER_OPEN_ISSUE_DOC_FOLDER : CUSTOMER_OPEN_ISSUE_DOC_FOLDER;
+  const partyLabel = isSupplier ? 'Supplier' : 'Customer';
+  const partyName = isSupplier ? issue.supplierOrg : issue.customerOrg;
+  let media;
+  try { media = await loadOpenIssueMedia(env, issue, folder); }
+  catch (e) { return json({ message: 'Could not read this issue’s files.' }, 500, origin); }
+
+  const content = [{ type: 'text', text: buildEightDSourceText(issue, partyLabel, partyName, media.notes) }];
+  media.images.forEach(function (img) {
+    content.push({ type: 'text', text: img.role + ': ' + img.filename });
+    content.push({ type: 'image', source: { type: 'base64', media_type: img.mime, data: bytesToBase64(img.bytes) } });
+  });
+  media.files.forEach(function (file) {
+    content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: bytesToBase64(file.bytes) } });
+  });
+
+  let report;
+  try {
+    report = await callEightDModel(env, content);
+  } catch (err) {
+    const fileParts = content.some(function (part) { return part.type === 'document'; });
+    if (fileParts && err && err.status === 400) {
+      try { report = await callEightDModel(env, content.filter(function (part) { return part.type !== 'document'; })); }
+      catch (err2) { return json({ message: (err2 && err2.message) || 'Could not write the 8D.' }, 502, origin); }
+    } else if (err && err.name === 'TimeoutError') {
+      return json({ message: 'The report took too long. Try again.' }, 504, origin);
+    } else {
+      return json({ message: (err && err.message) || 'Could not write the 8D.' }, 502, origin);
+    }
+  }
+
+  const picture = media.images.filter(function (img) { return img.role === 'Issue picture' && (img.mime === 'image/jpeg' || img.mime === 'image/png'); })[0] || null;
+  let bytes;
+  try {
+    bytes = await buildEightDPdf({
+      issueNumber: String(issue.issueNumber || ''),
+      issueTitle: issue.issueTitle || '',
+      partyName: partyName || '',
+      partNumbers: issue.partNumbers || [],
+      priority: issue.priority || '',
+      statusLabel: openIssueStatusLabel(issue.status),
+      champions: (issue.championResponsible || []).join(', '),
+      opened: isoDay(issue.createdAt)
+    }, report, picture);
+  } catch (e) {
+    return json({ message: 'The report was written but the PDF could not be built.' }, 500, origin);
+  }
+  return pdfResponse(bytes, eightDFilename(issue.issueNumber), origin);
 }
 
 // ---- Supplier Invoices (what a Supplier bills Dessimate against a

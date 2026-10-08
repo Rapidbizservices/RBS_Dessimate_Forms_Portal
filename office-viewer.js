@@ -617,59 +617,94 @@
     var m = new RegExp('\\s' + name + '="([^"]*)"').exec(tag);
     return m ? xlsxDecodeXmlText(m[1]) : null;
   }
-  function xlsxReadFrozenPanes(bytes) {
+  function xlsxU16(u8, i) { return u8[i] | (u8[i + 1] << 8); }
+  function xlsxU32(u8, i) { return (u8[i] | (u8[i + 1] << 8) | (u8[i + 2] << 16) | (u8[i + 3] << 24)) >>> 0; }
+
+  // An .xlsx is a zip, not an OLE compound file. SheetJS's CFB reader is the
+  // OLE one, so the earlier CFB.read path silently produced no panes on every
+  // real workbook. This reads just the few XML parts Freeze Panes live in.
+  function xlsxZipFindEocd(u8) {
+    var start = Math.max(0, u8.length - 65557);
+    for (var i = u8.length - 22; i >= start; i--) {
+      if (xlsxU32(u8, i) === 0x06054b50) return i;
+    }
+    return -1;
+  }
+  async function xlsxZipInflateRaw(comp) {
+    if (typeof DecompressionStream === 'undefined') return null;
+    var stream = new Blob([comp]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  async function xlsxZipReadText(bytes, path, maxBytes) {
+    var u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    var eocd = xlsxZipFindEocd(u8);
+    if (eocd < 0) return null;
+    var cdOff = xlsxU32(u8, eocd + 16), cdEnd = cdOff + xlsxU32(u8, eocd + 12), p = cdOff;
+    while (p + 46 <= cdEnd && p + 46 <= u8.length) {
+      if (xlsxU32(u8, p) !== 0x02014b50) break;
+      var method = xlsxU16(u8, p + 10), compSize = xlsxU32(u8, p + 20);
+      var nameLen = xlsxU16(u8, p + 28), extraLen = xlsxU16(u8, p + 30), commentLen = xlsxU16(u8, p + 32);
+      var localOff = xlsxU32(u8, p + 42);
+      var name = '';
+      for (var n = 0; n < nameLen; n++) name += String.fromCharCode(u8[p + 46 + n]);
+      if (name === path) {
+        if (xlsxU32(u8, localOff) !== 0x04034b50) return null;
+        var dataOff = localOff + 30 + xlsxU16(u8, localOff + 26) + xlsxU16(u8, localOff + 28);
+        var comp = u8.subarray(dataOff, dataOff + compSize);
+        var inflated = method === 0 ? comp : (method === 8 ? await xlsxZipInflateRaw(comp) : null);
+        if (!inflated) return null;
+        var slice = maxBytes && inflated.length > maxBytes ? inflated.subarray(0, maxBytes) : inflated;
+        return new TextDecoder('utf-8').decode(slice);
+      }
+      p += 46 + nameLen + extraLen + commentLen;
+    }
+    return null;
+  }
+
+  async function xlsxReadFrozenPanes(bytes) {
     var panes = {};
     try {
-      var X = window.XLSX;
-      if (!X.CFB || typeof TextDecoder === 'undefined') return panes;
-      // CFB only recognises a zip from a byte array; a bare ArrayBuffer would
-      // fail its signature check.
-      var zip = X.CFB.read(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes, { type: 'array' });
-      var decoder = new TextDecoder('utf-8');
-      var readPart = function (path, maxBytes) {
-        var entry = X.CFB.find(zip, '/' + path);
-        if (!entry || !entry.content) return null;
-        var data = entry.content instanceof Uint8Array ? entry.content : new Uint8Array(entry.content);
-        return decoder.decode(maxBytes && data.length > maxBytes ? data.subarray(0, maxBytes) : data);
-      };
-      var workbookXml = readPart('xl/workbook.xml');
-      var relsXml = readPart('xl/_rels/workbook.xml.rels');
+      if (typeof TextDecoder === 'undefined') return panes;
+      var workbookXml = await xlsxZipReadText(bytes, 'xl/workbook.xml');
+      var relsXml = await xlsxZipReadText(bytes, 'xl/_rels/workbook.xml.rels');
       if (!workbookXml || !relsXml) return panes;
 
       var targets = {};
       (relsXml.match(/<(?:\w+:)?Relationship\b[^>]*>/g) || []).forEach(function (tag) {
         var id = xlsxXmlAttr(tag, 'Id'), target = xlsxXmlAttr(tag, 'Target');
-        if (id && target) targets[id] = target.charAt(0) === '/' ? target.slice(1) : 'xl/' + target;
+        if (id && target) targets[id] = target.charAt(0) === '/' ? target.replace(/^\//, '') : 'xl/' + target;
       });
 
-      var u = X.utils;
-      (workbookXml.match(/<(?:\w+:)?sheet\b[^>]*>/g) || []).forEach(function (tag) {
+      var u = window.XLSX.utils;
+      var sheets = workbookXml.match(/<(?:\w+:)?sheet\b[^>]*>/g) || [];
+      for (var s = 0; s < sheets.length; s++) {
+        var tag = sheets[s];
         var name = xlsxXmlAttr(tag, 'name');
-        var rid = /\s\w+:id="([^"]*)"/.exec(tag);
+        var rid = /\s(?:\w+:)?id="([^"]*)"/i.exec(tag);
         var path = rid && targets[rid[1]];
-        if (!name || !path) return;
+        if (!name || !path) continue;
         // <sheetViews> sits ahead of <sheetData>, so the opening bytes are
-        // enough - no need to decode a large sheet's entire XML for this.
-        var head = readPart(path, 65536);
-        if (!head) return;
-        var view = /<(?:\w+:)?sheetView\b[^>]*>/.exec(head);
+        // enough - no need to inflate a large sheet's entire XML for this.
+        var head = await xlsxZipReadText(bytes, path, 65536);
+        if (!head) continue;
         var pane = /<(?:\w+:)?pane\b[^>]*>/.exec(head);
-        if (!view || !pane) return;
+        if (!pane) continue;
         var state = xlsxXmlAttr(pane[0], 'state');
         // A plain (unfrozen) split is two independently scrolling views -
         // there's no faithful way to show that in a single grid, so skip it.
-        if (state !== 'frozen' && state !== 'frozenSplit') return;
+        if (state !== 'frozen' && state !== 'frozenSplit') continue;
         var rows = Math.floor(+xlsxXmlAttr(pane[0], 'ySplit') || 0);
         var colsFrozen = Math.floor(+xlsxXmlAttr(pane[0], 'xSplit') || 0);
-        if (rows <= 0 && colsFrozen <= 0) return;
-        // The frozen block starts at the view's own top-left cell, which is
-        // A1 unless the sheet was saved scrolled.
-        var topLeft = u.decode_cell(xlsxXmlAttr(view[0], 'topLeftCell') || 'A1');
+        if (rows <= 0 && colsFrozen <= 0) continue;
+        // pane.topLeftCell is the first UNFROZEN cell. The frozen block is
+        // the ySplit rows / xSplit columns immediately above and left of it,
+        // which is what Excel froze even if the sheet was saved scrolled.
+        var origin = u.decode_cell(xlsxXmlAttr(pane[0], 'topLeftCell') || 'A1');
         panes[name] = {
-          rowStart: topLeft.r, rowEnd: topLeft.r + rows - 1,
-          colStart: topLeft.c, colEnd: topLeft.c + colsFrozen - 1
+          rowStart: origin.r - rows, rowEnd: origin.r - 1,
+          colStart: origin.c - colsFrozen, colEnd: origin.c - 1
         };
-      });
+      }
     } catch (e) { /* unreadable panes - render unfrozen */ }
     return panes;
   }
@@ -881,7 +916,7 @@
     var showNames = wb.SheetNames.length > 1;
     var scheme = wb.Themes && wb.Themes.themeElements && wb.Themes.themeElements.clrScheme;
     var themeColors = scheme ? scheme.map(function (c) { return c && c.rgb; }) : null;
-    var panes = xlsxReadFrozenPanes(bytes);
+    var panes = await xlsxReadFrozenPanes(bytes);
     var frag = document.createDocumentFragment();
     var sections = [];
     wb.SheetNames.forEach(function (name) {
