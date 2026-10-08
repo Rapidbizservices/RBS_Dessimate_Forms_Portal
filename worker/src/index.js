@@ -367,28 +367,33 @@
  *                                        only); edits that entry's text. No delete route.
  *   DELETE /supplier-open-issues/<id>  - team_member or above required.
  *   GET    /pdir-index                - any signed-in user; list of PDIR title tags
- *                                        (organization + partNumber). A Supplier sees only
- *                                        PDIRs tagged to their org whose Part lists them as a
- *                                        supplier; a Customer sees only PDIRs for Parts they
- *                                        buy. Team Member+ sees every entry.
+ *                                        (organization + partNumber), plus untagged titles
+ *                                        whose draft already names a Part. A Supplier sees
+ *                                        PDIRs tagged to their org, and untagged PDIRs for
+ *                                        parts they supply. A Customer sees PDIRs for Parts
+ *                                        they buy. Team Member+ sees every entry.
  *   GET    /pdir-index/<title>        - same read scope as the list; 404 if the title is
  *                                        outside the caller's scope (does not leak existence).
  *   POST   /pdir-index                - team_member or above can upsert any title (create or
- *                                        update the tag). A Supplier may update an existing
- *                                        title they can already see (force their own org;
- *                                        fields only applied when present) - they cannot
- *                                        create a new PDIR title. Customer: 403.
+ *                                        update the tag). A Supplier may create a title only
+ *                                        when nothing exists under it (no index, draft, PDF,
+ *                                        or pdir_docs). Existing titles: update only if the
+ *                                        index org tag is already their org. They cannot
+ *                                        claim an untagged or other-org title. Customer: 403.
  *   GET    /contents/<path...>        - reads one file from R2 (blocked for anything
  *                                        under data/ - see above), or lists a "directory"
  *                                        prefix, in a shape mirroring GitHub's old API.
  *   PUT    /contents/<path...>        - writes one file to R2 (same data/ block as above).
- *                                        A Supplier may PUT pdir_drafts / pdir_docs for an
- *                                        existing PDIR they can see (merge draft so omitted
- *                                        staff fields are kept; all three dispositions and
- *                                        Dessimate sign-off cannot be changed). PUT of
- *                                        pdirs/<title>.pdf is allowed only before Dessimate
- *                                        has recorded a decision; after that, 403. A
- *                                        Customer stays read-only.
+ *                                        A Supplier may PUT pdir_drafts / pdir_docs / pdirs
+ *                                        only for a title whose index org tag is their org.
+ *                                        Untagged Dessimate-started PDIRs are read-only.
+ *                                        A brand-new title is created by the draft first
+ *                                        (which writes the index tag); PDF/docs are refused
+ *                                        until that draft exists. Draft merge keeps omitted
+ *                                        staff fields; dispositions and Dessimate sign-off
+ *                                        cannot be changed. PUT of pdirs/<title>.pdf is
+ *                                        allowed only before a Dessimate decision; after
+ *                                        that, 403. A Customer stays read-only.
  *   GET    /commits?path=<path>       - "last modified" info for a path (D1 row's
  *                                        updated_at, or an R2 object's upload time).
  *
@@ -513,12 +518,12 @@ const APQP_ITEM_LABELS = {
 // team_member - Dessimate PO, Supplier Invoice, PDIR, Parts (read/write), APQP
 // supplier    - own-organization records only: Parts, Dessimate POs, Supplier
 //               Invoices, APQP (read), and PDIRs (via data/pdir_index.json,
-//               scoped to parts they supply). PDIR drafts/docs/PDF for an
-//               existing title they can see are writable; they cannot create
-//               a new PDIR title, change any Disposition (Approved / Rework /
-//               Hold), or change Dessimate Sign-off. Finished PDF replace is
-//               blocked once Dessimate has recorded a decision. Other modules
-//               stay as documented on each route.
+//               scoped to parts they supply). They can complete existing
+//               PDIRs for those parts and start a new PDIR tagged to their
+//               org + a part they supply. They cannot change any Disposition
+//               (Approved / Rework / Hold) or Dessimate Sign-off. Finished
+//               PDF replace is blocked once Dessimate has recorded a
+//               decision. Other modules stay as documented on each route.
 // customer    - read-only, own-organization records only: Parts, Customer
 //               POs, APQP, PDIRs (via data/pdir_index.json, scoped by Part
 //               Number rather than organization - see resolveVisible-
@@ -1457,9 +1462,11 @@ export default {
         // fine while only trusted Dessimate staff could sign in at all; now
         // that Supplier/Customer logins exist, those accounts are restricted
         // to the small set of files isContentsPathAllowedForExternal allows.
-        // A Customer stays read-only. A Supplier may PUT an existing PDIR
-        // they can see (draft merge + no approve) - never another org's
-        // files, and never a brand-new PDIR title.
+        // A Customer stays read-only. A Supplier may PUT a PDIR whose
+        // index org tag is their org (draft merge + no approve), or start
+        // a brand-new title by writing the draft first. Untagged titles
+        // and titles that already have files/index they do not own are
+        // refused — never another org's files.
         if (auth.accessLevel === 'customer') {
           if (request.method !== 'GET') {
             return json({ message: 'Your account has read-only access.' }, 403, origin);
@@ -4154,7 +4161,7 @@ async function handleAddApqpComment(request, env, origin, id, itemKey, username)
 // PDIR_INDEX_FILE_PATH above) -------------------------------------------
 
 function sanitizePdirIndexEntry(e) {
-  return {
+  const out = {
     id: e.id,
     title: e.title || '',
     shipmentNumber: e.shipmentNumber || '',
@@ -4162,6 +4169,8 @@ function sanitizePdirIndexEntry(e) {
     partNumber: e.partNumber || '',
     updatedAt: e.updatedAt || null
   };
+  if (e.writable !== undefined) out.writable = !!e.writable;
+  return out;
 }
 
 // Shared "which Part Numbers can this org see" set - same scopeParts rule
@@ -4174,46 +4183,204 @@ async function resolveVisiblePartNumbers(env, accessLevel, organization) {
   return new Set(visibleParts.map(function (p) { return (p.partNumber || '').toLowerCase(); }));
 }
 
-function pdirIndexVisibleToCaller(entry, accessLevel, organization, visiblePartNumbers) {
-  if (!entry) return false;
+// Index organization is the org tag when an index row exists (empty string
+// means untagged — all suppliers of that part). Draft organization_name is
+// only used when there is no index row at all, so a supplier save that fills
+// the form org does not hide a Dessimate-started untagged PDIR from sibling
+// suppliers. Part number falls back to the draft when the index omitted it.
+async function resolvePdirVisibilityMeta(env, title, indexEntry) {
+  const draft = (!indexEntry || !indexEntry.organization || !indexEntry.partNumber)
+    ? await readPdirDraftDecisionState(env, title)
+    : { fields: {}, docs: {} };
+  const taggedOrg = indexEntry
+    ? (indexEntry.organization || '').trim()
+    : ((draft.fields.organization_name || '').toString().trim());
+  const partNumber = ((indexEntry && indexEntry.partNumber) || draft.fields.part_number || '').toString().trim();
+  const shipmentNumber = ((indexEntry && indexEntry.shipmentNumber) || draft.fields.shipment_number || '').toString().trim();
+  return {
+    id: indexEntry && indexEntry.id,
+    title: (indexEntry && indexEntry.title) || title,
+    taggedOrg: taggedOrg,
+    organization: taggedOrg,
+    partNumber: partNumber,
+    shipmentNumber: shipmentNumber,
+    updatedAt: (indexEntry && indexEntry.updatedAt) || null
+  };
+}
+
+function pdirVisibleToCaller(meta, accessLevel, organization, visiblePartNumbers) {
+  if (!meta) return false;
   if (accessLevel === 'supplier') {
-    if (!organization || entry.organization !== organization) return false;
-    const pn = (entry.partNumber || '').toLowerCase();
-    if (!pn) return true;
-    return visiblePartNumbers.has(pn);
+    if (!organization) return false;
+    if (meta.taggedOrg) {
+      if (meta.taggedOrg !== organization) return false;
+      if (!meta.partNumber) return true;
+      return visiblePartNumbers.has(meta.partNumber.toLowerCase());
+    }
+    if (!meta.partNumber) return false;
+    return visiblePartNumbers.has(meta.partNumber.toLowerCase());
   }
   if (accessLevel === 'customer') {
-    return visiblePartNumbers.has((entry.partNumber || '').toLowerCase());
+    return !!meta.partNumber && visiblePartNumbers.has(meta.partNumber.toLowerCase());
   }
   return true;
 }
 
-// A Supplier sees only PDIRs tagged to their org whose Part lists them as a
-// supplier (no other suppliers' PDIRs, even on a multi-supplier part). A
-// Customer is scoped through Part Numbers they buy (Rev2.1). Staff see all.
+// Write is narrower than read. The index org tag must already be this
+// supplier's org. An empty tag (Dessimate-started, untagged) is staff-only
+// until Dessimate assigns an org — the first supplier to save must not
+// claim it. Storage-only titles with no index row are also not writable.
+function pdirWritableBySupplier(indexEntry, organization, visiblePartNumbers) {
+  if (!indexEntry || !organization) return false;
+  const taggedOrg = (indexEntry.organization || '').toString().trim();
+  if (!taggedOrg || taggedOrg !== organization) return false;
+  const partNumber = (indexEntry.partNumber || '').toString().trim();
+  if (partNumber && !visiblePartNumbers.has(partNumber.toLowerCase())) return false;
+  return true;
+}
+
+const PDIR_UNTAGGED_WRITE_MESSAGE = 'Dessimate has not assigned this PDIR to an organization yet. Only Dessimate staff can edit it until it is tagged.';
+const PDIR_DRAFT_FIRST_MESSAGE = 'Save the PDIR draft first before uploading a PDF or supporting files.';
+
+async function inspectPdirTitle(env, title) {
+  const entry = await resolvePdirIndexEntry(env, title);
+  const draftHead = await env.FILES.head('pdir_drafts/' + title + '.json');
+  const pdfHead = await env.FILES.head('pdirs/' + title + '.pdf');
+  const docsListing = await env.FILES.list({ prefix: 'pdir_docs/' + title + '/', limit: 1 });
+  const hasDocs = !!(docsListing.objects && docsListing.objects.length);
+  return {
+    entry: entry,
+    hasIndex: !!entry,
+    hasDraft: !!draftHead,
+    hasPdf: !!pdfHead,
+    hasDocs: hasDocs,
+    exists: !!(entry || draftHead || pdfHead || hasDocs)
+  };
+}
+
+async function createSupplierOwnedPdirIndex(env, title, organization, shipmentNumber, partNumber) {
+  let saved = null;
+  let denied = false;
+  const result = await mutateJsonArrayFile(env, PDIR_INDEX_FILE_PATH, function (items) {
+    const target = items.find(function (e) { return (e.title || '').toLowerCase() === title.toLowerCase(); });
+    if (target) {
+      const tagged = (target.organization || '').toString().trim();
+      if (!tagged || tagged !== organization) {
+        denied = true;
+        return { items: items };
+      }
+      saved = target;
+      return { items: items };
+    }
+    saved = {
+      id: cryptoRandomId(),
+      title: title,
+      shipmentNumber: (shipmentNumber || '').toString().trim(),
+      organization: organization,
+      partNumber: (partNumber || '').toString().trim(),
+      updatedAt: new Date().toISOString()
+    };
+    items.push(saved);
+    return { items: items };
+  });
+  if (!result.ok) return { ok: false, denied: false, message: result.message, saved: null };
+  if (denied) return { ok: false, denied: true, message: 'Not found.', saved: null };
+  return { ok: true, denied: false, saved: saved };
+}
+
+function pdirIndexVisibleToCaller(entry, accessLevel, organization, visiblePartNumbers) {
+  if (!entry) return false;
+  return pdirVisibleToCaller({
+    taggedOrg: (entry.organization || '').trim(),
+    partNumber: entry.partNumber || ''
+  }, accessLevel, organization, visiblePartNumbers);
+}
+
+async function listPdirTitlesFromStorage(env) {
+  const titles = {};
+  async function collect(prefix, stripRe) {
+    let cursor;
+    do {
+      const listing = await env.FILES.list({ prefix: prefix, limit: 1000, cursor: cursor });
+      (listing.objects || []).forEach(function (o) {
+        const m = stripRe.exec(o.key);
+        if (m) titles[m[1]] = true;
+      });
+      cursor = listing.truncated ? listing.cursor : undefined;
+    } while (cursor);
+  }
+  await collect('pdir_drafts/', /^pdir_drafts\/(.+)\.json$/);
+  await collect('pdirs/', /^pdirs\/(.+)\.pdf$/);
+  return Object.keys(titles);
+}
+
+// A Supplier sees (1) PDIRs tagged to their org and (2) untagged PDIRs whose
+// part lists them as a supplier — including Dessimate-started records that
+// never got an org tag, and drafts whose part number identifies the part
+// even when the index row is incomplete. A tagged org never leaks to another
+// supplier. A Customer is scoped through Part Numbers they buy (Rev2.1).
+// Staff see all index rows (storage-only titles still appear for staff via
+// the Portal folder listing).
 async function handleListPdirIndex(env, origin, accessLevel, organization) {
   const state = await readJsonArrayFile(env, PDIR_INDEX_FILE_PATH);
-  let entries = state.items.map(sanitizePdirIndexEntry);
+  const byTitle = {};
+  state.items.forEach(function (e) {
+    if (e && e.title) byTitle[(e.title || '').toLowerCase()] = e;
+  });
+
   if (accessLevel === 'supplier' || accessLevel === 'customer') {
     const visiblePartNumbers = organization ? await resolveVisiblePartNumbers(env, accessLevel, organization) : new Set();
-    entries = entries.filter(function (e) {
-      return pdirIndexVisibleToCaller(e, accessLevel, organization, visiblePartNumbers);
+    const storageTitles = await listPdirTitlesFromStorage(env);
+    const storageByLower = {};
+    storageTitles.forEach(function (t) {
+      storageByLower[t.toLowerCase()] = t;
+      if (!byTitle[t.toLowerCase()]) byTitle[t.toLowerCase()] = null;
     });
+    const entries = [];
+    const titles = Object.keys(byTitle);
+    for (let i = 0; i < titles.length; i++) {
+      const raw = byTitle[titles[i]];
+      const title = raw ? raw.title : storageByLower[titles[i]];
+      if (!title) continue;
+      const meta = await resolvePdirVisibilityMeta(env, title, raw);
+      if (!pdirVisibleToCaller(meta, accessLevel, organization, visiblePartNumbers)) continue;
+      entries.push(sanitizePdirIndexEntry({
+        id: meta.id || '',
+        title: meta.title,
+        shipmentNumber: meta.shipmentNumber,
+        organization: meta.organization,
+        partNumber: meta.partNumber,
+        updatedAt: meta.updatedAt,
+        writable: accessLevel === 'supplier' && pdirWritableBySupplier(raw, organization, visiblePartNumbers)
+      }));
+    }
+    return json({ pdirIndex: entries }, 200, origin);
   }
-  return json({ pdirIndex: entries }, 200, origin);
+
+  return json({ pdirIndex: state.items.map(sanitizePdirIndexEntry) }, 200, origin);
 }
 
 async function handleGetPdirIndexEntry(env, origin, title, accessLevel, organization) {
   const wanted = (title || '').toString().trim();
   if (!wanted) return json({ message: 'Not found.' }, 404, origin);
   const entry = await resolvePdirIndexEntry(env, wanted);
-  if (!entry) return json({ message: 'Not found.' }, 404, origin);
   if (accessLevel === 'supplier' || accessLevel === 'customer') {
     const visiblePartNumbers = organization ? await resolveVisiblePartNumbers(env, accessLevel, organization) : new Set();
-    if (!pdirIndexVisibleToCaller(entry, accessLevel, organization, visiblePartNumbers)) {
+    const meta = await resolvePdirVisibilityMeta(env, wanted, entry);
+    if (!pdirVisibleToCaller(meta, accessLevel, organization, visiblePartNumbers)) {
       return json({ message: 'Not found.' }, 404, origin);
     }
+    return json(sanitizePdirIndexEntry({
+      id: meta.id || '',
+      title: meta.title,
+      shipmentNumber: meta.shipmentNumber,
+      organization: meta.organization,
+      partNumber: meta.partNumber,
+      updatedAt: meta.updatedAt,
+      writable: accessLevel === 'supplier' && pdirWritableBySupplier(entry, organization, visiblePartNumbers)
+    }), 200, origin);
   }
+  if (!entry) return json({ message: 'Not found.' }, 404, origin);
   return json(sanitizePdirIndexEntry(entry), 200, origin);
 }
 
@@ -4250,11 +4417,11 @@ async function handleUpsertPdirIndexEntry(request, env, origin) {
   return json(sanitizePdirIndexEntry(saved), 200, origin);
 }
 
-// A Supplier may retag an existing PDIR they already own (part + org), so
-// Save Draft keeps the index in sync. They cannot mint a new title - Dessimate
-// creates the master PDIR. Fields are applied only when present in the body
-// so a partial save doesn't wipe shipmentNumber/partNumber. Organization is
-// always forced to the caller's org.
+// A Supplier may create a new PDIR tag only when NOTHING exists under that
+// title (no index, draft, PDF, or pdir_docs). The new row is tagged to their
+// org and a part they supply. If anything already exists, they cannot POST
+// a claiming row — untagged Dessimate-started PDIRs stay staff-write until
+// Dessimate sets the org tag; a tagged title they own can be updated.
 async function handleSupplierUpsertPdirIndexEntry(request, env, origin, organization) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
@@ -4263,13 +4430,31 @@ async function handleSupplierUpsertPdirIndexEntry(request, env, origin, organiza
   if (!organization) return json({ message: 'Your account isn\'t linked to a Supplier organization.' }, 403, origin);
 
   const visiblePartNumbers = await resolveVisiblePartNumbers(env, 'supplier', organization);
-  const existing = await resolvePdirIndexEntry(env, title);
-  if (!existing) return json({ message: 'Only Dessimate staff can create a new PDIR.' }, 403, origin);
-  if (!pdirIndexVisibleToCaller(existing, 'supplier', organization, visiblePartNumbers)) {
-    return json({ message: 'Not found.' }, 404, origin);
-  }
-  if (body.partNumber !== undefined) {
+  const inspect = await inspectPdirTitle(env, title);
+
+  if (inspect.exists) {
+    const meta = await resolvePdirVisibilityMeta(env, title, inspect.entry);
+    if (!pdirVisibleToCaller(meta, 'supplier', organization, visiblePartNumbers)) {
+      return json({ message: 'Not found.' }, 404, origin);
+    }
+    if (!inspect.hasIndex || !pdirWritableBySupplier(inspect.entry, organization, visiblePartNumbers)) {
+      return json({ message: PDIR_UNTAGGED_WRITE_MESSAGE }, 403, origin);
+    }
+  } else {
     const pn = (body.partNumber || '').toString().trim();
+    if (!pn) return json({ message: 'Part Number is required and must be one of your parts.' }, 400, origin);
+    if (!visiblePartNumbers.has(pn.toLowerCase())) {
+      return json({ message: 'Not found.' }, 404, origin);
+    }
+    const created = await createSupplierOwnedPdirIndex(env, title, organization, body.shipmentNumber || '', pn);
+    if (!created.ok) {
+      return json({ message: created.denied ? 'Not found.' : created.message }, created.denied ? 404 : 500, origin);
+    }
+    return json(sanitizePdirIndexEntry(Object.assign({}, created.saved, { writable: true })), 200, origin);
+  }
+
+  if (body.partNumber !== undefined) {
+    const pn = (body.partNumber || (inspect.entry && inspect.entry.partNumber) || '').toString().trim();
     if (pn && !visiblePartNumbers.has(pn.toLowerCase())) {
       return json({ message: 'Not found.' }, 404, origin);
     }
@@ -4279,16 +4464,19 @@ async function handleSupplierUpsertPdirIndexEntry(request, env, origin, organiza
   const result = await mutateJsonArrayFile(env, PDIR_INDEX_FILE_PATH, function (items) {
     const target = items.find(function (e) { return (e.title || '').toLowerCase() === title.toLowerCase(); });
     if (!target) return null;
+    const tagged = (target.organization || '').toString().trim();
+    if (!tagged || tagged !== organization) return null;
     if (body.shipmentNumber !== undefined) target.shipmentNumber = (body.shipmentNumber || '').toString().trim();
     if (body.partNumber !== undefined) target.partNumber = (body.partNumber || '').toString().trim();
-    target.organization = organization;
     target.updatedAt = new Date().toISOString();
     saved = target;
     return { items: items };
-  }, { requireFound: true });
-  if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
-  if (!result.ok) return json({ message: result.message }, 500, origin);
-  return json(sanitizePdirIndexEntry(saved), 200, origin);
+  });
+  if (!result.ok) {
+    const status = result.message === 'Not found.' ? 404 : 500;
+    return json({ message: result.message }, status, origin);
+  }
+  return json(sanitizePdirIndexEntry(Object.assign({}, saved, { writable: true })), 200, origin);
 }
 
 // Looks up the PDIR index entry (organization + Part Number) a title is
@@ -4345,12 +4533,11 @@ async function readPdirDraftDecisionState(env, title) {
   }
 }
 
-// Supplier PUT of an existing PDIR they can see: draft JSON is merged so
-// omitted staff fields stay put; all three dispositions and Dessimate
-// sign-off cannot be changed. Docs for that title are allowed except
-// dessimate_stamp. Finished PDF (pdirs/<title>.pdf) is allowed only until
-// Dessimate records a decision; after that, 403. A title that is not
-// already in the index cannot be created here.
+// Supplier PUT: write only when the index org tag is already their org, or
+// when the title is brand-new (nothing under it). Brand-new titles may only
+// create the draft — that writes the index tag; PDF and pdir_docs are
+// refused until the draft exists so a write cannot skip the visibility
+// check. Untagged existing titles stay staff-write.
 async function handleSupplierPdirContentsPut(request, env, origin, ghPath, organization) {
   let decoded;
   try { decoded = ghPath.split('/').map(decodeURIComponent).join('/'); } catch (e) {
@@ -4360,17 +4547,32 @@ async function handleSupplierPdirContentsPut(request, env, origin, ghPath, organ
   if (!title) return json({ message: 'Your account has read-only access.' }, 403, origin);
   if (!organization) return json({ message: 'Your account isn\'t linked to a Supplier organization.' }, 403, origin);
 
-  const entry = await resolvePdirIndexEntry(env, title);
-  if (!entry) return json({ message: 'Only Dessimate staff can create a new PDIR.' }, 403, origin);
   const visiblePartNumbers = await resolveVisiblePartNumbers(env, 'supplier', organization);
-  if (!pdirIndexVisibleToCaller(entry, 'supplier', organization, visiblePartNumbers)) {
+  const inspect = await inspectPdirTitle(env, title);
+  const isDraftPath = /^pdir_drafts\/.+\.json$/.test(decoded);
+
+  if (!inspect.exists) {
+    if (!isDraftPath) {
+      return json({ message: PDIR_DRAFT_FIRST_MESSAGE }, 403, origin);
+    }
+    return await handleSupplierPdirDraftPut(request, env, origin, ghPath, organization, visiblePartNumbers, { createNew: true, title: title });
+  }
+
+  const meta = await resolvePdirVisibilityMeta(env, title, inspect.entry);
+  if (!pdirVisibleToCaller(meta, 'supplier', organization, visiblePartNumbers)) {
     return json({ message: 'Not found.' }, 404, origin);
+  }
+  if (!pdirWritableBySupplier(inspect.entry, organization, visiblePartNumbers)) {
+    return json({ message: PDIR_UNTAGGED_WRITE_MESSAGE }, 403, origin);
   }
   if (isDessimateStampDocPath(decoded)) {
     return json({ message: 'Suppliers cannot approve a PDIR or change Dessimate sign-off.' }, 403, origin);
   }
-  if (/^pdir_drafts\/.+\.json$/.test(decoded)) {
-    return await handleSupplierPdirDraftPut(request, env, origin, ghPath, organization, visiblePartNumbers);
+  if (isDraftPath) {
+    return await handleSupplierPdirDraftPut(request, env, origin, ghPath, organization, visiblePartNumbers, { createNew: false, title: title });
+  }
+  if (!inspect.hasDraft) {
+    return json({ message: PDIR_DRAFT_FIRST_MESSAGE }, 403, origin);
   }
   if (/^pdirs\/.+\.pdf$/.test(decoded)) {
     const state = await readPdirDraftDecisionState(env, title);
@@ -4381,7 +4583,8 @@ async function handleSupplierPdirContentsPut(request, env, origin, ghPath, organ
   return await proxyContents(request, env, origin, ghPath);
 }
 
-async function handleSupplierPdirDraftPut(request, env, origin, ghPath, organization, visiblePartNumbers) {
+async function handleSupplierPdirDraftPut(request, env, origin, ghPath, organization, visiblePartNumbers, opts) {
+  opts = opts || {};
   let body;
   try { body = JSON.parse(await request.text()); } catch (e) {
     return json({ message: 'Invalid request body.' }, 400, origin);
@@ -4434,9 +4637,22 @@ async function handleSupplierPdirDraftPut(request, env, origin, ghPath, organiza
   });
   mergedFields.organization_name = organization;
   if (existingFields.shipment_number) mergedFields.shipment_number = existingFields.shipment_number;
-  if (mergedFields.part_number) {
-    if (!visiblePartNumbers.has(String(mergedFields.part_number).toLowerCase())) {
-      return json({ message: 'Not found.' }, 404, origin);
+  if (!mergedFields.part_number) {
+    return json({ message: 'Part Number is required and must be one of your parts.' }, 400, origin);
+  }
+  if (!visiblePartNumbers.has(String(mergedFields.part_number).toLowerCase())) {
+    return json({ message: 'Not found.' }, 404, origin);
+  }
+  if (opts.createNew) {
+    const created = await createSupplierOwnedPdirIndex(
+      env,
+      opts.title,
+      organization,
+      mergedFields.shipment_number || '',
+      mergedFields.part_number
+    );
+    if (!created.ok) {
+      return json({ message: created.denied ? 'Not found.' : created.message }, created.denied ? 404 : 500, origin);
     }
   }
 
@@ -4473,8 +4689,9 @@ async function handleSupplierPdirDraftPut(request, env, origin, ghPath, organiza
 // Gates the generic /contents/ proxy for a Supplier/Customer login (see the
 // comment where this is called). Only the three PDIR file locations - the
 // finished PDF, the resumable draft, and its supporting documents/photos -
-// are ever reachable: a Supplier only for a title tagged to their org whose
-// Part lists them as a supplier (same rule as GET /pdir-index), a Customer
+// are ever reachable. GET uses the same read scope as GET /pdir-index
+// (tagged to their org, or untagged for a part they supply). PUT is
+// handled separately and is narrower (index org tag required). A Customer
 // only for a title whose Part Number their organization is the customer of
 // (Rev2.1). Everything else in storage (other organizations' PDIRs,
 // drawings, invoices, org/user documents...) is refused, even though this
@@ -4489,9 +4706,9 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
   if (m) {
     const title = m[1];
     const entry = await resolvePdirIndexEntry(env, title);
-    if (!entry) return false;
     const visiblePartNumbers = await resolveVisiblePartNumbers(env, accessLevel, organization);
-    return pdirIndexVisibleToCaller(entry, accessLevel, organization, visiblePartNumbers);
+    const meta = await resolvePdirVisibilityMeta(env, title, entry);
+    return pdirVisibleToCaller(meta, accessLevel, organization, visiblePartNumbers);
   }
 
   // A Supplier/Customer can read the attachments (drawings, .stp/.step

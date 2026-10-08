@@ -567,9 +567,9 @@ the backend itself (not just hidden buttons):
   hasn't been given a different level.
 - **Supplier** / **Customer** — automatically scoped to that organization's
   own data (their own Parts, POs, Invoices, and PDIRs only — never anyone
-  else's). Customers stay read-only on PDIR. Suppliers can complete PDIR
-  sections on their parts (see **PDIR: Supplier edit** below) but cannot
-  create a new PDIR title or approve. See **Rev2 changes** below for how
+  else's). Customers stay read-only on PDIR. Suppliers can complete PDIRs
+  for their parts and start a new PDIR of their own (see **PDIR: Supplier
+  edit** below) but cannot approve. See **Rev2 changes** below for how
   this scoping works and how to turn on a real login for one.
 
 You set someone's level from their **Access Level** dropdown on the Users
@@ -864,18 +864,31 @@ part" — no new permission system needed when that's built.
 
 ### PDIR: Supplier edit
 
-A Supplier login sees only PDIRs for **parts that list their organization
-as a supplier**, and only shipments tagged to **their** org (so a
-multi-supplier part never leaks another supplier's PDIR). List, get-by-id
-(`GET /pdir-index/<title>`), and file GET/PUT (`/contents/` for
-`pdir_drafts` / `pdir_docs` / `pdirs`) all use that same scope.
+A Supplier login **sees** PDIRs for **parts that list their organization as
+a supplier**. If the index **org tag is set**, only that org sees the
+shipment (a multi-supplier part never leaks another supplier's PDIR). If
+Dessimate started a PDIR and left the org tag empty, **every listed
+supplier of that part** can still **read** it — the draft's part number is
+enough even when the index row is incomplete or missing. List, get-by-id
+(`GET /pdir-index/<title>`), and file GET use that read scope.
 
-Dessimate still creates the master PDIR (Portal **Create a PDIR** stays
-staff-only). The Supplier opens **Modify PDIR** on their part and fills
-their data-entry sections: inspection checklist, measurements/comments,
-supporting documents, photos, remarks, and Supplier Sign-off. They can
-**Create PDF** on that existing title only until Dessimate records a
-decision.
+**Write is narrower than read.** An untagged Dessimate-started PDIR
+(empty org tag) is staff-only until Dessimate assigns an org. A supplier
+cannot save, overwrite, or POST an index row that tags it to themselves.
+When Dessimate tags an org, only that org can edit. `writable` on the
+index response is true only for that tagged-org case.
+
+Suppliers can **create** a new PDIR (Portal **Create a PDIR**, or a blank
+Form Filler) only when **nothing** exists under that title: no index row,
+no draft, no PDF, and no files under `pdir_docs/<title>/`. The new record
+is tagged to **their** org and a **part they supply**. The draft is written
+first (that creates the index tag); PDF and supporting files are refused
+until that draft exists, so a file PUT cannot skip the visibility check.
+Shipment number is theirs to fill on a new record; an existing shipment
+number already on the draft stays locked so they cannot retitle someone
+else's PDIR. They fill supplier sections: checklist, documents, photos,
+remarks, and Supplier Sign-off. **Create PDF** stays available until
+Dessimate records a decision.
 
 They cannot change **disposition** — **Approved for Shipment**, **Rework
 Required**, and **Hold for Review** are all Dessimate-only (hidden in the
@@ -885,8 +898,8 @@ rejected 403; the stored values are kept). The whole **Dessimate Sign-off**
 true, or Dessimate sign-off/stamp/approver is already set, a supplier
 `PUT` of `pdirs/<title>.pdf` is 403 so they cannot overwrite an approved
 report. A supplier draft save only applies fields present in the body;
-staff/disposition fields already on the draft are kept. Customers do not
-gain PDIR write or approve.
+staff/disposition fields already on the draft are kept. Customers stay
+view-only and cannot create.
 
 ## APQP (pre-production sign-off, per Part)
 
