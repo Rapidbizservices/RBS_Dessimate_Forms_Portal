@@ -441,6 +441,7 @@
   ];
   var PDIR_DISPOSITION_FIELD_NAMES = ['disposition_approved', 'disposition_rework', 'disposition_hold'];
   var supplierPdfLocked = false;
+  var supplierWriteLocked = false;
 
   function getSession(){
     try{
@@ -503,6 +504,7 @@
     supplierPdfLocked = pdirDraftHasDessimateDecision(fields, docs);
     var createBtn = document.getElementById('createBtn');
     var status = document.getElementById('status');
+    if (supplierWriteLocked) return;
     if (supplierPdfLocked) {
       if (createBtn) createBtn.style.display = 'none';
       if (status) {
@@ -510,6 +512,26 @@
         status.textContent = 'Dessimate has already recorded a disposition or sign-off. You can save your information as a draft; only Dessimate staff can replace the finished PDF.';
       }
     }
+  }
+  function applySupplierWriteLockChrome(){
+    if (!isSupplierEditor() || !supplierWriteLocked) return;
+    var saveBtn = document.getElementById('saveDraftBtn');
+    var createBtn = document.getElementById('createBtn');
+    if (saveBtn) saveBtn.style.display = 'none';
+    if (createBtn) createBtn.style.display = 'none';
+    updateDraftStatus('Dessimate has not assigned this PDIR to an organization yet. You can view it; only Dessimate staff can edit it until it is tagged.', 'off');
+  }
+  async function refreshSupplierWriteLock(title){
+    supplierWriteLocked = false;
+    if (!isSupplierEditor() || !title) return;
+    try {
+      var res = await apiFetch('pdir-index/' + encodeURIComponent(title));
+      if (!res.ok) return;
+      var entry = await res.json();
+      if (entry && entry.writable === false) supplierWriteLocked = true;
+      else if (entry && entry.writable === undefined && !(entry.organization || '').trim()) supplierWriteLocked = true;
+    } catch (e) { /* leave unlocked so a new title can still be created */ }
+    applySupplierWriteLockChrome();
   }
   function applyRoleChrome(){
     var dispCard = document.getElementById('dispositionCard');
@@ -539,7 +561,7 @@
       }
       orgEl.disabled = true;
     }
-    if (shipEl) shipEl.disabled = true;
+    if (shipEl && shipEl.value && shipEl.value.trim()) shipEl.disabled = true;
   }
 
   async function loadOrgOptions(){
@@ -856,14 +878,11 @@
   function ghSaveDraftFile(filename, bytes, commitMessage){
     return ghPutFile(GH_DRAFT_FOLDER + '/' + filename, bytes, commitMessage);
   }
-  // PDIR has no backend-owned record of its own (see ghSaveDraftFile/ghSavePdf
-  // above - it's still just files on GitHub), so this is the one place that
-  // tags a title with the organization/part it belongs to. The backend uses
-  // that tag to scope a Supplier login's PDIR list and file access down to
-  // their own shipments. Best-effort — a failure here never blocks saving
-  // the draft/PDF itself, it just means this title stays untagged (visible
-  // to staff as always, not yet visible to any Supplier login) until the
-  // next successful save retags it.
+  // Tags a title with the organization/part it belongs to. For a supplier,
+  // POST /pdir-index only creates a row when the title is brand-new; an
+  // untagged Dessimate-started PDIR stays staff-write (the worker 403s a
+  // claiming POST). Best-effort for staff — a failure here never blocks
+  // saving the draft/PDF itself.
   async function upsertPdirIndex(title, shipmentNumber){
     try {
       var orgEl = document.getElementById('f_pdir_org_select');
@@ -2109,6 +2128,17 @@
       updateDraftStatus('Enter a Shipment Number above to enable saving your progress.', 'off');
       return;
     }
+    if (isSupplierEditor() && supplierWriteLocked) {
+      updateDraftStatus('Dessimate has not assigned this PDIR to an organization yet. Only Dessimate staff can edit it.', 'off');
+      return;
+    }
+    if (isSupplierEditor()) {
+      var partEl = document.getElementById('f_pdir_part_select');
+      if (!partEl || !partEl.value) {
+        updateDraftStatus('Select one of your Part Numbers before saving.', 'off');
+        return;
+      }
+    }
     if (!getSession()) {
       updateDraftStatus('Not signed in — please log in to save your progress.', 'off');
       showAuthOverlay();
@@ -2117,11 +2147,15 @@
     var title = buildTitle(shipmentNumber);
     updateDraftStatus('Saving draft…', 'saving');
     try {
-      await persistDirtyDocs(title, shipmentNumber.trim());
+      // Draft first so a brand-new title is tagged before any PDF/docs PUT.
       var payload = collectDraftData();
       var bytes = new TextEncoder().encode(JSON.stringify(payload));
       await ghSaveDraftFile(title + '.json', bytes, 'Save PDIR draft for shipment ' + shipmentNumber.trim());
       currentDraftTitle = title;
+      await persistDirtyDocs(title, shipmentNumber.trim());
+      payload = collectDraftData();
+      bytes = new TextEncoder().encode(JSON.stringify(payload));
+      await ghSaveDraftFile(title + '.json', bytes, 'Save PDIR draft for shipment ' + shipmentNumber.trim());
       await upsertPdirIndex(title, shipmentNumber.trim());
       updateDraftStatus('Draft saved to GitHub at ' + new Date().toLocaleTimeString() + '.', 'ok');
       refreshAllDocDisplays();
@@ -2132,6 +2166,7 @@
   }
 
   function scheduleAutosave(){
+    if (isSupplierEditor() && supplierWriteLocked) return;
     if (autosaveTimer) clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(function(){ saveDraftNow(); }, 4000);
   }
@@ -2149,16 +2184,6 @@
     applyRoleChrome();
     var params = new URLSearchParams(window.location.search);
     var shipmentParam = params.get('shipment');
-    if (isSupplierEditor() && !shipmentParam) {
-      var saveBtn = document.getElementById('saveDraftBtn');
-      var createBtn = document.getElementById('createBtn');
-      if (saveBtn) saveBtn.style.display = 'none';
-      if (createBtn) createBtn.style.display = 'none';
-      await loadOrgOptions();
-      await loadPartOptions();
-      updateDraftStatus('Dessimate creates PDIRs. Open one of your parts from the PDIR Portal to add your information.', 'off');
-      return;
-    }
     await loadOrgOptions();
     await loadPartOptions();
     if (!isSupplierEditor() && !isCustomerViewer()) await loadPeopleOptions();
@@ -2181,6 +2206,7 @@
           await loadPreparedByOptions(payload.fields.organization_name, payload.fields.prepared_by_signature);
           renderInvoiceAwbOptions(payload.fields.organization_name, payload.fields.invoice_awb_no);
           updateDraftStatus('Loaded saved draft' + (payload.savedAt ? ' (last saved ' + new Date(payload.savedAt).toLocaleString() + ')' : '') + '.', 'ok');
+          await refreshSupplierWriteLock(shipmentParam);
           applySupplierPdfLock(payload.fields, payload.docs);
         } else {
           if (isSupplierEditor()) {
@@ -2189,7 +2215,8 @@
             if (shipElBlank && fromTitle) shipElBlank.value = fromTitle[1];
             currentDraftTitle = shipmentParam;
           }
-          updateDraftStatus('No saved draft found for that shipment yet — starting blank.', 'off');
+          await refreshSupplierWriteLock(shipmentParam);
+          if (!supplierWriteLocked) updateDraftStatus('No saved draft found for that shipment yet — starting blank.', 'off');
         }
       } catch (e) {
         console.error(e);
@@ -2213,10 +2240,23 @@
     var portalLink = document.getElementById('portalLink');
     downloadLink.style.display = 'none';
     portalLink.style.display = 'none';
+    if (isSupplierEditor() && supplierWriteLocked) {
+      status.className = 'error';
+      status.textContent = 'Dessimate has not assigned this PDIR to an organization yet. Only Dessimate staff can edit it.';
+      return;
+    }
     if (isSupplierEditor() && supplierPdfLocked) {
       status.className = 'error';
       status.textContent = 'Dessimate has already decided this PDIR. Only Dessimate staff can replace the finished PDF.';
       return;
+    }
+    if (isSupplierEditor()) {
+      var partForPdf = document.getElementById('f_pdir_part_select');
+      if (!partForPdf || !partForPdf.value) {
+        status.className = 'error';
+        status.textContent = 'Select one of your Part Numbers before creating the PDF.';
+        return;
+      }
     }
     if (autosaveTimer) clearTimeout(autosaveTimer);
     btn.disabled = true; btn.textContent = 'Creating PDF...'; status.className = ''; status.textContent = '';
@@ -2237,16 +2277,16 @@
       if (session) {
         status.textContent = 'Saving...';
         try {
-          // Save any newly-chosen supporting documents as their own files first,
-          // so the draft below can point at them.
-          await persistDirtyDocs(title, shipmentNumber.trim() || 'unspecified');
-          refreshAllDocDisplays();
-          // Save the draft alongside the PDF so "Modify PDIR" can always pick this
-          // shipment back up later, and so a re-generated PDF overwrites the old one.
+          // Draft first so a brand-new title is tagged before PDF/docs.
           var draftPayload = collectDraftData();
           var draftBytes = new TextEncoder().encode(JSON.stringify(draftPayload));
           await ghSaveDraftFile(title + '.json', draftBytes, 'Save PDIR draft for shipment ' + (shipmentNumber.trim() || 'unspecified'));
           currentDraftTitle = title;
+          await persistDirtyDocs(title, shipmentNumber.trim() || 'unspecified');
+          refreshAllDocDisplays();
+          draftPayload = collectDraftData();
+          draftBytes = new TextEncoder().encode(JSON.stringify(draftPayload));
+          await ghSaveDraftFile(title + '.json', draftBytes, 'Save PDIR draft for shipment ' + (shipmentNumber.trim() || 'unspecified'));
           updateDraftStatus('Draft saved to GitHub at ' + new Date().toLocaleTimeString() + '.', 'ok');
 
           await ghSavePdf(filename, pdfBytes, 'Add PDIR for shipment ' + (shipmentNumber.trim() || 'unspecified'));
