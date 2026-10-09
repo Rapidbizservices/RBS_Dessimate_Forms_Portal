@@ -107,7 +107,9 @@
  * anyone who could already reach Users/Organizations before this field
  * existed (mirrors the old hardcoded frontend ADMIN_USERNAMES list). GET
  * /organizations and GET /parts stay readable by any signed-in user, scoped
- * to that user's self (super_admin sees every self). Users writes and the
+ * to that user's self (super_admin sees every self). A supplier login's
+ * organization list includes only that supplier's own organization, never
+ * the other suppliers of the same self. Users writes and the
  * admin user directory stay super_admin-only. Organization writes are
  * super_admin, or an admin limited to their own self's customers and
  * suppliers. Parts writes require team_member or above.
@@ -184,9 +186,12 @@
  *   GET    /organizations             - auth required (any signed-in user); organization
  *                                        directory scoped to the caller's self. super_admin
  *                                        sees every self, unassigned customers, and every
- *                                        supplier relationship. Everyone else sees only their
- *                                        own Self organization plus that self's customers and
- *                                        suppliers — never the list of other selves.
+ *                                        supplier relationship. Staff (team_member and above)
+ *                                        see only their own Self organization plus that
+ *                                        self's customers and suppliers — never another
+ *                                        self's suppliers. A supplier login sees its own
+ *                                        supplier organization (plus its self and that
+ *                                        self's customers), never the other suppliers.
  *   POST   /organizations             - super_admin, or an admin creating a customer or
  *                                        supplier for their own self. super_admin may also
  *                                        create another Self organization. An admin cannot.
@@ -4329,9 +4334,26 @@ function sanitizeOrgDocList(list) {
   return arr.map(sanitizeOrgDoc).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
 }
 
+// orgVisibleToScope already hides another self's suppliers. A supplier login
+// is narrower than staff of the same self: it may see its own supplier
+// organization and must not learn the names of the other suppliers that
+// serve that self. team_member and above still see every supplier of their
+// own self. super_admin is unrestricted and is left unchanged.
+function scopeOrganizations(orgs, scope) {
+  if (!scope || scope.unrestricted || scope.accessLevel !== 'supplier') return orgs;
+  const own = (scope.organization || '').trim();
+  return (orgs || []).filter(function (org) {
+    if (!org || org.relationship !== 'Supplier') return true;
+    return !!own && (org.name || '') === own;
+  });
+}
+
 async function handleListOrganizations(env, origin, scope) {
   const described = describeSelves(await readOrgItems(env));
-  const visible = described.orgs.filter(function (org) { return orgVisibleToScope(org, scope, described); });
+  const visible = scopeOrganizations(
+    described.orgs.filter(function (org) { return orgVisibleToScope(org, scope, described); }),
+    scope
+  );
   return json({
     organizations: visible.map(function (org) { return presentOrg(org, scope, described); })
   }, 200, origin);
@@ -4606,7 +4628,13 @@ function sanitizePart(p) {
 // scope passed at all, for internal callers) sees every Part, unchanged.
 function scopeParts(parts, accessLevel, organization) {
   if (accessLevel === 'supplier') {
-    return parts.filter(function (p) { return organization && p.suppliers.indexOf(organization) !== -1; });
+    return parts.filter(function (p) { return organization && p.suppliers.indexOf(organization) !== -1; }).map(function (p) {
+      // A part can name several suppliers. The caller already matched their
+      // own organization; the other names are not theirs to see.
+      const copy = Object.assign({}, p);
+      copy.suppliers = [organization];
+      return copy;
+    });
   }
   if (accessLevel === 'customer') {
     return parts.filter(function (p) { return organization && p.customer === organization; });

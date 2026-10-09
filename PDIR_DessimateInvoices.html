@@ -530,13 +530,20 @@
   // Invoices buttons and per-row Edit/Duplicate/Delete can be hidden for a
   // Team Member rather than shown and then failing with a 403 on click.
   var currentAccessLevel = null;
+  var currentOrganization = '';
   function canManageRecords(){ return currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
+  function isSupplierUser(){ return currentAccessLevel === 'supplier'; }
   async function resolveAccessLevel(){
     var session = getSession();
-    if (!session) { currentAccessLevel = null; return; }
+    if (!session) { currentAccessLevel = null; currentOrganization = ''; return; }
     try {
       var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
-      if (res.ok) { var data = await res.json(); currentAccessLevel = data.accessLevel || 'team_member'; if (data.homeSelfId) window.__dscmHomeSelfId = data.homeSelfId; }
+      if (res.ok) {
+        var data = await res.json();
+        currentAccessLevel = data.accessLevel || 'team_member';
+        currentOrganization = data.organization || '';
+        if (data.homeSelfId) window.__dscmHomeSelfId = data.homeSelfId;
+      }
     } catch (e) { console.error('Could not resolve access level', e); }
   }
   function applyAccessLevelUI(){
@@ -1014,10 +1021,16 @@
   var lastDessimatePos = [];
   var lastPdirIndex = [];
   async function loadDropdownData(){
+    await resolveAccessLevel();
     try {
       var orgRes = await apiFetch('organizations');
       var orgData = orgRes.ok ? await orgRes.json() : { organizations: [] };
       lastOrgs = Array.isArray(orgData.organizations) ? orgData.organizations : [];
+      if (isSupplierUser()) {
+        lastOrgs = lastOrgs.filter(function(o){
+          return !o || o.relationship !== 'Supplier' || o.name === currentOrganization;
+        });
+      }
     } catch (e) { console.error('Could not load organizations', e); lastOrgs = []; }
     try {
       var partRes = await apiFetch('parts');
@@ -1081,7 +1094,8 @@
   }
   function dessimatePoRefOptions(currentValue){
     var html = '<option value="">— None —</option>' + lastDessimatePos.map(function(p){
-      var label = (p.poNumber || '') + (p.supplier ? ' — ' + p.supplier : '');
+      var extra = (p.supplier && (!isSupplierUser() || p.supplier === currentOrganization)) ? ' — ' + p.supplier : '';
+      var label = (p.poNumber || '') + extra;
       var sel = (String(p.poNumber) === String(currentValue)) ? ' selected' : '';
       return '<option value="' + escapeHtml(p.poNumber) + '"' + sel + '>' + escapeHtml(label) + '</option>';
     }).join('');

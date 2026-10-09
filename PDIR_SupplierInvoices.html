@@ -421,6 +421,26 @@
   function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
   function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
 
+  // A supplier login may see and save only its own organization. Staff still
+  // pick from every supplier of their self. The worker enforces the same
+  // cut on GET /organizations; this keeps a foreign name out of the dropdown
+  // and the invoice table even if one arrived in a response.
+  var currentAccessLevel = null;
+  var currentOrganization = '';
+  function isSupplierUser(){ return currentAccessLevel === 'supplier'; }
+  async function resolveMe(){
+    var session = getSession();
+    if (!session) { currentAccessLevel = null; currentOrganization = ''; return; }
+    try {
+      var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
+      if (res.ok) {
+        var data = await res.json();
+        currentAccessLevel = data.accessLevel || 'team_member';
+        currentOrganization = data.organization || '';
+      }
+    } catch (e) { console.error('Could not resolve access level', e); }
+  }
+
   async function apiFetch(path, opts){
     opts = opts || {};
     var headers = opts.headers || {};
@@ -708,10 +728,16 @@
   var lastParts = [];
   var lastDessimatePos = [];
   async function loadDropdownData(){
+    await resolveMe();
     try {
       var orgRes = await apiFetch('organizations');
       var orgData = orgRes.ok ? await orgRes.json() : { organizations: [] };
       lastOrgs = Array.isArray(orgData.organizations) ? orgData.organizations : [];
+      if (isSupplierUser()) {
+        lastOrgs = lastOrgs.filter(function(o){
+          return !o || o.relationship !== 'Supplier' || o.name === currentOrganization;
+        });
+      }
     } catch (e) { console.error('Could not load organizations', e); lastOrgs = []; }
     try {
       var partRes = await apiFetch('parts');
@@ -725,6 +751,10 @@
     } catch (e) { console.error('Could not load Dessimate POs', e); lastDessimatePos = []; }
   }
   function supplierOrgOptions(currentValue){
+    if (isSupplierUser()) {
+      var mine = currentOrganization || '';
+      return '<option value="' + escapeHtml(mine) + '" selected>' + escapeHtml(mine || '(your organization)') + '</option>';
+    }
     var matching = lastOrgs.filter(function(o){ return o.relationship === 'Supplier'; });
     var html = '<option value="">— Select Supplier —</option>' + matching.map(function(o){
       var sel = (o.name === currentValue) ? ' selected' : '';
@@ -734,6 +764,11 @@
       html += '<option value="' + escapeHtml(currentValue) + '" selected>' + escapeHtml(currentValue) + ' (not in Organizations list)</option>';
     }
     return html;
+  }
+  function paintSupplierField(currentValue){
+    var el = document.getElementById('f_supplier');
+    el.innerHTML = supplierOrgOptions(currentValue);
+    el.disabled = isSupplierUser();
   }
   function partOptions(currentValue){
     var html = '<option value="">— Part —</option>' + lastParts.map(function(p){
@@ -747,7 +782,8 @@
   }
   function dessimatePoRefOptions(currentValue){
     var html = '<option value="">— None —</option>' + lastDessimatePos.map(function(p){
-      var label = (p.poNumber || '') + ' — ' + (p.shipmentNumber || '') + (p.supplier ? ' — ' + p.supplier : '');
+      var extra = (p.supplier && (!isSupplierUser() || p.supplier === currentOrganization)) ? ' — ' + p.supplier : '';
+      var label = (p.poNumber || '') + ' — ' + (p.shipmentNumber || '') + extra;
       var val = String(p.poNumber);
       var sel = (val === currentValue) ? ' selected' : '';
       return '<option value="' + escapeHtml(val) + '"' + sel + '>' + escapeHtml(label) + '</option>';
@@ -765,6 +801,7 @@
   window.SortableTable.makeSortableHeaders(document.getElementById('invTableHead'), invSortState, renderTable);
 
   async function loadInvoices(){
+    await resolveMe();
     var loadingEl = document.getElementById('loadingState');
     var errorEl = document.getElementById('errorState');
     var emptyEl = document.getElementById('emptyState');
@@ -788,14 +825,20 @@
     }
   }
 
+  function invoicesForCaller(){
+    if (!isSupplierUser()) return lastInvoices;
+    if (!currentOrganization) return [];
+    return lastInvoices.filter(function(inv){ return inv.supplier === currentOrganization; });
+  }
   function renderTable(){
     var tableEl = document.getElementById('invTable');
     var bodyEl = document.getElementById('invTableBody');
     var emptyEl = document.getElementById('emptyState');
-    if (!lastInvoices.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
+    var visible = invoicesForCaller();
+    if (!visible.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var defaultOrder = lastInvoices.slice().sort(function(a, b){ return (b.invoiceDate || '').localeCompare(a.invoiceDate || ''); });
+    var defaultOrder = visible.slice().sort(function(a, b){ return (b.invoiceDate || '').localeCompare(a.invoiceDate || ''); });
     var sorted = window.SortableTable.sortItems(defaultOrder, invSortState, function(inv, key){ return inv[key]; });
     window.SortableTable.updateSortIndicators(document.getElementById('invTableHead'), invSortState);
 
@@ -982,7 +1025,7 @@
     sourcePdfState = { existing: null, pending: null, removed: false };
     lineRows = [newLineRow()];
     renderSourcePdfRow();
-    document.getElementById('f_supplier').innerHTML = supplierOrgOptions('');
+    paintSupplierField('');
     document.getElementById('f_dessimatePoRef').innerHTML = dessimatePoRefOptions('');
     document.getElementById('f_status').value = 'Unpaid';
     renderLines();
@@ -1012,7 +1055,7 @@
     document.getElementById('f_title').value = inv.title || '';
     document.getElementById('f_invoiceDate').value = inv.invoiceDate || '';
     document.getElementById('f_dueDate').value = inv.dueDate || '';
-    document.getElementById('f_supplier').innerHTML = supplierOrgOptions(inv.supplier || '');
+    paintSupplierField(isSupplierUser() ? currentOrganization : (inv.supplier || ''));
     document.getElementById('f_dessimatePoRef').innerHTML = dessimatePoRefOptions(inv.dessimatePoRef || '');
     document.getElementById('f_status').value = inv.status || 'Unpaid';
     document.getElementById('f_currency').value = inv.currency || '';
