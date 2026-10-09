@@ -334,7 +334,9 @@
  *                                        Supplier cannot change supplierOrg or the CR Number, and
  *                                        cannot add a part they do not supply (parts already on the
  *                                        CR may stay). Another supplier's CR, another self, or a
- *                                        miss is 404.
+ *                                        miss is 404. On a CR owned by another supplier (seen via
+ *                                        a shared part), the owner's identifying fields come back
+ *                                        blank (supplierHidden) and keep their stored values on save.
  *   DELETE /change-requests/<id>       - team_member or above, and only inside their self
  *                                        (super_admin any self). A Supplier cannot delete. Out of
  *                                        scope is 404.
@@ -8088,6 +8090,59 @@ function scopeChangeRequests(items, accessLevel, organization, suppliedPartNumbe
   return items;
 }
 
+// A Supplier can see a CR owned by another supplier only through a part
+// they both supply. They must not learn who that other supplier is, so
+// every field that names it or its people is hidden on the way out, and
+// supplierHidden tells the page to show "Another supplier". Files the
+// caller uploaded themselves keep their uploader. Dessimate-side fields
+// (approval) are unaffected.
+function isForeignChangeRequest(cr, organization) {
+  return !!cr && !!organization && (cr.supplierOrg || '') !== organization;
+}
+function maskForeignChangeRequest(cr, organization, username) {
+  if (!isForeignChangeRequest(cr, organization)) return cr;
+  const hideUploader = function (doc) {
+    if (!doc || !doc.uploadedBy || doc.uploadedBy === username) return doc;
+    return Object.assign({}, doc, { uploadedBy: '' });
+  };
+  const out = Object.assign({}, cr, {
+    supplierOrg: '',
+    supplierHidden: true,
+    supplierContactName: '',
+    createdBy: '',
+    currentConditionImage: hideUploader(cr.currentConditionImage),
+    newConditionImage: hideUploader(cr.newConditionImage),
+    attachments: (cr.attachments || []).map(hideUploader)
+  });
+  // A supplier-raised CR's "requested by" is the other supplier's person.
+  if (out.direction !== 'dessimate_to_supplier') {
+    out.requestedBySignature = '';
+    out.requestedByCompany = '';
+  }
+  return out;
+}
+// When a Supplier saves a foreign CR, the fields hidden above came back
+// blank. Keep the stored values so their save never wipes the owner's data,
+// and don't let them flip the direction (which decides what is hidden).
+function keepForeignChangeRequestFields(fields, target) {
+  delete fields.supplierContactName;
+  delete fields.direction;
+  if (target.direction !== 'dessimate_to_supplier') {
+    delete fields.requestedBySignature;
+    delete fields.requestedByCompany;
+  }
+  const prior = [target.currentConditionImage, target.newConditionImage]
+    .concat(Array.isArray(target.attachments) ? target.attachments : []).filter(Boolean);
+  const restoreUploader = function (doc) {
+    if (!doc || doc.uploadedBy) return doc;
+    const match = prior.find(function (p) { return p.path === doc.path; });
+    return (match && match.uploadedBy) ? Object.assign({}, doc, { uploadedBy: match.uploadedBy }) : doc;
+  };
+  fields.currentConditionImage = restoreUploader(fields.currentConditionImage);
+  fields.newConditionImage = restoreUploader(fields.newConditionImage);
+  fields.attachments = (fields.attachments || []).map(restoreUploader);
+}
+
 async function handleListChangeRequests(env, origin, scope) {
   const state = await readJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH);
   const presented = await presentList(env, state.items, scope, sanitizeChangeRequest);
@@ -8095,7 +8150,10 @@ async function handleListChangeRequests(env, origin, scope) {
   if (scope.accessLevel === 'supplier') {
     supplied = await resolveVisiblePartNumbers(env, 'supplier', scope.organization, scope);
   }
-  const items = scopeChangeRequests(presented, scope.accessLevel, scope.organization, supplied);
+  let items = scopeChangeRequests(presented, scope.accessLevel, scope.organization, supplied);
+  if (scope.accessLevel === 'supplier') {
+    items = items.map(function (cr) { return maskForeignChangeRequest(cr, scope.organization, scope.username); });
+  }
   return json({ changeRequests: items }, 200, origin);
 }
 
@@ -8185,6 +8243,7 @@ async function handleUpdateChangeRequest(request, env, origin, id, accessLevel, 
       partDenied = true;
       return null;
     }
+    if (isSupplier && isForeignChangeRequest(target, callerOrg)) keepForeignChangeRequestFields(fields, target);
     if (!isSupplier && body.supplierOrg !== undefined) {
       const requestedOrg = (body.supplierOrg || '').toString().trim();
       if (requestedOrg) target.supplierOrg = requestedOrg;
@@ -8198,7 +8257,8 @@ async function handleUpdateChangeRequest(request, env, origin, id, accessLevel, 
   if (partDenied) return json({ message: 'Each part number must be one your organization supplies.' }, 400, origin);
   if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
-  return json(sanitizeChangeRequest(saved), 200, origin);
+  const out = sanitizeChangeRequest(saved);
+  return json(isSupplier ? maskForeignChangeRequest(out, callerOrg, username) : out, 200, origin);
 }
 
 async function handleDeleteChangeRequest(env, origin, id, scope) {
@@ -8344,7 +8404,7 @@ async function buildCrPdf(cr, currentConditionDoc, newConditionDoc) {
   sectionHeader('SUPPLIER INFORMATION', margin, y, contentW);
   y -= 24;
   leftText('Supplier:', margin, y, 9, { bold: true, color: labelGray });
-  leftText(cr.supplierOrg || '—', margin + 55, y, 10);
+  leftText(cr.supplierHidden ? 'Another supplier' : (cr.supplierOrg || '—'), margin + 55, y, 10);
   rightText('Supplier Contact:', margin + contentW / 2 + 60, y, 9, { bold: true, color: labelGray });
   leftText(cr.supplierContactName || '—', margin + contentW / 2 + 65, y, 10);
   y -= 22;
@@ -8483,6 +8543,7 @@ async function handleGetChangeRequestPdf(env, origin, id, scope) {
   const scoped = scopeChangeRequests([clean], accessLevel, organization, supplied);
   if (!scoped.length) return json({ message: 'Not found.' }, 404, origin);
   clean = scoped[0];
+  if (accessLevel === 'supplier') clean = maskForeignChangeRequest(clean, organization, scope.username);
 
   async function loadImageDoc(doc) {
     if (!doc || !doc.path) return null;

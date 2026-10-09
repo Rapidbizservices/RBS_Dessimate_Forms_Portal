@@ -1150,6 +1150,17 @@ name. A CR that matches neither is hidden, and opening it directly is a
 self; saving one Dessimate started does not let them reassign it. A
 Customer login has no role here at all.
 
+When a Supplier sees a CR that belongs to **another** supplier (only
+through a part they both supply), the worker hides who that supplier is:
+the Supplier field, supplier contact, creator, the "requested by" signature
+and company on a supplier-raised CR, and the uploader of any file they
+didn't upload themselves all come back blank, with `supplierHidden: true`.
+The list, the edit form, and the PDF show "Another supplier" instead. On
+save, those hidden fields (and the CR's direction) keep their stored values
+(`keepForeignChangeRequestFields`), so the blanks the Supplier saw never
+overwrite the owner's data. Free-text fields (details, purpose) are shown
+as written, so anything typed there is visible to both suppliers.
+
 The **Contact** dropdown (Rev2.20) next to Supplier Contact Name is a
 pick-and-autofill quick-fill sourced from the selected Supplier's own
 contact directory (see "Managing organizations" above) - selecting a name
