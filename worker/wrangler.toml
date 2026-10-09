@@ -12,9 +12,9 @@ compatibility_date = "2024-11-01"
 ALLOWED_ORIGIN = "https://rapidbizservices.github.io"
 RESEND_FROM_EMAIL = "DSCM <IT_Dessimate@dessimate.com>"
 # Weekly Open Issues recap email (Wednesdays 9:30 pm Pacific) to Customer
-# and Dessimate users. "false" = off. Preview it first with
+# and Dessimate users. "true" = on, "false" = off. Preview it with
 # POST /admin/open-issues-recap/preview - see worker/README.md.
-OPEN_ISSUES_RECAP_ENABLED = "false"
+OPEN_ISSUES_RECAP_ENABLED = "true"
 
 # Cloudflare-native storage bindings - replaces the old GitHub-backed
 # storage entirely. Both resources already exist in your Cloudflare account
