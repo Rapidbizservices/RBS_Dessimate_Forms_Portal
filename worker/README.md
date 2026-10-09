@@ -1486,7 +1486,8 @@ address gets their own email, subject *"Open Issues Recap for the week of
 MM/DD/YYYY thru MM/DD/YYYY"* (the Thursday before through that Wednesday).
 It holds a table of every open (not closed) Customer Open Issue that person
 can see - Issue #, Issue Description (the Title if there is no
-description), latest note, who wrote it, and the date it was added. Each
+description), Champion/Responsible ("Not assigned" when empty), latest
+note, who wrote it, and the date it was added. Each
 Issue # links to `PDIR_CustomerOpenIssues.html?issue=<id>`, which opens that
 issue after sign-in (or says it isn't available to that account).
 

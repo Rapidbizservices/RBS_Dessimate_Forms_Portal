@@ -10448,6 +10448,7 @@ async function recapRowsFor(env, user, allItems, nameByUsername) {
         id: o.id,
         number: String(o.issueNumber || '').replace(/^OI-/i, ''),
         description: recapTruncate(o.issueDescription || o.issueTitle),
+        champion: (o.championResponsible || []).join(', '),
         note: latest ? recapTruncate(latest.text) : '',
         noteBy: latest ? (nameByUsername[(latest.authorUsername || '').toLowerCase()] || latest.authorUsername || '') : '',
         noteDate: latest ? recapPacificDate(latest.createdAt) : ''
@@ -10461,12 +10462,13 @@ function recapHtml(env, user, week, rows) {
   const head = 'padding:7px 9px;border:1px solid #d9dde6;background:#eef1f7;color:#445;font-size:12px;text-align:left;';
   const body = rows.length
     ? '<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;max-width:960px;">' +
-      '<tr><th style="' + head + '">Issue #</th><th style="' + head + '">Issue Description</th><th style="' + head + '">Latest Note</th>' +
+      '<tr><th style="' + head + '">Issue #</th><th style="' + head + '">Issue Description</th><th style="' + head + '">Champion/Responsible</th><th style="' + head + '">Latest Note</th>' +
       '<th style="' + head + '">Note By</th><th style="' + head + '">Note Date</th></tr>' +
       rows.map(function (r) {
         return '<tr>' +
           '<td style="' + cell + 'white-space:nowrap;"><a href="' + escapeEmailHtml(base + '?issue=' + encodeURIComponent(r.id)) + '" style="color:#2b4ea3;font-weight:bold;">' + escapeEmailHtml(r.number) + '</a></td>' +
           '<td style="' + cell + '">' + escapeEmailHtml(r.description) + '</td>' +
+          '<td style="' + cell + '">' + (r.champion ? escapeEmailHtml(r.champion) : '<span style="color:#888;">Not assigned</span>') + '</td>' +
           '<td style="' + cell + '">' + (r.note ? escapeEmailHtml(r.note) : '<span style="color:#888;">No notes yet</span>') + '</td>' +
           '<td style="' + cell + 'white-space:nowrap;">' + escapeEmailHtml(r.noteBy) + '</td>' +
           '<td style="' + cell + 'white-space:nowrap;">' + escapeEmailHtml(r.noteDate) + '</td>' +
