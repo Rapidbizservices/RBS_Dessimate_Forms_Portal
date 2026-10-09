@@ -259,7 +259,8 @@
   .commentCancelBtn{ color:var(--label); background:#fff; border:1px solid var(--line); }
   .commentCancelBtn:hover{ background:#f4f5f8; }
   .addCommentRow{ display:flex; gap:8px; margin-top:4px; }
-  .addCommentRow input{ flex:1 1 auto; margin:0 !important; }
+  .addCommentRow input, .addCommentRow textarea{ flex:1 1 auto; margin:0 !important; }
+  .commentEditBtns .commentEditHint{ font-size:11.5px; color:var(--label); align-self:center; margin-right:auto; }
   .addCommentRow button{ flex:0 0 auto; font-family:inherit; font-size:12.5px; font-weight:700; cursor:pointer;
     border-radius:6px; padding:9px 16px; color:#fff; background:var(--brand); border:none; white-space:nowrap; }
   .addCommentRow button:hover{ background:var(--brand-dark); }
@@ -523,8 +524,7 @@
         <h3>Notes / Comments</h3>
         <div id="reviewCommentsList" class="reviewCommentsList"></div>
         <div class="addCommentRow" id="addCommentRow" style="display:none;">
-          <input type="text" id="f_newComment" placeholder="Add a note…">
-          <button type="button" id="addCommentBtn">Add Note</button>
+          <textarea id="f_newComment" rows="2" placeholder="Add a note (it’s added when you click Save)"></textarea>
         </div>
         <p class="modalSectionHint" id="addCommentHint" style="display:none;">Save this issue first before adding a note.</p>
       </div>
@@ -1481,6 +1481,7 @@
   var picState = null; // null | {kind:'pending',bytes,filename,mimeType} | {kind:'existing',doc:{...}}
   var reviewCommentsState = [];
   var editingCommentId = null;
+  var editingCommentDraft = null; // unsaved text of that inline edit
 
   function renderPartNumbers(){
     var wrap = document.getElementById('partNumbersWrap');
@@ -1639,6 +1640,12 @@
     });
   }
 
+  // Notes/Comments thread. Notes are stored through their own endpoints
+  // (append a note, edit a note - see worker/README.md), but they save with
+  // the form's Save button like every other field: a note typed in the box,
+  // and a note opened for editing, are sent right after the issue itself
+  // saves (saveNotes). Open to staff and the matching Supplier, including on
+  // a brand-new issue - the note is added once Save has created it.
   function renderReviewComments(){
     var listEl = document.getElementById('reviewCommentsList');
     var session = getSession();
@@ -1647,14 +1654,17 @@
       listEl.innerHTML = '<div class="attachEmpty">No notes yet.</div>';
     } else {
       listEl.innerHTML = reviewCommentsState.map(function(c){
+        // Team Member+ can edit any note; a Supplier can edit only their own -
+        // matches the worker's permission check.
         var canEditThis = !!editingId && (canManageAll() || c.authorUsername === myUsername);
         if (editingCommentId === c.id) {
+          var draft = editingCommentDraft !== null ? editingCommentDraft : c.text;
           return '<div class="reviewCommentRow">' +
             '<div class="commentMeta">' + escapeHtml(c.authorUsername || 'Unknown') + ' — ' + escapeHtml(fmtDateMDY((c.createdAt || '').slice(0, 10))) + '</div>' +
-            '<textarea class="commentEditInput" data-comment-edit-id="' + escapeHtml(c.id) + '" rows="2">' + escapeHtml(c.text) + '</textarea>' +
+            '<textarea class="commentEditInput" data-comment-edit-id="' + escapeHtml(c.id) + '" rows="2">' + escapeHtml(draft) + '</textarea>' +
             '<div class="commentEditBtns">' +
-              '<button type="button" class="commentSaveBtn" data-comment-save="' + escapeHtml(c.id) + '">Save</button>' +
-              '<button type="button" class="commentCancelBtn" data-comment-cancel>Cancel</button>' +
+              '<span class="commentEditHint">Saved when you click Save.</span>' +
+              '<button type="button" class="commentCancelBtn" data-comment-cancel>Cancel edit</button>' +
             '</div></div>';
         }
         return '<div class="reviewCommentRow">' +
@@ -1669,70 +1679,76 @@
       listEl.querySelectorAll('[data-comment-edit]').forEach(function(btn){
         btn.addEventListener('click', function(){
           editingCommentId = this.getAttribute('data-comment-edit');
+          editingCommentDraft = null;
           renderReviewComments();
         });
       });
       listEl.querySelectorAll('[data-comment-cancel]').forEach(function(btn){
         btn.addEventListener('click', function(){
           editingCommentId = null;
+          editingCommentDraft = null;
           renderReviewComments();
         });
       });
-      listEl.querySelectorAll('[data-comment-save]').forEach(function(btn){
-        btn.addEventListener('click', async function(){
-          var commentId = this.getAttribute('data-comment-save');
-          var textarea = listEl.querySelector('[data-comment-edit-id="' + commentId + '"]');
-          var newText = textarea.value.trim();
-          if (!newText) { alert('Comment text is required.'); return; }
-          btn.disabled = true; btn.textContent = 'Saving…';
-          try {
-            var res = await apiFetch('supplier-open-issues/' + encodeURIComponent(editingId) + '/comments/' + encodeURIComponent(commentId), {
-              method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: newText })
-            });
-            var data = {}; try { data = await res.json(); } catch(e){}
-            if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
-            reviewCommentsState = Array.isArray(data.comments) ? data.comments : [];
-            editingCommentId = null;
-            renderReviewComments();
-            var idx = lastIssues.findIndex(function(x){ return x.id === editingId; });
-            if (idx !== -1) lastIssues[idx] = data;
-          } catch (err) {
-            alert('Could not save this note (' + (err && err.message ? err.message : err) + ').');
-            btn.disabled = false; btn.textContent = 'Save';
-          }
-        });
+      listEl.querySelectorAll('[data-comment-edit-id]').forEach(function(ta){
+        ta.addEventListener('input', function(){ editingCommentDraft = this.value; });
       });
     }
-    var canComment = (canManageAll() || isSupplierUser()) && !!editingId;
+    var canComment = canManageAll() || isSupplierUser();
     document.getElementById('addCommentRow').style.display = canComment ? 'flex' : 'none';
-    document.getElementById('addCommentHint').style.display = (!editingId && (canManageAll() || isSupplierUser())) ? '' : 'none';
+    document.getElementById('addCommentHint').style.display = 'none';
   }
-  document.getElementById('f_newComment').addEventListener('keydown', function(e){
-    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('addCommentBtn').click(); }
-  });
-  document.getElementById('addCommentBtn').addEventListener('click', async function(){
-    var btn = this;
+
+  // Run before anything is saved, so a blanked-out note edit stops the Save
+  // up front instead of after the issue has already been written.
+  function checkNotes(){
+    if (!editingCommentId) return;
+    var ta = document.querySelector('[data-comment-edit-id="' + CSS.escape(editingCommentId) + '"]');
+    if (ta && !ta.value.trim()) throw new Error('A note can’t be blank. Type the note, or click Cancel edit next to it.');
+  }
+
+  // Sends the note edit (if one is open and changed) and the new note (if
+  // one was typed). Called by Save right after the issue itself saves, so
+  // notes save like every other field. afterRecordSave only changes the
+  // error wording: when the issue did save, say so, so nobody re-enters it.
+  async function saveNotes(issueId, afterRecordSave){
+    var latest = null;
+    var prefix = afterRecordSave ? 'The issue was saved, but ' : '';
+    if (editingCommentId) {
+      var commentId = editingCommentId;
+      var ta = document.querySelector('[data-comment-edit-id="' + CSS.escape(commentId) + '"]');
+      var original = reviewCommentsState.find(function(c){ return c.id === commentId; });
+      var newText = ta ? ta.value.trim() : '';
+      if (newText && (!original || newText !== original.text)) {
+        var editRes = await apiFetch('supplier-open-issues/' + encodeURIComponent(issueId) + '/comments/' + encodeURIComponent(commentId), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: newText })
+        });
+        var editData = {}; try { editData = await editRes.json(); } catch(e){}
+        if (!editRes.ok) throw new Error(prefix + 'the note edit could not be saved (' + (editData.message || ('HTTP ' + editRes.status)) + '). Click Save to try again.');
+        latest = editData;
+      }
+      editingCommentId = null;
+      editingCommentDraft = null;
+    }
     var input = document.getElementById('f_newComment');
     var text = input.value.trim();
-    if (!text || !editingId) return;
-    btn.disabled = true; btn.textContent = 'Adding…';
-    try {
-      var res = await apiFetch('supplier-open-issues/' + encodeURIComponent(editingId) + '/comments', {
+    if (text) {
+      var res = await apiFetch('supplier-open-issues/' + encodeURIComponent(issueId) + '/comments', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text })
       });
       var data = {}; try { data = await res.json(); } catch(e){}
-      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
-      reviewCommentsState = Array.isArray(data.comments) ? data.comments : [];
+      if (!res.ok) throw new Error(prefix + 'the note could not be added (' + (data.message || ('HTTP ' + res.status)) + '). Your note is still in the box - click Save to try again.');
+      latest = data;
       input.value = '';
-      renderReviewComments();
-      var idx = lastIssues.findIndex(function(x){ return x.id === editingId; });
-      if (idx !== -1) lastIssues[idx] = data;
-    } catch (err) {
-      alert('Could not add this note (' + (err && err.message ? err.message : err) + ').');
-    } finally {
-      btn.disabled = false; btn.textContent = 'Add Note';
     }
-  });
+    if (latest) {
+      reviewCommentsState = Array.isArray(latest.comments) ? latest.comments : reviewCommentsState;
+      var idx = lastIssues.findIndex(function(x){ return x.id === issueId; });
+      if (idx !== -1) lastIssues[idx] = latest;
+    }
+    renderReviewComments();
+    return latest;
+  }
 
   function setNumberFieldEditable(editable){
     var input = document.getElementById('f_issueNumber');
@@ -1781,6 +1797,7 @@
     picState = null;
     reviewCommentsState = [];
     editingCommentId = null;
+    editingCommentDraft = null;
     closeChampionPanel();
     renderChampionPicker([]);
     setNumberFieldEditable(true);
@@ -1826,6 +1843,7 @@
     attachmentsState = (issue.attachments || []).map(function(doc){ return { kind: 'existing', doc: doc }; });
     reviewCommentsState = Array.isArray(issue.comments) ? issue.comments : [];
     editingCommentId = null;
+    editingCommentDraft = null;
 
     setNumberFieldEditable(canManageAll());
     applyRoleUIForModal();
@@ -1841,6 +1859,7 @@
   });
 
   async function saveIssue(){
+    checkNotes();
     var baseFields = {
       supplierOrg: document.getElementById('f_supplierOrg').value,
       partNumbers: partNumberRows.filter(Boolean),
@@ -1911,7 +1930,8 @@
     reviewCommentsState = Array.isArray(putData.comments) ? putData.comments : reviewCommentsState;
     renderReviewComments();
 
-    return putData;
+    var noteData = await saveNotes(issueId, true);
+    return noteData || putData;
   }
 
   document.getElementById('issueForm').addEventListener('submit', async function(e){
@@ -1921,7 +1941,12 @@
     errEl.textContent = '';
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
-      await saveIssue();
+      if (canEditIssues()) {
+        await saveIssue();
+      } else {
+        checkNotes();
+        await saveNotes(editingId, false);
+      }
       closeModal();
       await loadIssues();
     } catch (err) {

@@ -173,7 +173,7 @@
   .reviewCommentRow .commentMeta{ font-size:10.5px; color:var(--label); font-weight:700; margin-bottom:3px; }
   .reviewCommentRow .commentText{ white-space:pre-wrap; overflow-wrap:anywhere; }
   .addCommentRow{ display:flex; gap:8px; margin-top:4px; }
-  .addCommentRow input{ flex:1 1 auto; margin:0 !important; }
+  .addCommentRow input, .addCommentRow textarea{ flex:1 1 auto; margin:0 !important; }
   .addCommentRow button{ flex:0 0 auto; font-family:inherit; font-size:12.5px; font-weight:700; cursor:pointer;
     border-radius:6px; padding:9px 16px; color:#fff; background:var(--brand); border:none; white-space:nowrap; }
   .addCommentRow button:hover{ background:var(--brand-dark); }
@@ -474,8 +474,7 @@
         <label style="margin-bottom:6px;">Comments</label>
         <div id="reviewCommentsList" class="reviewCommentsList"></div>
         <div class="addCommentRow" id="addCommentRow" style="display:none;">
-          <input type="text" id="f_newComment" placeholder="Add a comment…">
-          <button type="button" id="addCommentBtn">Add Comment</button>
+          <textarea id="f_newComment" rows="2" placeholder="Add a comment (it’s added when you click Save)"></textarea>
         </div>
         <p class="modalSectionHint" id="addCommentHint" style="display:none;">Save this DMR first before adding a comment.</p>
       </div>
@@ -1211,33 +1210,30 @@
           '</div>';
       }).join('');
     }
-    var canComment = (canManageAll() || isCustomerUser()) && !!editingId;
+    var canComment = canManageAll() || isCustomerUser();
     document.getElementById('addCommentRow').style.display = canComment ? 'flex' : 'none';
-    document.getElementById('addCommentHint').style.display = (!editingId && (canManageAll() || isCustomerUser())) ? '' : 'none';
+    document.getElementById('addCommentHint').style.display = 'none';
   }
-  document.getElementById('addCommentBtn').addEventListener('click', async function(){
-    var btn = this;
+  // Comments are stored through their own append-only endpoint (see
+  // worker/README.md), but they save with the DMR's Save button like every
+  // other field: a comment typed in the box is added right after the DMR
+  // itself saves - including on a brand-new DMR, once Save has created it.
+  async function saveComment(dmrId){
     var input = document.getElementById('f_newComment');
     var text = input.value.trim();
-    if (!text || !editingId) return;
-    btn.disabled = true; btn.textContent = 'Adding…';
-    try {
-      var res = await apiFetch('customer-dmrs/' + encodeURIComponent(editingId) + '/comments', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text })
-      });
-      var data = {}; try { data = await res.json(); } catch(e){}
-      if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
-      reviewCommentsState = Array.isArray(data.reviewComments) ? data.reviewComments : [];
-      input.value = '';
-      renderReviewComments();
-      var idx = lastDmrs.findIndex(function(x){ return x.id === editingId; });
-      if (idx !== -1) lastDmrs[idx] = data;
-    } catch (err) {
-      alert('Could not add this comment (' + (err && err.message ? err.message : err) + ').');
-    } finally {
-      btn.disabled = false; btn.textContent = 'Add Comment';
-    }
-  });
+    if (!text) return null;
+    var res = await apiFetch('customer-dmrs/' + encodeURIComponent(dmrId) + '/comments', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text })
+    });
+    var data = {}; try { data = await res.json(); } catch(e){}
+    if (!res.ok) throw new Error('The DMR was saved, but the comment could not be added (' + (data.message || ('HTTP ' + res.status)) + '). Your comment is still in the box - click Save to try again.');
+    reviewCommentsState = Array.isArray(data.reviewComments) ? data.reviewComments : reviewCommentsState;
+    input.value = '';
+    renderReviewComments();
+    var idx = lastDmrs.findIndex(function(x){ return x.id === dmrId; });
+    if (idx !== -1) lastDmrs[idx] = data;
+    return data;
+  }
 
   document.getElementById('agentic8dBtn').addEventListener('click', function(){
     alert('Agentic 8D Generation is coming soon. In the future, an AI agent will generate a full 8D report using the information captured in this DMR.');
@@ -1258,6 +1254,9 @@
     var allInputs = document.querySelectorAll('#dmrForm input, #dmrForm select, #dmrForm textarea');
     allInputs.forEach(function(el){
       if (el.id === 'f_dmrNumber' || el.id === 'f_supplierOrg') return; // handled separately
+      // The comment box is for staff and the Customer alike (renderReviewComments
+      // shows or hides it); it used to be disabled for a Customer here.
+      if (el.id === 'f_newComment') { el.disabled = false; return; }
       if (el.name === 'f_status' || SECTION8_IDS.indexOf(el.id) !== -1) {
         el.disabled = !(canManageAll() || isCustomerUser());
         return;
@@ -1485,7 +1484,8 @@
     reviewCommentsState = Array.isArray(putData.reviewComments) ? putData.reviewComments : reviewCommentsState;
     renderReviewComments();
 
-    return putData;
+    var commentData = await saveComment(dmrId);
+    return commentData || putData;
   }
 
   document.getElementById('dmrForm').addEventListener('submit', async function(e){
