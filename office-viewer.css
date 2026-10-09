@@ -60,3 +60,28 @@
 #docViewerOffice .officeXlsxNote{ padding:8px 4px; color:#6b7280; font-size:11.5px; font-style:italic; }
 
 #docViewerOffice .slides-loadnig-msg{ padding:16px; text-align:center; color:#555; }
+
+/* ---- Attachment viewer size: as big as the browser window allows ---------
+   Every page that has the viewer (#docViewerOverlay) defines it in its own
+   <style>, capped at 980px wide (Customer POs: a 1.8 aspect-ratio box) with
+   a 22px margin. These rules override that on all of them: the panel fills
+   the whole window, keeping only the device's safe-area insets (phone notch,
+   rounded corners) so the title bar and buttons stay reachable. They use the
+   overlay's id so they win over each page's own class rules, which load
+   after this file. The Full screen button (office-viewer.js) goes further
+   and hides the browser's own tabs and address bar. */
+#docViewerOverlay.viewerOverlay{
+  padding:env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+#docViewerOverlay .viewerPanel{
+  width:100%; max-width:none; height:100%; max-height:none;
+  border-radius:0; box-shadow:none;
+}
+#docViewerOverlay .viewerBar{ flex:0 0 auto; padding:8px 12px; }
+#docViewerOverlay .viewerBody{
+  flex:1 1 auto; min-height:0; width:100%;
+  aspect-ratio:auto; max-height:none;
+}
+#docViewerOverlay .viewerPanel:fullscreen{ width:100vw; height:100vh; }
+#docViewerFullscreen{ color:var(--brand, #2b4ea3); background:#fff; border:1px solid var(--brand, #2b4ea3); }
+#docViewerFullscreen:hover{ background:#eef1fa; }

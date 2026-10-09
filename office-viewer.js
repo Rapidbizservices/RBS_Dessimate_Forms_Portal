@@ -1005,4 +1005,54 @@
   }
 
   window.OfficeViewer = { isOfficeExt: isOfficeExt, render: render };
+
+  // ---- Full screen for the attachment viewer ------------------------------
+  // office-viewer.css already makes the viewer fill the browser window; this
+  // adds a "Full screen" button that also hides the browser's own tabs and
+  // address bar. Lives here because every page with #docViewerOverlay loads
+  // this file, so no page needs its own copy. Browsers that can't put an
+  // element full screen (e.g. iPhone Safari) simply don't get the button.
+  function setupViewerFullscreen() {
+    var overlay = document.getElementById('docViewerOverlay');
+    if (!overlay) return;
+    var panel = overlay.querySelector('.viewerPanel');
+    var btns = overlay.querySelector('.viewerBtns');
+    if (!panel || !btns || !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) return;
+
+    function current() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+    function exit() {
+      if (!current()) return;
+      var p = (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      if (p && p.catch) p.catch(function () {});
+    }
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'docViewerFullscreen';
+    btn.textContent = 'Full screen';
+    btns.insertBefore(btn, btns.firstChild);
+    btn.addEventListener('click', function () {
+      if (current()) { exit(); return; }
+      var request = panel.requestFullscreen || panel.webkitRequestFullscreen;
+      try {
+        var p = request.call(panel);
+        if (p && p.catch) p.catch(function () {});
+      } catch (e) {}
+    });
+
+    function sync() { btn.textContent = current() ? 'Exit full screen' : 'Full screen'; }
+    document.addEventListener('fullscreenchange', sync);
+    document.addEventListener('webkitfullscreenchange', sync);
+
+    // Each page closes the viewer by removing .open; leave full screen then
+    // too, so closing never strands the user on a blank full-screen panel.
+    new MutationObserver(function () {
+      if (!overlay.classList.contains('open')) exit();
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupViewerFullscreen);
+  } else {
+    setupViewerFullscreen();
+  }
 })();
