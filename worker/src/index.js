@@ -106,13 +106,27 @@
  * Team member -> team_member), with SUPER_ADMIN_LEGACY_FALLBACK bootstrapping
  * anyone who could already reach Users/Organizations before this field
  * existed (mirrors the old hardcoded frontend ADMIN_USERNAMES list). GET
- * /organizations and GET /parts deliberately stay on plain requireAuth (any
- * signed-in user) rather than requireRole, since the already-shipped
- * Supplier/Customer/Part dropdowns on the PDIR form, Parts page, and Users
- * page depend on every signed-in user being able to read them - only the
- * WRITE routes for Users and Organizations, and the admin user directory's
- * GET (personal contact info), are super_admin-only. Parts writes require
- * team_member or above.
+ * /organizations and GET /parts stay readable by any signed-in user, scoped
+ * to that user's self (super_admin sees every self). Users writes and the
+ * admin user directory stay super_admin-only. Organization writes are
+ * super_admin, or an admin limited to their own self's customers and
+ * suppliers. Parts writes require team_member or above.
+ *
+ * SELVES (tenants)
+ * A Self organization is one tenant. Dessimate is the first. More can be
+ * added the same way; this is not a second company hardcoded by name.
+ * super_admin sees every self, can create another Self, and can attach a
+ * customer or a supplier relationship to a self. admin, team_member,
+ * supplier, and customer each have one selfId and only receive that self's
+ * rows. A list or by-id read for another self is Not found — the same
+ * response an out-of-scope record already gets. A customer organization has
+ * one selfId. ABC Aerospace stays unassigned (super_admin only) until a
+ * super admin attaches it. Other existing customers are stamped Dessimate.
+ * A supplier may serve several selves (selfIds). A supplier login is one
+ * pair: that organization plus one self. Business records store selfId.
+ * A missing selfId is read as Dessimate, except rows for unassigned
+ * ABC Aerospace. POST /admin/stamp-selves persists that stamp. Counters
+ * in data/counters.json are kept per self under bySelf.
  *
  * ROUTES
  *   GET    /health                    - no auth; quick "is this deployed" check
@@ -138,9 +152,9 @@
  *                                        one-time admin-issued enrollment link's own TOTP
  *                                        enroll/confirm flow (see
  *                                        POST /admin/users/<id>/passwordless-enroll-link below).
- *   GET    /users                     - no auth; -> { usernames: [...] }, active team-member
- *                                        logins only. Never salts/hashes. Kept for any page
- *                                        that just wants a plain "who can sign in" list.
+ *   GET    /users                     - auth required; -> { usernames, people }, active
+ *                                        internal-staff logins for the caller's self only
+ *                                        (super_admin sees every self). Never salts/hashes.
  *   GET    /me                        - auth required; -> { username, accessLevel }. Lets the
  *                                        frontend decide what to show (e.g. the Admin button)
  *                                        from real resolved access, instead of a hardcoded list.
@@ -151,7 +165,8 @@
  *                                        account.
  *   GET    /admin/users               - super_admin required; full sanitized user directory
  *                                        (never salts/hashes), including not-yet-migrated
- *                                        legacy logins.
+ *                                        legacy logins. Each non-super_admin row includes
+ *                                        selfId (which self that login belongs to).
  *   POST   /admin/users               - super_admin required; create a directory entry.
  *   PUT    /admin/users/<id>          - super_admin required; update one (id may be a real
  *                                        file id, or "legacy:<username>" - editing one of
@@ -166,14 +181,21 @@
  *   POST   /admin/import-legacy       - super_admin required; pulls any STAFF_USERS-secret
  *                                        logins not already in the file into the file,
  *                                        unchanged otherwise, so they show up as editable rows.
- *   GET    /organizations             - auth required (any signed-in user); full organization
- *                                        directory.
- *   POST   /organizations             - super_admin required; create an organization.
- *   PUT    /organizations/<id>        - super_admin required; update one.
- *   DELETE /organizations/<id>        - super_admin required; remove one (its document files
- *                                        in storage are left in place, same as PDIRs do when
- *                                        a document is replaced - nothing here deletes stored
- *                                        file content, only the directory record).
+ *   GET    /organizations             - auth required (any signed-in user); organization
+ *                                        directory scoped to the caller's self. super_admin
+ *                                        sees every self, unassigned customers, and every
+ *                                        supplier relationship. Everyone else sees only their
+ *                                        own Self organization plus that self's customers and
+ *                                        suppliers — never the list of other selves.
+ *   POST   /organizations             - super_admin, or an admin creating a customer or
+ *                                        supplier for their own self. super_admin may also
+ *                                        create another Self organization. An admin cannot.
+ *   PUT    /organizations/<id>        - super_admin, or an admin editing a customer or
+ *                                        supplier of their own self. Another self is Not found.
+ *   DELETE /organizations/<id>        - super_admin removes the record. An admin removing a
+ *                                        supplier only drops their own self from that
+ *                                        supplier's relationships (the company record stays
+ *                                        while another self still uses it).
  *   GET    /parts                     - auth required (any signed-in user); scoped parts
  *                                        directory (scopeParts: a Supplier sees parts listing
  *                                        their org, a Customer sees parts they buy).
@@ -556,10 +578,522 @@ const ACCESS_LEVELS = ['super_admin', 'admin', 'team_member', 'supplier', 'custo
 // the Users page once an explicit accessLevel is set.
 const SUPER_ADMIN_LEGACY_FALLBACK = ['roberto', 'amy'];
 
+// Customer organization that must NOT be stamped onto Dessimate. It stays
+// unassigned (super_admin only) until a super admin sets its selfId.
+const LEGACY_UNASSIGNED_CUSTOMER_NAME = 'abc aerospace';
+
+function isLegacyUnassignedCustomerName(name) {
+  return (name || '').toString().trim().toLowerCase() === LEGACY_UNASSIGNED_CUSTOMER_NAME;
+}
+
+function selfScopedDataPaths() {
+  return [
+    PARTS_FILE_PATH, APQP_FILE_PATH, PDIR_INDEX_FILE_PATH, CUSTOMER_POS_FILE_PATH,
+    DESSIMATE_POS_FILE_PATH, RFQS_FILE_PATH, CUSTOMER_RFQS_FILE_PATH, CHANGE_REQUESTS_FILE_PATH,
+    SCRS_FILE_PATH, DMRS_FILE_PATH, CUSTOMER_DMRS_FILE_PATH, CUSTOMER_OPEN_ISSUES_FILE_PATH,
+    SUPPLIER_OPEN_ISSUES_FILE_PATH, SUPPLIER_INVOICES_FILE_PATH, DESSIMATE_INVOICES_FILE_PATH
+  ];
+}
+
+function describeSelves(orgs) {
+  const list = Array.isArray(orgs) ? orgs : [];
+  const selves = list.filter(function (o) { return o && o.relationship === 'Self'; });
+  const named = selves.find(function (o) { return (o.name || '').trim().toLowerCase() === 'dessimate'; });
+  const dessimate = named || (selves.length === 1 ? selves[0] : null);
+  return { orgs: list, selves: selves, dessimate: dessimate, dessimateId: dessimate ? dessimate.id : '' };
+}
+
+async function readOrgItems(env) {
+  const state = await readJsonArrayFile(env, ORGANIZATIONS_FILE_PATH);
+  return state.items || [];
+}
+
+// Creates the Dessimate Self organization only when the directory has no
+// Self yet. An existing Self, whatever its name, stays the home tenant
+// when it is the only one. Never invents a second company.
+async function ensureDessimateSelfOrg(env) {
+  let described = describeSelves(await readOrgItems(env));
+  if (described.dessimate || described.selves.length) return described;
+  const created = {
+    id: cryptoRandomId(), name: 'Dessimate', relationship: 'Self',
+    address: '', phone: '', website: '', logo: null, addresses: [],
+    salesEmail: '', purchasingEmail: '', paymentTerms: [], contacts: [],
+    docs: { companyPresentation: null, nda: null, selfAssessment: null }, genericDocs: []
+  };
+  await mutateJsonArrayFile(env, ORGANIZATIONS_FILE_PATH, function (items) {
+    if ((items || []).some(function (o) { return o && o.relationship === 'Self'; })) return { items: items };
+    items.push(created);
+    return { items: items };
+  });
+  return describeSelves(await readOrgItems(env));
+}
+
+function customerOrgSelfId(org, described) {
+  if (!org) return '';
+  if (org.selfUnassigned) return '';
+  if (org.selfId) return org.selfId;
+  if (isLegacyUnassignedCustomerName(org.name)) return '';
+  return described.dessimateId || '';
+}
+
+function supplierOrgSelfIds(org, described) {
+  if (!org) return [];
+  if (Array.isArray(org.selfIds)) return org.selfIds.filter(Boolean);
+  if (org.selfUnassigned) return [];
+  return described.dessimateId ? [described.dessimateId] : [];
+}
+
+function orgVisibleToScope(org, scope, described) {
+  if (!org) return false;
+  if (scope && scope.unrestricted) return true;
+  if (!scope || !scope.selfId) return false;
+  if (org.relationship === 'Self') return org.id === scope.selfId;
+  if (org.relationship === 'Customer') return customerOrgSelfId(org, described) === scope.selfId;
+  if (org.relationship === 'Supplier') return supplierOrgSelfIds(org, described).indexOf(scope.selfId) !== -1;
+  return false;
+}
+
+function recordCustomerName(record) {
+  if (!record) return '';
+  return (record.customer || record.customerName || record.customerOrg || '').toString().trim();
+}
+
+function effectiveSelfId(record, dessimateId, partIndex) {
+  if (!record) return '';
+  if (record.selfUnassigned && !record.selfId) return '';
+  if (record.selfId) return record.selfId;
+  if (isLegacyUnassignedCustomerName(recordCustomerName(record))) return '';
+  if (partIndex && record.partNumber && !record.customer && !record.customerOrg && !record.customerName) {
+    const fromPart = partIndex[(record.partNumber || '').toLowerCase()];
+    if (fromPart !== undefined) return fromPart;
+  }
+  const parts = Array.isArray(record.partNumbers) ? record.partNumbers : [];
+  if (partIndex && parts.length && !recordCustomerName(record)) {
+    let saw = false;
+    let allUnassigned = true;
+    for (let i = 0; i < parts.length; i++) {
+      const fromPart = partIndex[(parts[i] || '').toLowerCase()];
+      if (fromPart === undefined) continue;
+      saw = true;
+      if (fromPart) allUnassigned = false;
+    }
+    if (saw && allUnassigned) return '';
+  }
+  return dessimateId || '';
+}
+
+async function loadPartSelfIndex(env, dessimateId) {
+  const state = await readJsonArrayFile(env, PARTS_FILE_PATH);
+  const map = {};
+  (state.items || []).forEach(function (part) {
+    const key = (part && part.partNumber || '').toLowerCase();
+    if (!key) return;
+    map[key] = effectiveSelfId(part, dessimateId, null);
+  });
+  return map;
+}
+
+function scopeIsChecked(scope) {
+  return !!(scope && scope.selfChecked === true);
+}
+
+async function scopeRecords(env, items, scope) {
+  if (!scopeIsChecked(scope)) return [];
+  const dessimateId = scope.dessimateId || '';
+  const partIndex = await loadPartSelfIndex(env, dessimateId);
+  const rows = [];
+  (items || []).forEach(function (item) {
+    if (!item) return;
+    const sid = effectiveSelfId(item, dessimateId, partIndex);
+    if (!scope.unrestricted) {
+      if (!scope.selfId || sid !== scope.selfId) return;
+    }
+    rows.push({ item: item, sid: sid });
+  });
+  return rows;
+}
+
+async function presentList(env, items, scope, sanitizeFn) {
+  const rows = await scopeRecords(env, items, scope);
+  return rows.map(function (row) {
+    const view = sanitizeFn(row.item);
+    if (view && typeof view === 'object') view.selfId = row.sid;
+    return view;
+  });
+}
+
+async function recordInSelfScope(env, record, scope) {
+  if (!record) return false;
+  if (!scopeIsChecked(scope)) return false;
+  if (scope.unrestricted) return true;
+  const rows = await scopeRecords(env, [record], scope);
+  return rows.length > 0;
+}
+
+async function denyIfOutOfSelf(env, path, id, scope, origin) {
+  if (scope && scope.unrestricted && scopeIsChecked(scope)) return null;
+  const state = await readJsonArrayFile(env, path);
+  const item = (state.items || []).find(function (row) { return row && row.id === id; });
+  if (!item) return json({ message: 'Not found.' }, 404, origin);
+  if (!(await recordInSelfScope(env, item, scope))) return json({ message: 'Not found.' }, 404, origin);
+  return null;
+}
+
+async function selfIdForNewRecord(env, scope, body) {
+  const described = await ensureDessimateSelfOrg(env);
+  if (!scopeIsChecked(scope)) return { error: 'Not found.', status: 404 };
+  if (scope.unrestricted) {
+    const requested = body && body.selfId ? String(body.selfId).trim() : '';
+    if (requested) {
+      const match = described.selves.some(function (o) { return o.id === requested; });
+      if (!match) return { error: 'That self was not found.', status: 400 };
+      return { selfId: requested };
+    }
+    if (!described.dessimateId) return { error: 'No self organization exists yet.', status: 400 };
+    return { selfId: described.dessimateId };
+  }
+  if (!scope.selfId) return { error: 'Not found.', status: 404 };
+  return { selfId: scope.selfId };
+}
+
+function effectiveUserSelfId(user, described) {
+  if (!user) return '';
+  if (user.accessLevel === 'super_admin') return '';
+  if (user.selfId) return user.selfId;
+  if (user.selfUnassigned) return '';
+  const orgName = (user.organization || '').trim().toLowerCase();
+  const username = (user.username || '').trim().toLowerCase();
+  const customerish = user.relationship === 'Customer' || user.accessLevel === 'customer';
+  if (customerish && (isLegacyUnassignedCustomerName(orgName) || isLegacyUnassignedCustomerName(username))) {
+    const org = (described.orgs || []).find(function (o) {
+      return o && o.relationship === 'Customer' && isLegacyUnassignedCustomerName(o.name);
+    });
+    if (org && org.selfId && !org.selfUnassigned) return org.selfId;
+    return '';
+  }
+  if (customerish && orgName) {
+    const org = (described.orgs || []).find(function (o) {
+      return o && o.relationship === 'Customer' && (o.name || '').trim().toLowerCase() === orgName;
+    });
+    if (org) return customerOrgSelfId(org, described);
+  }
+  return described.dessimateId || '';
+}
+
+function userVisibleToScope(user, scope, described) {
+  if (!user) return false;
+  if (scope && scope.unrestricted) return true;
+  if (!scope || !scope.selfId) return false;
+  if (user.accessLevel === 'super_admin') return scope.selfId === (described && described.dessimateId);
+  return effectiveUserSelfId(user, described) === scope.selfId;
+}
+
+async function selfIdOfStoredRecord(env, path, id) {
+  const described = await ensureDessimateSelfOrg(env);
+  const state = await readJsonArrayFile(env, path);
+  const item = (state.items || []).find(function (row) { return row && row.id === id; });
+  if (!item) return described.dessimateId || '';
+  const partIndex = await loadPartSelfIndex(env, described.dessimateId);
+  return effectiveSelfId(item, described.dessimateId, partIndex) || described.dessimateId || '';
+}
+
+function counterKeys() {
+  return Object.keys(DEFAULT_COUNTERS);
+}
+
+function ensureCounterBucket(obj, selfId, dessimateId) {
+  if (!obj.bySelf || typeof obj.bySelf !== 'object' || Array.isArray(obj.bySelf)) obj.bySelf = {};
+  const key = selfId || dessimateId || '';
+  if (!key) return obj;
+  if (!obj.bySelf[key]) {
+    const fresh = {};
+    counterKeys().forEach(function (k) { fresh[k] = DEFAULT_COUNTERS[k]; });
+    if (dessimateId && key === dessimateId) {
+      counterKeys().forEach(function (k) {
+        if (obj[k] != null) fresh[k] = obj[k];
+      });
+    }
+    obj.bySelf[key] = fresh;
+  }
+  return obj.bySelf[key];
+}
+
+async function mutateCounterBucket(env, selfId, mutateFn) {
+  const described = await ensureDessimateSelfOrg(env);
+  const sid = selfId || described.dessimateId || '';
+  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+    const bucket = ensureCounterBucket(obj, sid, described.dessimateId);
+    const meta = mutateFn(bucket);
+    if (described.dessimateId && sid === described.dessimateId) {
+      counterKeys().forEach(function (k) { obj[k] = bucket[k]; });
+    }
+    return { obj: obj, meta: meta };
+  });
+  if (!result.ok) throw new Error(result.message);
+  return result.meta;
+}
+
+async function readCounterBucket(env, selfId) {
+  const described = await ensureDessimateSelfOrg(env);
+  const sid = selfId || described.dessimateId || '';
+  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
+  return ensureCounterBucket(state.obj, sid, described.dessimateId);
+}
+
+function scopeCounterSelfId(scope) {
+  if (!scopeIsChecked(scope)) return '';
+  if (scope.unrestricted) return scope.homeSelfId || scope.dessimateId || '';
+  return scope.selfId || '';
+}
+
+async function valueTakenInSelf(env, path, field, value, excludeId, selfId, accept) {
+  const described = await ensureDessimateSelfOrg(env);
+  const sid = selfId || described.dessimateId || '';
+  const state = await readJsonArrayFile(env, path);
+  const target = String(value).toLowerCase();
+  const partIndex = await loadPartSelfIndex(env, described.dessimateId);
+  return (state.items || []).some(function (row) {
+    if (!row || row.id === excludeId) return false;
+    if (accept && !accept(row)) return false;
+    if (String(row[field] == null ? '' : row[field]).toLowerCase() !== target) return false;
+    return effectiveSelfId(row, described.dessimateId, partIndex) === sid;
+  });
+}
+
+function objectContainsPath(obj, path) {
+  if (!obj || typeof obj !== 'object') return false;
+  if (obj.path === path) return true;
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) if (objectContainsPath(obj[i], path)) return true;
+    return false;
+  }
+  const keys = Object.keys(obj);
+  for (let i = 0; i < keys.length; i++) {
+    if (objectContainsPath(obj[keys[i]], path)) return true;
+  }
+  return false;
+}
+
+async function contentsBlockedForSelf(env, ghPath, scope) {
+  if (!scopeIsChecked(scope) || scope.unrestricted) return false;
+  if (!scope.selfId) return true;
+  let decoded = ghPath;
+  try { decoded = ghPath.split('/').map(decodeURIComponent).join('/'); } catch (e) { decoded = ghPath; }
+  const pdir = /^pdirs\/(.+)\.pdf$/.exec(decoded) || /^pdir_drafts\/(.+)\.json$/.exec(decoded) || /^pdir_docs\/([^/]+)\/.+$/.exec(decoded);
+  if (pdir) {
+    const entry = await resolvePdirIndexEntry(env, pdir[1]);
+    if (!entry) return false;
+    return !(await recordInSelfScope(env, entry, scope));
+  }
+  const idMatch = /^[a-z0-9_]+\/([^/]+)\//.exec(decoded);
+  const paths = selfScopedDataPaths().concat([ORGANIZATIONS_FILE_PATH]);
+  let saw = false;
+  let sawOk = false;
+  for (let p = 0; p < paths.length; p++) {
+    const state = await readJsonArrayFile(env, paths[p]);
+    const items = state.items || [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item) continue;
+      const hit = objectContainsPath(item, decoded) || (idMatch && item.id === idMatch[1]);
+      if (!hit) continue;
+      saw = true;
+      if (paths[p] === ORGANIZATIONS_FILE_PATH) {
+        const described = describeSelves(await readOrgItems(env));
+        if (orgVisibleToScope(item, scope, described)) sawOk = true;
+      } else if (await recordInSelfScope(env, item, scope)) {
+        sawOk = true;
+      }
+    }
+  }
+  if (!saw) return false;
+  return !sawOk;
+}
+
+function presentOrg(org, scope, described) {
+  const view = sanitizeOrg(org);
+  if (org.relationship === 'Self') {
+    view.selfId = org.id;
+  } else if (org.relationship === 'Customer') {
+    view.selfId = customerOrgSelfId(org, described);
+    if (scope && scope.unrestricted) view.selfUnassigned = !view.selfId;
+  } else if (org.relationship === 'Supplier') {
+    const ids = supplierOrgSelfIds(org, described);
+    view.selfIds = (scope && scope.unrestricted) ? ids : ids.filter(function (id) { return scope && id === scope.selfId; });
+  }
+  if (scope && !scope.unrestricted && view.selfId && view.selfId !== scope.selfId) delete view.selfId;
+  return view;
+}
+
+function applyCustomerSelfMove(item, previousSelfId, nextSelfId, unassigned) {
+  const current = item.selfId || '';
+  const wasUnassigned = !!item.selfUnassigned || !current;
+  const wasPrevious = !!(previousSelfId && current === previousSelfId);
+  if (!wasUnassigned && !wasPrevious) return;
+  if (unassigned || !nextSelfId) { item.selfId = ''; item.selfUnassigned = true; }
+  else { item.selfId = nextSelfId; item.selfUnassigned = false; }
+}
+
+async function restampForCustomerOrg(env, orgName, previousSelfId, nextSelfId, unassigned) {
+  const name = (orgName || '').trim().toLowerCase();
+  if (!name) return;
+  const paths = selfScopedDataPaths();
+  for (let p = 0; p < paths.length; p++) {
+    await mutateJsonArrayFile(env, paths[p], function (items) {
+      items.forEach(function (item) {
+        if (!item) return;
+        if (recordCustomerName(item).toLowerCase() !== name) return;
+        applyCustomerSelfMove(item, previousSelfId, nextSelfId, unassigned);
+      });
+      return { items: items };
+    });
+  }
+  const partsState = await readJsonArrayFile(env, PARTS_FILE_PATH);
+  const partNumbers = (partsState.items || []).filter(function (part) {
+    return (part.customer || '').trim().toLowerCase() === name;
+  }).map(function (part) { return (part.partNumber || '').toLowerCase(); });
+  await mutateJsonArrayFile(env, PARTS_FILE_PATH, function (items) {
+    items.forEach(function (part) {
+      if (!part || (part.customer || '').trim().toLowerCase() !== name) return;
+      const current = part.selfId || '';
+      const wasUnassigned = !!part.selfUnassigned || !current;
+      const wasPrevious = previousSelfId && current === previousSelfId;
+      if (!wasUnassigned && !wasPrevious) return;
+      if (unassigned || !nextSelfId) { part.selfId = ''; part.selfUnassigned = true; }
+      else { part.selfId = nextSelfId; part.selfUnassigned = false; }
+    });
+    return { items: items };
+  });
+  if (partNumbers.length) {
+    for (let p = 0; p < paths.length; p++) {
+      if (paths[p] === PARTS_FILE_PATH) continue;
+      await mutateJsonArrayFile(env, paths[p], function (items) {
+        items.forEach(function (item) {
+          if (!item || recordCustomerName(item)) return;
+          const pn = (item.partNumber || '').toLowerCase();
+          const many = Array.isArray(item.partNumbers) ? item.partNumbers.map(function (n) { return (n || '').toLowerCase(); }) : [];
+          const hit = (pn && partNumbers.indexOf(pn) !== -1) || many.some(function (n) { return partNumbers.indexOf(n) !== -1; });
+          if (!hit) return;
+          const current = item.selfId || '';
+          const wasUnassigned = !!item.selfUnassigned || !current;
+          const wasPrevious = previousSelfId && current === previousSelfId;
+          if (!wasUnassigned && !wasPrevious) return;
+          if (unassigned || !nextSelfId) { item.selfId = ''; item.selfUnassigned = true; }
+          else { item.selfId = nextSelfId; item.selfUnassigned = false; }
+        });
+        return { items: items };
+      });
+    }
+  }
+  await mutateUsersFile(env, function (users) {
+    users.forEach(function (user) {
+      if (!user || user.accessLevel === 'super_admin') return;
+      if ((user.organization || '').trim().toLowerCase() !== name) return;
+      if (user.relationship !== 'Customer' && user.accessLevel !== 'customer') return;
+      if (unassigned || !nextSelfId) { user.selfId = ''; user.selfUnassigned = true; }
+      else { user.selfId = nextSelfId; user.selfUnassigned = false; }
+    });
+    return { users: users };
+  });
+}
+
+async function ensureLegacySelfStamps(env) {
+  const describedFirst = await ensureDessimateSelfOrg(env);
+  const config = await readJsonObjectFile(env, APP_CONFIG_FILE_PATH, DEFAULT_APP_CONFIG);
+  if (config.obj && config.obj.selfTenantStamp === 1 && describedFirst.dessimateId) return describedFirst;
+  const described = describedFirst;
+  const dessimateId = described.dessimateId || '';
+  if (!dessimateId) return described;
+
+  await mutateJsonArrayFile(env, ORGANIZATIONS_FILE_PATH, function (items) {
+    items.forEach(function (org) {
+      if (!org) return;
+      if (org.relationship === 'Self') return;
+      if (org.relationship === 'Customer') {
+        if (org.selfId || org.selfUnassigned) return;
+        if (isLegacyUnassignedCustomerName(org.name)) { org.selfUnassigned = true; org.selfId = ''; return; }
+        org.selfId = dessimateId;
+        org.selfUnassigned = false;
+        return;
+      }
+      if (org.relationship === 'Supplier') {
+        if (Array.isArray(org.selfIds) || org.selfUnassigned) return;
+        org.selfIds = [dessimateId];
+      }
+    });
+    return { items: items };
+  });
+
+  const partIndex = await loadPartSelfIndex(env, dessimateId);
+  const paths = selfScopedDataPaths();
+  for (let p = 0; p < paths.length; p++) {
+    await mutateJsonArrayFile(env, paths[p], function (items) {
+      items.forEach(function (item) {
+        if (!item || item.selfId || item.selfUnassigned) return;
+        const sid = effectiveSelfId(item, dessimateId, partIndex);
+        if (!sid) { item.selfUnassigned = true; item.selfId = ''; return; }
+        item.selfId = sid;
+      });
+      return { items: items };
+    });
+  }
+
+  await mutateUsersFile(env, function (users) {
+    const fresh = describeSelves(described.orgs);
+    fresh.dessimateId = dessimateId;
+    users.forEach(function (user) {
+      if (!user || user.accessLevel === 'super_admin') return;
+      if (user.selfId || user.selfUnassigned) return;
+      const sid = effectiveUserSelfId(user, fresh);
+      if (!sid) { user.selfUnassigned = true; user.selfId = ''; return; }
+      user.selfId = sid;
+    });
+    return { users: users };
+  });
+
+  await mutateJsonObjectFile(env, APP_CONFIG_FILE_PATH, DEFAULT_APP_CONFIG, function (obj) {
+    obj.selfTenantStamp = 1;
+    return { obj: obj };
+  });
+  return describeSelves(await readOrgItems(env));
+}
+
+async function buildSelfScope(env, username, accessLevel) {
+  const described = await ensureLegacySelfStamps(env);
+  const organization = (accessLevel === 'supplier' || accessLevel === 'customer')
+    ? await resolveUserOrganization(env, username) : '';
+  if (accessLevel === 'super_admin') {
+    return {
+      selfChecked: true, unrestricted: true, selfId: null,
+      homeSelfId: described.dessimateId || '', dessimateId: described.dessimateId || '',
+      accessLevel: accessLevel, organization: organization, selves: described.selves
+    };
+  }
+  const fileState = await readUsersFile(env);
+  const lower = (username || '').toLowerCase();
+  const fileUser = (fileState.users || []).find(function (u) { return u.username && u.username.toLowerCase() === lower; });
+  const selfId = fileUser ? effectiveUserSelfId(fileUser, described) : (described.dessimateId || '');
+  return {
+    selfChecked: true, unrestricted: false, selfId: selfId || '',
+    homeSelfId: selfId || '', dessimateId: described.dessimateId || '',
+    accessLevel: accessLevel, organization: organization, selves: []
+  };
+}
+
+// Local showcase: a page opened on this PC (localhost or 127.0.0.1) may
+// call the local worker. Every other Origin keeps ALLOWED_ORIGIN, so
+// GitHub Pages still uses the production origin from wrangler.toml.
+function corsOriginFor(request, env) {
+  const configured = env.ALLOWED_ORIGIN || '*';
+  const incoming = request.headers.get('Origin') || '';
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(incoming)) return incoming;
+  return configured;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const origin = env.ALLOWED_ORIGIN || '*';
+    const origin = corsOriginFor(request, env);
 
     if (request.method === 'OPTIONS') {
       return corsResponse(origin);
@@ -621,7 +1155,9 @@ export default {
       }
 
       if (url.pathname === '/users' && request.method === 'GET') {
-        return await handleListUsers(env, origin);
+        const auth = await requireAuthWithScope(request, env);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleListUsers(env, origin, auth);
       }
 
       // Rev2.1: the PDIR Sign-Off's "Prepared By" dropdown (Supplier side) is
@@ -643,22 +1179,24 @@ export default {
             return json({ contacts: [] }, 200, origin);
           }
         }
-        return await handleListOrgContacts(env, origin, requestedOrg);
+        return await handleListOrgContacts(env, origin, requestedOrg, auth);
       }
 
       if (url.pathname === '/me' && request.method === 'GET') {
-        const auth = await requireAuth(request, env);
+        const auth = await requireAuthWithScope(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        const accessLevel = await resolveAccessLevel(env, auth.username);
-        // Rev2.16: a Supplier/Customer's own organization name, so a page
-        // like Change Requests can lock a "which org is this for" dropdown
-        // to their own name without needing them to already own a record to
-        // infer it from - same resolveUserOrganization used everywhere else
-        // an org-scoped write needs to know who's asking.
-        const organization = (accessLevel === 'supplier' || accessLevel === 'customer')
-          ? await resolveUserOrganization(env, auth.username)
-          : '';
-        return json({ username: auth.username, accessLevel: accessLevel, organization: organization, impersonatedBy: auth.impersonatedBy || null }, 200, origin);
+        const body = {
+          username: auth.username,
+          accessLevel: auth.accessLevel,
+          organization: auth.organization || '',
+          impersonatedBy: auth.impersonatedBy || null,
+          selfId: auth.unrestricted ? null : (auth.selfId || null),
+          homeSelfId: auth.homeSelfId || null
+        };
+        if (auth.unrestricted) {
+          body.selves = (auth.selves || []).map(function (o) { return { id: o.id, name: o.name || '' }; });
+        }
+        return json(body, 200, origin);
       }
 
       if (url.pathname === '/me/password' && request.method === 'PUT') {
@@ -713,8 +1251,8 @@ export default {
       if (url.pathname === '/admin/users') {
         const auth = await requireRole(request, env, ['super_admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        if (request.method === 'GET') return await handleAdminListUsers(env, origin);
-        if (request.method === 'POST') return await handleAdminCreateUser(request, env, origin);
+        if (request.method === 'GET') return await handleAdminListUsers(env, origin, auth);
+        if (request.method === 'POST') return await handleAdminCreateUser(request, env, origin, auth);
       }
 
       if (/^\/admin\/users\/[^/]+\/passwordless-enroll-link$/.test(url.pathname) && request.method === 'POST') {
@@ -728,14 +1266,25 @@ export default {
         const auth = await requireRole(request, env, ['super_admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         const id = decodeURIComponent(url.pathname.slice('/admin/users/'.length));
-        if (request.method === 'PUT') return await handleAdminUpdateUser(request, env, origin, id);
-        if (request.method === 'DELETE') return await handleAdminDeleteUser(env, origin, id);
+        if (request.method === 'PUT') return await handleAdminUpdateUser(request, env, origin, id, auth);
+        if (request.method === 'DELETE') return await handleAdminDeleteUser(env, origin, id, auth);
       }
 
       if (url.pathname === '/admin/import-legacy' && request.method === 'POST') {
         const auth = await requireRole(request, env, ['super_admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleAdminImportLegacy(env, origin);
+        return await handleAdminImportLegacy(env, origin, auth);
+      }
+
+      if (url.pathname === '/admin/stamp-selves' && request.method === 'POST') {
+        const auth = await requireRole(request, env, ['super_admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        await mutateJsonObjectFile(env, APP_CONFIG_FILE_PATH, DEFAULT_APP_CONFIG, function (obj) {
+          obj.selfTenantStamp = 0;
+          return { obj: obj };
+        });
+        const described = await ensureLegacySelfStamps(env);
+        return json({ ok: true, dessimateSelfId: described.dessimateId || '' }, 200, origin);
       }
 
       // ---- MFA: admin (super_admin only) ----------------------------------
@@ -764,35 +1313,35 @@ export default {
 
       if (url.pathname === '/organizations') {
         if (request.method === 'GET') {
-          const auth = await requireAuth(request, env);
+          const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListOrganizations(env, origin);
+          return await handleListOrganizations(env, origin, auth);
         }
         if (request.method === 'POST') {
-          const auth = await requireRole(request, env, ['super_admin']);
+          const auth = await requireRole(request, env, ['super_admin', 'admin']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateOrganization(request, env, origin);
+          return await handleCreateOrganization(request, env, origin, auth);
         }
       }
 
       if (url.pathname.startsWith('/organizations/')) {
         const id = decodeURIComponent(url.pathname.slice('/organizations/'.length));
-        const auth = await requireRole(request, env, ['super_admin']);
+        const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        if (request.method === 'PUT') return await handleUpdateOrganization(request, env, origin, id);
-        if (request.method === 'DELETE') return await handleDeleteOrganization(env, origin, id);
+        if (request.method === 'PUT') return await handleUpdateOrganization(request, env, origin, id, auth);
+        if (request.method === 'DELETE') return await handleDeleteOrganization(env, origin, id, auth);
       }
 
       if (url.pathname === '/parts') {
         if (request.method === 'GET') {
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListParts(env, origin, auth.accessLevel, auth.organization);
+          return await handleListParts(env, origin, auth);
         }
         if (request.method === 'POST') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreatePart(request, env, origin);
+          return await handleCreatePart(request, env, origin, auth);
         }
       }
 
@@ -800,20 +1349,20 @@ export default {
         const id = decodeURIComponent(url.pathname.slice('/parts/'.length));
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        if (request.method === 'PUT') return await handleUpdatePart(request, env, origin, id);
-        if (request.method === 'DELETE') return await handleDeletePart(env, origin, id);
+        if (request.method === 'PUT') return await handleUpdatePart(request, env, origin, id, auth);
+        if (request.method === 'DELETE') return await handleDeletePart(env, origin, id, auth);
       }
 
       if (url.pathname === '/apqp') {
         if (request.method === 'GET') {
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListApqp(env, origin, auth.accessLevel, auth.organization);
+          return await handleListApqp(env, origin, auth);
         }
         if (request.method === 'POST') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateApqp(request, env, origin, auth.username);
+          return await handleCreateApqp(request, env, origin, auth.username, auth);
         }
       }
 
@@ -823,27 +1372,27 @@ export default {
       if (apqpCommentsMatch && request.method === 'POST') {
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleAddApqpComment(request, env, origin, decodeURIComponent(apqpCommentsMatch[1]), decodeURIComponent(apqpCommentsMatch[2]), auth.username);
+        return await handleAddApqpComment(request, env, origin, decodeURIComponent(apqpCommentsMatch[1]), decodeURIComponent(apqpCommentsMatch[2]), auth.username, auth);
       }
       const apqpItemMatch = /^\/apqp\/([^/]+)\/items\/([^/]+)$/.exec(url.pathname);
       if (apqpItemMatch && request.method === 'PUT') {
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleUpdateApqpItemFiles(request, env, origin, decodeURIComponent(apqpItemMatch[1]), decodeURIComponent(apqpItemMatch[2]));
+        return await handleUpdateApqpItemFiles(request, env, origin, decodeURIComponent(apqpItemMatch[1]), decodeURIComponent(apqpItemMatch[2]), auth);
       }
 
       if (url.pathname.startsWith('/apqp/')) {
         const id = decodeURIComponent(url.pathname.slice('/apqp/'.length));
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        if (request.method === 'DELETE') return await handleDeleteApqp(env, origin, id);
+        if (request.method === 'DELETE') return await handleDeleteApqp(env, origin, id, auth);
       }
 
       if (url.pathname === '/pdir-index') {
         if (request.method === 'GET') {
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListPdirIndex(env, origin, auth.accessLevel, auth.organization);
+          return await handleListPdirIndex(env, origin, auth);
         }
         if (request.method === 'POST') {
           const auth = await requireAuthWithScope(request, env);
@@ -852,12 +1401,12 @@ export default {
             return json({ message: 'You don\'t have access to this.' }, 403, origin);
           }
           if (auth.accessLevel === 'supplier') {
-            return await handleSupplierUpsertPdirIndexEntry(request, env, origin, auth.organization);
+            return await handleSupplierUpsertPdirIndexEntry(request, env, origin, auth.organization, auth);
           }
           if (['super_admin', 'admin', 'team_member'].indexOf(auth.accessLevel) === -1) {
             return json({ message: 'You don\'t have access to this.' }, 403, origin);
           }
-          return await handleUpsertPdirIndexEntry(request, env, origin);
+          return await handleUpsertPdirIndexEntry(request, env, origin, auth);
         }
       }
 
@@ -866,7 +1415,7 @@ export default {
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
           const title = decodeURIComponent(url.pathname.slice('/pdir-index/'.length));
-          return await handleGetPdirIndexEntry(env, origin, title, auth.accessLevel, auth.organization);
+          return await handleGetPdirIndexEntry(env, origin, title, auth);
         }
       }
 
@@ -874,12 +1423,12 @@ export default {
         if (request.method === 'GET') {
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListCustomerPos(env, origin, auth.accessLevel, auth.organization);
+          return await handleListCustomerPos(env, origin, auth);
         }
         if (request.method === 'POST') {
           const auth = await requireRole(request, env, ['super_admin', 'admin']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateCustomerPo(request, env, origin);
+          return await handleCreateCustomerPo(request, env, origin, auth);
         }
       }
 
@@ -887,15 +1436,15 @@ export default {
         const id = decodeURIComponent(url.pathname.slice('/customer-pos/'.length));
         const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        if (request.method === 'PUT') return await handleUpdateCustomerPo(request, env, origin, id);
-        if (request.method === 'DELETE') return await handleDeleteCustomerPo(env, origin, id);
+        if (request.method === 'PUT') return await handleUpdateCustomerPo(request, env, origin, id, auth);
+        if (request.method === 'DELETE') return await handleDeleteCustomerPo(env, origin, id, auth);
       }
 
       if (url.pathname === '/dessimate-pos') {
         if (request.method === 'GET') {
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListDessimatePos(env, origin, auth.accessLevel, auth.organization);
+          return await handleListDessimatePos(env, origin, auth);
         }
         if (request.method === 'POST') {
           // Rev2.7: tightened from team_member+ to admin+, matching the
@@ -908,7 +1457,7 @@ export default {
           // Member could still reach.
           const auth = await requireRole(request, env, ['super_admin', 'admin']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateDessimatePo(request, env, origin);
+          return await handleCreateDessimatePo(request, env, origin, auth);
         }
       }
 
@@ -919,7 +1468,7 @@ export default {
       if (url.pathname === '/dessimate-pos/peek-numbers' && request.method === 'GET') {
         const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handlePeekDessimatePoNumbers(env, origin);
+        return await handlePeekDessimatePoNumbers(env, origin, auth);
       }
 
       // Checked before the generic '/dessimate-pos/' handler below, which
@@ -929,27 +1478,27 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireAuthWithScope(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleGenerateDessimatePoPdf(env, origin, id, auth.accessLevel, auth.organization);
+        return await handleGenerateDessimatePoPdf(env, origin, id, auth);
       }
 
       if (url.pathname.startsWith('/dessimate-pos/')) {
         const id = decodeURIComponent(url.pathname.slice('/dessimate-pos/'.length));
         const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        if (request.method === 'PUT') return await handleUpdateDessimatePo(request, env, origin, id);
-        if (request.method === 'DELETE') return await handleDeleteDessimatePo(env, origin, id);
+        if (request.method === 'PUT') return await handleUpdateDessimatePo(request, env, origin, id, auth);
+        if (request.method === 'DELETE') return await handleDeleteDessimatePo(env, origin, id, auth);
       }
 
       if (url.pathname === '/rfqs') {
         if (request.method === 'GET') {
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListRfqs(env, origin, auth.accessLevel, auth.organization);
+          return await handleListRfqs(env, origin, auth);
         }
         if (request.method === 'POST') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateRfq(request, env, origin);
+          return await handleCreateRfq(request, env, origin, auth);
         }
       }
 
@@ -960,7 +1509,7 @@ export default {
       if (url.pathname === '/rfqs/peek-number' && request.method === 'GET') {
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handlePeekRfqNumber(env, origin);
+        return await handlePeekRfqNumber(env, origin, auth);
       }
 
       // A Supplier submits their price/tooling-cost quote through this
@@ -973,7 +1522,7 @@ export default {
         const auth = await requireRole(request, env, ['supplier']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
         const organization = await resolveUserOrganization(env, auth.username);
-        return await handleSubmitRfqQuote(request, env, origin, id, organization, auth.username);
+        return await handleSubmitRfqQuote(request, env, origin, id, organization, auth.username, auth);
       }
 
       // Notes/Comments thread (Rev2.29) - its own routes, same pattern as
@@ -984,7 +1533,7 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleAddRfqComment(request, env, origin, id, auth.accessLevel, auth.username);
+        return await handleAddRfqComment(request, env, origin, id, auth.accessLevel, auth.username, auth);
       }
       if (/^\/rfqs\/[^/]+\/comments\/[^/]+$/.test(url.pathname) && request.method === 'PUT') {
         const parts = url.pathname.split('/');
@@ -992,7 +1541,7 @@ export default {
         const commentId = decodeURIComponent(parts[4]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleEditRfqComment(request, env, origin, id, commentId, auth.accessLevel, auth.username);
+        return await handleEditRfqComment(request, env, origin, id, commentId, auth.accessLevel, auth.username, auth);
       }
 
       // One-time snapshot clone of every RFQ into the new Customer RFQ
@@ -1010,27 +1559,27 @@ export default {
         const id = decodeURIComponent(url.pathname.slice('/rfqs/'.length));
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        if (request.method === 'PUT') return await handleUpdateRfq(request, env, origin, id);
-        if (request.method === 'DELETE') return await handleDeleteRfq(env, origin, id);
+        if (request.method === 'PUT') return await handleUpdateRfq(request, env, origin, id, auth);
+        if (request.method === 'DELETE') return await handleDeleteRfq(env, origin, id, auth);
       }
 
       if (url.pathname === '/customer-rfqs') {
         if (request.method === 'GET') {
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListCustomerRfqs(env, origin, auth.accessLevel, auth.organization);
+          return await handleListCustomerRfqs(env, origin, auth);
         }
         if (request.method === 'POST') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateCustomerRfq(request, env, origin);
+          return await handleCreateCustomerRfq(request, env, origin, auth);
         }
       }
 
       if (url.pathname === '/customer-rfqs/peek-number' && request.method === 'GET') {
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handlePeekCustomerRfqNumber(env, origin);
+        return await handlePeekCustomerRfqNumber(env, origin, auth);
       }
 
       // One-time admin fix (Rev2.28) - see handleRenumberCustomerRfqsTo8000Series.
@@ -1049,7 +1598,7 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleUpdateCustomerRfqQuote(request, env, origin, id, auth.username);
+        return await handleUpdateCustomerRfqQuote(request, env, origin, id, auth.username, auth);
       }
 
       // Notes/Comments thread (same Rev2.29 pattern as /rfqs/<id>/comments) -
@@ -1059,7 +1608,7 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleAddCustomerRfqComment(request, env, origin, id, auth.accessLevel, auth.username);
+        return await handleAddCustomerRfqComment(request, env, origin, id, auth.accessLevel, auth.username, auth);
       }
       if (/^\/customer-rfqs\/[^/]+\/comments\/[^/]+$/.test(url.pathname) && request.method === 'PUT') {
         const parts = url.pathname.split('/');
@@ -1067,22 +1616,22 @@ export default {
         const commentId = decodeURIComponent(parts[4]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleEditCustomerRfqComment(request, env, origin, id, commentId, auth.accessLevel, auth.username);
+        return await handleEditCustomerRfqComment(request, env, origin, id, commentId, auth.accessLevel, auth.username, auth);
       }
 
       if (url.pathname.startsWith('/customer-rfqs/')) {
         const id = decodeURIComponent(url.pathname.slice('/customer-rfqs/'.length));
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        if (request.method === 'PUT') return await handleUpdateCustomerRfq(request, env, origin, id);
-        if (request.method === 'DELETE') return await handleDeleteCustomerRfq(env, origin, id);
+        if (request.method === 'PUT') return await handleUpdateCustomerRfq(request, env, origin, id, auth);
+        if (request.method === 'DELETE') return await handleDeleteCustomerRfq(env, origin, id, auth);
       }
 
       if (url.pathname === '/change-requests') {
         if (request.method === 'GET') {
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListChangeRequests(env, origin, auth.accessLevel, auth.organization);
+          return await handleListChangeRequests(env, origin, auth);
         }
         if (request.method === 'POST') {
           // Unlike every other Production Module's create route, a
@@ -1090,7 +1639,7 @@ export default {
           // handleCreateChangeRequest for why.
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateChangeRequest(request, env, origin, auth.accessLevel, auth.username);
+          return await handleCreateChangeRequest(request, env, origin, auth.accessLevel, auth.username, auth);
         }
       }
 
@@ -1101,7 +1650,7 @@ export default {
       if (url.pathname === '/change-requests/peek-number' && request.method === 'GET') {
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handlePeekCrNumber(env, origin);
+        return await handlePeekCrNumber(env, origin, auth);
       }
 
       // PDF export - same read-access rule as the record itself (Team
@@ -1112,7 +1661,7 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireAuthWithScope(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleGetChangeRequestPdf(env, origin, id, auth.accessLevel, auth.organization);
+        return await handleGetChangeRequestPdf(env, origin, id, auth);
       }
 
       if (url.pathname.startsWith('/change-requests/')) {
@@ -1120,13 +1669,13 @@ export default {
         if (request.method === 'PUT') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleUpdateChangeRequest(request, env, origin, id, auth.accessLevel, auth.username);
+          return await handleUpdateChangeRequest(request, env, origin, id, auth.accessLevel, auth.username, auth);
         }
         if (request.method === 'DELETE') {
           // Delete stays Team Member+ only - see the module comment above.
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleDeleteChangeRequest(env, origin, id);
+          return await handleDeleteChangeRequest(env, origin, id, auth);
         }
       }
 
@@ -1138,28 +1687,28 @@ export default {
           // every other scoped list route.
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListScrs(env, origin, auth.accessLevel, auth.organization);
+          return await handleListScrs(env, origin, auth);
         }
         if (request.method === 'POST') {
           // Dessimate-staff-only end to end - see the module comment above.
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateScr(request, env, origin, auth.username);
+          return await handleCreateScr(request, env, origin, auth.username, auth);
         }
       }
 
       if (url.pathname === '/scrs/peek-number' && request.method === 'GET') {
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handlePeekScrNumber(env, origin);
+        return await handlePeekScrNumber(env, origin, auth);
       }
 
       if (url.pathname.startsWith('/scrs/')) {
         const id = decodeURIComponent(url.pathname.slice('/scrs/'.length));
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        if (request.method === 'PUT') return await handleUpdateScr(request, env, origin, id);
-        if (request.method === 'DELETE') return await handleDeleteScr(env, origin, id);
+        if (request.method === 'PUT') return await handleUpdateScr(request, env, origin, id, auth);
+        if (request.method === 'DELETE') return await handleDeleteScr(env, origin, id, auth);
       }
 
       if (url.pathname === '/dmrs') {
@@ -1168,21 +1717,21 @@ export default {
           // Supplier to their own org and a Customer to nothing.
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListDmrs(env, origin, auth.accessLevel, auth.organization);
+          return await handleListDmrs(env, origin, auth);
         }
         if (request.method === 'POST') {
           // Staff-only - a Supplier never creates a DMR, see the module
           // comment above.
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateDmr(request, env, origin, auth.username);
+          return await handleCreateDmr(request, env, origin, auth.username, auth);
         }
       }
 
       if (url.pathname === '/dmrs/peek-number' && request.method === 'GET') {
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handlePeekDmrNumber(env, origin);
+        return await handlePeekDmrNumber(env, origin, auth);
       }
 
       // PDF export - same read-access rule as the record itself (Team
@@ -1191,7 +1740,7 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireAuthWithScope(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleGetDmrPdf(env, origin, id, auth.accessLevel, auth.organization);
+        return await handleGetDmrPdf(env, origin, id, auth);
       }
 
       if (url.pathname.startsWith('/dmrs/')) {
@@ -1201,12 +1750,12 @@ export default {
           // only - handleUpdateDmr/validateDmrFields enforce this).
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleUpdateDmr(request, env, origin, id, auth.accessLevel, auth.username);
+          return await handleUpdateDmr(request, env, origin, id, auth.accessLevel, auth.username, auth);
         }
         if (request.method === 'DELETE') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleDeleteDmr(env, origin, id);
+          return await handleDeleteDmr(env, origin, id, auth);
         }
       }
 
@@ -1216,14 +1765,14 @@ export default {
           // narrows a Customer to their own org and a Supplier to nothing.
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListCustomerDmrs(env, origin, auth.accessLevel, auth.organization);
+          return await handleListCustomerDmrs(env, origin, auth);
         }
         if (request.method === 'POST') {
           // Staff-only - a Customer never creates a Customer DMR, see the
           // module comment above.
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateCustomerDmr(request, env, origin, auth.username);
+          return await handleCreateCustomerDmr(request, env, origin, auth.username, auth);
         }
       }
 
@@ -1234,7 +1783,7 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleAddCustomerDmrComment(request, env, origin, id, auth.accessLevel, auth.username);
+        return await handleAddCustomerDmrComment(request, env, origin, id, auth.accessLevel, auth.username, auth);
       }
 
       // PDF export - same read-access rule as the record itself (Team
@@ -1243,7 +1792,7 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireAuthWithScope(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleGetCustomerDmrPdf(env, origin, id, auth.accessLevel, auth.organization);
+        return await handleGetCustomerDmrPdf(env, origin, id, auth);
       }
 
       if (url.pathname.startsWith('/customer-dmrs/')) {
@@ -1254,12 +1803,12 @@ export default {
           // enforce this).
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleUpdateCustomerDmr(request, env, origin, id, auth.accessLevel, auth.username);
+          return await handleUpdateCustomerDmr(request, env, origin, id, auth.accessLevel, auth.username, auth);
         }
         if (request.method === 'DELETE') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleDeleteCustomerDmr(env, origin, id);
+          return await handleDeleteCustomerDmr(env, origin, id, auth);
         }
       }
 
@@ -1270,21 +1819,21 @@ export default {
           // nothing.
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListCustomerOpenIssues(env, origin, auth.accessLevel, auth.organization);
+          return await handleListCustomerOpenIssues(env, origin, auth);
         }
         if (request.method === 'POST') {
           // Staff-only - a Customer never creates an open issue, see the
           // module comment above.
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateCustomerOpenIssue(request, env, origin, auth.username);
+          return await handleCreateCustomerOpenIssue(request, env, origin, auth.username, auth);
         }
       }
 
       if (url.pathname === '/customer-open-issues/peek-number' && request.method === 'GET') {
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handlePeekOpenIssueNumber(env, origin);
+        return await handlePeekOpenIssueNumber(env, origin, auth);
       }
 
       // Notes/Comments thread - its own routes (see the module comment
@@ -1294,7 +1843,7 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleAddOpenIssueComment(request, env, origin, id, auth.accessLevel, auth.username);
+        return await handleAddOpenIssueComment(request, env, origin, id, auth.accessLevel, auth.username, auth);
       }
       if (/^\/customer-open-issues\/[^/]+\/comments\/[^/]+$/.test(url.pathname) && request.method === 'PUT') {
         const parts = url.pathname.split('/');
@@ -1302,13 +1851,13 @@ export default {
         const commentId = decodeURIComponent(parts[4]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'customer']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleEditOpenIssueComment(request, env, origin, id, commentId, auth.accessLevel, auth.username);
+        return await handleEditOpenIssueComment(request, env, origin, id, commentId, auth.accessLevel, auth.username, auth);
       }
       if (/^\/customer-open-issues\/[^/]+\/8d$/.test(url.pathname) && request.method === 'POST') {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleGenerateOpenIssue8d(env, origin, id, 'customer');
+        return await handleGenerateOpenIssue8d(env, origin, id, 'customer', auth);
       }
 
       if (url.pathname.startsWith('/customer-open-issues/')) {
@@ -1316,12 +1865,12 @@ export default {
         if (request.method === 'PUT') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleUpdateCustomerOpenIssue(request, env, origin, id);
+          return await handleUpdateCustomerOpenIssue(request, env, origin, id, auth);
         }
         if (request.method === 'DELETE') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleDeleteCustomerOpenIssue(env, origin, id);
+          return await handleDeleteCustomerOpenIssue(env, origin, id, auth);
         }
       }
 
@@ -1335,7 +1884,7 @@ export default {
           // nothing.
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListSupplierOpenIssues(env, origin, auth.accessLevel, auth.organization);
+          return await handleListSupplierOpenIssues(env, origin, auth);
         }
         if (request.method === 'POST') {
           // Staff, or a Supplier filing an issue for their own org. The
@@ -1343,14 +1892,14 @@ export default {
           // for a Supplier - see the module comment above.
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateSupplierOpenIssue(request, env, origin, auth.username, auth.accessLevel);
+          return await handleCreateSupplierOpenIssue(request, env, origin, auth.username, auth.accessLevel, auth);
         }
       }
 
       if (url.pathname === '/supplier-open-issues/peek-number' && request.method === 'GET') {
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handlePeekSupplierOpenIssueNumber(env, origin);
+        return await handlePeekSupplierOpenIssueNumber(env, origin, auth);
       }
 
       // Notes/Comments thread - its own routes, checked before the
@@ -1360,7 +1909,7 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleAddSupplierOpenIssueComment(request, env, origin, id, auth.accessLevel, auth.username);
+        return await handleAddSupplierOpenIssueComment(request, env, origin, id, auth.accessLevel, auth.username, auth);
       }
       if (/^\/supplier-open-issues\/[^/]+\/comments\/[^/]+$/.test(url.pathname) && request.method === 'PUT') {
         const parts = url.pathname.split('/');
@@ -1368,13 +1917,13 @@ export default {
         const commentId = decodeURIComponent(parts[4]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleEditSupplierOpenIssueComment(request, env, origin, id, commentId, auth.accessLevel, auth.username);
+        return await handleEditSupplierOpenIssueComment(request, env, origin, id, commentId, auth.accessLevel, auth.username, auth);
       }
       if (/^\/supplier-open-issues\/[^/]+\/8d$/.test(url.pathname) && request.method === 'POST') {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleGenerateOpenIssue8d(env, origin, id, 'supplier');
+        return await handleGenerateOpenIssue8d(env, origin, id, 'supplier', auth);
       }
 
       if (url.pathname.startsWith('/supplier-open-issues/')) {
@@ -1384,12 +1933,12 @@ export default {
           // in the staff-only branch below. A miss for a Supplier is 404.
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member', 'supplier']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleUpdateSupplierOpenIssue(request, env, origin, id, auth.accessLevel, auth.username);
+          return await handleUpdateSupplierOpenIssue(request, env, origin, id, auth.accessLevel, auth.username, auth);
         }
         if (request.method === 'DELETE') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleDeleteSupplierOpenIssue(env, origin, id);
+          return await handleDeleteSupplierOpenIssue(env, origin, id, auth);
         }
       }
 
@@ -1397,12 +1946,12 @@ export default {
         if (request.method === 'GET') {
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListSupplierInvoices(env, origin, auth.accessLevel, auth.organization);
+          return await handleListSupplierInvoices(env, origin, auth);
         }
         if (request.method === 'POST') {
           const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateSupplierInvoice(request, env, origin);
+          return await handleCreateSupplierInvoice(request, env, origin, auth);
         }
       }
 
@@ -1410,20 +1959,20 @@ export default {
         const id = decodeURIComponent(url.pathname.slice('/supplier-invoices/'.length));
         const auth = await requireRole(request, env, ['super_admin', 'admin', 'team_member']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        if (request.method === 'PUT') return await handleUpdateSupplierInvoice(request, env, origin, id);
-        if (request.method === 'DELETE') return await handleDeleteSupplierInvoice(env, origin, id);
+        if (request.method === 'PUT') return await handleUpdateSupplierInvoice(request, env, origin, id, auth);
+        if (request.method === 'DELETE') return await handleDeleteSupplierInvoice(env, origin, id, auth);
       }
 
       if (url.pathname === '/dessimate-invoices') {
         if (request.method === 'GET') {
           const auth = await requireAuthWithScope(request, env);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleListDessimateInvoices(env, origin, auth.accessLevel, auth.organization);
+          return await handleListDessimateInvoices(env, origin, auth);
         }
         if (request.method === 'POST') {
           const auth = await requireRole(request, env, ['super_admin', 'admin']);
           if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-          return await handleCreateDessimateInvoice(request, env, origin);
+          return await handleCreateDessimateInvoice(request, env, origin, auth);
         }
       }
 
@@ -1432,7 +1981,7 @@ export default {
       if (url.pathname === '/dessimate-invoices/peek-number' && request.method === 'GET') {
         const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handlePeekDessimateInvoiceNumber(env, origin);
+        return await handlePeekDessimateInvoiceNumber(env, origin, auth);
       }
 
       // Rev2.4: Deleted Invoices view + restore - checked before the generic
@@ -1440,13 +1989,13 @@ export default {
       if (url.pathname === '/dessimate-invoices/deleted' && request.method === 'GET') {
         const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleListDeletedDessimateInvoices(env, origin);
+        return await handleListDeletedDessimateInvoices(env, origin, auth);
       }
       if (/^\/dessimate-invoices\/[^/]+\/restore$/.test(url.pathname) && request.method === 'POST') {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleRestoreDessimateInvoice(env, origin, id);
+        return await handleRestoreDessimateInvoice(env, origin, id, auth);
       }
 
       // Checked before the generic '/dessimate-invoices/' handler below,
@@ -1456,7 +2005,7 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireAuthWithScope(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleGenerateDessimateInvoicePdf(env, origin, id, auth.accessLevel, auth.organization);
+        return await handleGenerateDessimateInvoicePdf(env, origin, id, auth);
       }
 
       // Rev2.4: the Packing Slip - a second PDF generated from the same
@@ -1466,15 +2015,15 @@ export default {
         const id = decodeURIComponent(url.pathname.split('/')[2]);
         const auth = await requireAuthWithScope(request, env);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        return await handleGenerateDessimatePackingSlipPdf(env, origin, id, auth.accessLevel, auth.organization);
+        return await handleGenerateDessimatePackingSlipPdf(env, origin, id, auth);
       }
 
       if (url.pathname.startsWith('/dessimate-invoices/')) {
         const id = decodeURIComponent(url.pathname.slice('/dessimate-invoices/'.length));
         const auth = await requireRole(request, env, ['super_admin', 'admin']);
         if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
-        if (request.method === 'PUT') return await handleUpdateDessimateInvoice(request, env, origin, id);
-        if (request.method === 'DELETE') return await handleDeleteDessimateInvoice(env, origin, id);
+        if (request.method === 'PUT') return await handleUpdateDessimateInvoice(request, env, origin, id, auth);
+        if (request.method === 'DELETE') return await handleDeleteDessimateInvoice(env, origin, id, auth);
       }
 
       if (url.pathname.startsWith('/contents/')) {
@@ -1489,6 +2038,9 @@ export default {
         const ghPath = url.pathname.slice('/contents/'.length).split('/').map(decodeURIComponent).join('/');
         if (ghPath.indexOf('data/') === 0) {
           return json({ message: 'Not accessible via this route.' }, 403, origin);
+        }
+        if (await contentsBlockedForSelf(env, ghPath, auth)) {
+          return json({ message: 'Not found.' }, 404, origin);
         }
         // This proxy has no access control of its own beyond "signed in" -
         // it will fetch or write whatever storage path it's given. That was
@@ -1506,7 +2058,7 @@ export default {
           if (request.method !== 'GET') {
             return json({ message: 'Your account has read-only access.' }, 403, origin);
           }
-          const allowed = await isContentsPathAllowedForExternal(env, ghPath, auth.accessLevel, auth.organization);
+          const allowed = await isContentsPathAllowedForExternal(env, ghPath, auth.accessLevel, auth.organization, auth);
           if (!allowed) return json({ message: 'Not accessible with your account.' }, 403, origin);
         } else if (auth.accessLevel === 'supplier') {
           if (request.method === 'GET') {
@@ -1516,7 +2068,7 @@ export default {
             const issueDocs = await supplierOpenIssueDocsPutAccess(env, ghPath, auth.organization);
             if (issueDocs && issueDocs.ok) return await proxyContents(request, env, origin, ghPath);
             if (issueDocs && issueDocs.status) return json({ message: issueDocs.message }, issueDocs.status, origin);
-            return await handleSupplierPdirContentsPut(request, env, origin, ghPath, auth.organization);
+            return await handleSupplierPdirContentsPut(request, env, origin, ghPath, auth.organization, auth);
           } else {
             return json({ message: 'Your account has read-only access.' }, 403, origin);
           }
@@ -3033,7 +3585,8 @@ async function handleMfaBackupCodesRegenerate(request, env, origin, username) {
 }
 
 
-async function handleListUsers(env, origin) {
+async function handleListUsers(env, origin, scope) {
+  const described = describeSelves(await readOrgItems(env));
   const fileState = await readUsersFile(env);
   const legacy = readLegacyStaff(env);
   const fileUsernamesLower = fileState.users.map(function (u) { return (u.username || '').toLowerCase(); });
@@ -3046,10 +3599,14 @@ async function handleListUsers(env, origin) {
   // stamp - already uploaded once on the Users admin page - can be looked up
   // by any signed-in user, e.g. to auto-stamp the PDIR Sign-Off section.
   const people = fileState.users
-    .filter(function (u) { return u.username && u.relationship === 'Dessimate Team member' && u.active !== false; })
+    .filter(function (u) {
+      if (!u.username || u.relationship !== 'Dessimate Team member' || u.active === false) return false;
+      return userVisibleToScope(u, scope, described) || (scope && scope.unrestricted);
+    })
     .map(function (u) { return { username: u.username, name: u.name || '', stampImage: sanitizeOrgDoc(u.stampImage) }; });
 
-  legacy.forEach(function (u) {
+  const showLegacy = scope && (scope.unrestricted || scope.selfId === described.dessimateId);
+  if (showLegacy) legacy.forEach(function (u) {
     if (u.username && fileUsernamesLower.indexOf(u.username.toLowerCase()) === -1) people.push({ username: u.username, name: '' });
   });
 
@@ -3065,12 +3622,21 @@ async function handleListUsers(env, origin) {
 // Issues' Champion/Responsible picker, then that picker was redirected to
 // the Organization Contacts directory instead - see sanitizeOrg's
 // `contacts` field - so this is back to Supplier-only, its only caller.)
-async function handleListOrgContacts(env, origin, organization) {
+async function handleListOrgContacts(env, origin, organization, scope) {
   const org = (organization || '').toString().trim();
   if (!org) return json({ contacts: [] }, 200, origin);
+  const described = describeSelves(await readOrgItems(env));
+  const orgRecord = described.orgs.find(function (o) { return (o.name || '') === org; });
+  if (scope && !scope.unrestricted) {
+    if (!orgRecord || !orgVisibleToScope(orgRecord, scope, described)) return json({ contacts: [] }, 200, origin);
+  }
   const fileState = await readUsersFile(env);
   const contacts = fileState.users
-    .filter(function (u) { return u.username && u.relationship === 'Supplier' && u.active !== false && (u.organization || '') === org; })
+    .filter(function (u) {
+      if (!u.username || u.relationship !== 'Supplier' || u.active === false || (u.organization || '') !== org) return false;
+      if (scope && scope.unrestricted) return true;
+      return userVisibleToScope(u, scope, described);
+    })
     .map(function (u) { return { username: u.username, name: u.name || '' }; })
     .sort(function (a, b) { return (a.name || a.username).localeCompare(b.name || b.username); });
   return json({ contacts: contacts }, 200, origin);
@@ -3172,6 +3738,8 @@ function sanitizeFileUser(u) {
     // code + an emailed code, both required together - no password field
     // anywhere in that flow. See handleLoginStart/handlePasswordlessEnroll.
     passwordLoginDisabled: !!u.passwordLoginDisabled,
+    selfId: u.accessLevel === 'super_admin' ? null : (u.selfId || ''),
+    selfUnassigned: u.accessLevel !== 'super_admin' && !u.selfId,
     migrated: true
   }, mfaSummaryForUser(u));
 }
@@ -3423,6 +3991,29 @@ function validateDirectoryFields(body, origin) {
   };
 }
 
+function assignDirectorySelf(fields, body, described) {
+  if (fields.accessLevel === 'super_admin') return { selfId: '', selfUnassigned: false };
+  if (body && Object.prototype.hasOwnProperty.call(body, 'selfId') && body.selfId === '') {
+    if (fields.relationship === 'Customer' || fields.accessLevel === 'customer') return { selfId: '', selfUnassigned: true };
+    return { error: 'Choose a self for this account.' };
+  }
+  if (body && body.selfId) {
+    const ok = (described.selves || []).some(function (o) { return o.id === body.selfId; });
+    if (!ok) return { error: 'That self was not found.' };
+    return { selfId: String(body.selfId), selfUnassigned: false };
+  }
+  const sid = effectiveUserSelfId({
+    accessLevel: fields.accessLevel,
+    relationship: fields.relationship,
+    organization: fields.organization,
+    username: body && body.username
+  }, described);
+  if (!sid && fields.relationship !== 'Customer' && fields.accessLevel !== 'customer') {
+    return { error: 'Choose a self for this account.' };
+  }
+  return { selfId: sid || '', selfUnassigned: !sid };
+}
+
 async function handleAdminCreateUser(request, env, origin) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
@@ -3453,12 +4044,17 @@ async function handleAdminCreateUser(request, env, origin) {
     // only (see handleLoginStart) and can never use a password at all.
   }
 
+  const described = await ensureDessimateSelfOrg(env);
+  const selfAssign = assignDirectorySelf(fields, body, described);
+  if (selfAssign.error) return json({ message: selfAssign.error }, 400, origin);
+
   const newUser = {
     id: cryptoRandomId(), name: fields.name, username: username, salt: salt, hash: hash,
     organization: fields.organization, relationship: fields.relationship, role: fields.role,
     email: fields.email, phone: fields.phone, active: fields.active,
     accessLevel: fields.accessLevel, isDemo: fields.isDemo,
     passwordLoginDisabled: fields.passwordLoginDisabled,
+    selfId: selfAssign.selfId, selfUnassigned: selfAssign.selfUnassigned,
     stampImage: sanitizeOrgDoc(body.stampImage)
   };
 
@@ -3478,6 +4074,9 @@ async function handleAdminUpdateUser(request, env, origin, id) {
 
   const fields = validateDirectoryFields(body, origin);
   if (fields.error) return fields.error;
+  const describedForSelf = await ensureDessimateSelfOrg(env);
+  const selfAssign = assignDirectorySelf(fields, body, describedForSelf);
+  if (selfAssign.error) return json({ message: selfAssign.error }, 400, origin);
 
   const isLegacyId = id.indexOf('legacy:') === 0;
 
@@ -3548,6 +4147,10 @@ async function handleAdminUpdateUser(request, env, origin, id) {
     target.accessLevel = fields.accessLevel;
     target.isDemo = fields.isDemo;
     target.passwordLoginDisabled = fields.passwordLoginDisabled;
+    if (selfAssign) {
+      target.selfId = selfAssign.selfId;
+      target.selfUnassigned = selfAssign.selfUnassigned;
+    }
     if (body.stampImage !== undefined) {
       target.stampImage = sanitizeOrgDoc(body.stampImage);
     }
@@ -3726,9 +4329,12 @@ function sanitizeOrgDocList(list) {
   return arr.map(sanitizeOrgDoc).filter(Boolean).slice(0, PART_ATTACHMENTS_MAX);
 }
 
-async function handleListOrganizations(env, origin) {
-  const state = await readJsonArrayFile(env, ORGANIZATIONS_FILE_PATH);
-  return json({ organizations: state.items.map(sanitizeOrg) }, 200, origin);
+async function handleListOrganizations(env, origin, scope) {
+  const described = describeSelves(await readOrgItems(env));
+  const visible = described.orgs.filter(function (org) { return orgVisibleToScope(org, scope, described); });
+  return json({
+    organizations: visible.map(function (org) { return presentOrg(org, scope, described); })
+  }, 200, origin);
 }
 
 function validateOrgFields(body, origin) {
@@ -3772,25 +4378,59 @@ async function orgNameTaken(env, name, excludeId) {
   return state.items.some(function (o) { return o.name && o.name.toLowerCase() === lower && o.id !== excludeId; });
 }
 
-// Only one Self organization (Dessimate's own record) should ever exist.
-async function selfOrgExists(env, excludeId) {
-  const state = await readJsonArrayFile(env, ORGANIZATIONS_FILE_PATH);
-  return state.items.some(function (o) { return o.relationship === 'Self' && o.id !== excludeId; });
+// Which self a new or edited organization is attached to. An admin can only
+// attach to their own self. super_admin may leave a customer unassigned
+// (selfId: '') or list several selves on a supplier (selfIds).
+function orgSelfAssignment(body, fields, scope, described, existing) {
+  function fail(status, message) { return { error: { status: status }, errorBody: message }; }
+  if (!scopeIsChecked(scope)) return fail(404, 'Not found.');
+  if (fields.relationship === 'Self') {
+    if (!scope.unrestricted) return fail(403, 'You don\'t have access to this.');
+    return { selfId: '', selfUnassigned: false };
+  }
+  if (fields.relationship === 'Customer') {
+    if (!scope.unrestricted) {
+      if (!scope.selfId) return fail(404, 'Not found.');
+      return { selfId: scope.selfId, selfUnassigned: false };
+    }
+    if (body && body.selfId === '') return { selfId: '', selfUnassigned: true };
+    if (body && body.selfId) {
+      const ok = described.selves.some(function (o) { return o.id === body.selfId; });
+      if (!ok) return fail(400, 'That self was not found.');
+      return { selfId: String(body.selfId), selfUnassigned: false };
+    }
+    if (!existing && isLegacyUnassignedCustomerName(fields.name)) return { selfId: '', selfUnassigned: true };
+    return { selfId: described.dessimateId || '', selfUnassigned: !described.dessimateId };
+  }
+  if (!scope.unrestricted) {
+    if (!scope.selfId) return fail(404, 'Not found.');
+    const kept = existing ? supplierOrgSelfIds(existing, described).filter(function (id) { return id !== scope.selfId; }) : [];
+    kept.push(scope.selfId);
+    return { selfIds: Array.from(new Set(kept)), selfUnassigned: false };
+  }
+  if (body && Array.isArray(body.selfIds)) {
+    const requested = body.selfIds.map(function (id) { return (id || '').toString(); }).filter(Boolean);
+    const ids = requested.filter(function (id) { return described.selves.some(function (o) { return o.id === id; }); });
+    if (ids.length !== requested.length) return fail(400, 'That self was not found.');
+    return { selfIds: ids, selfUnassigned: ids.length === 0 };
+  }
+  const base = existing ? supplierOrgSelfIds(existing, described) : (described.dessimateId ? [described.dessimateId] : []);
+  return { selfIds: base, selfUnassigned: base.length === 0 };
 }
 
 // docs/genericDocs are accepted as-is from the client (already-uploaded file
 // pointers - the client uploads bytes via the normal /contents route first,
 // then sends back {path, filename, mimeType, size} here). sanitizeOrgDoc
 // keeps this to a known, safe shape either way.
-async function handleCreateOrganization(request, env, origin) {
+async function handleCreateOrganization(request, env, origin, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateOrgFields(body, origin);
   if (fields.error) return fields.error;
   if (await orgNameTaken(env, fields.name, null)) return json({ message: 'An organization with that name already exists.' }, 409, origin);
-  if (fields.relationship === 'Self' && await selfOrgExists(env, null)) {
-    return json({ message: 'A Self organization already exists â€” edit it instead of creating another.' }, 409, origin);
-  }
+  const described = await ensureDessimateSelfOrg(env);
+  const assignment = orgSelfAssignment(body, fields, scope, described, null);
+  if (assignment.error) return json({ message: assignment.error.status === 404 ? 'Not found.' : (assignment.errorBody || 'You don\'t have access to this.') }, assignment.error.status || 400, origin);
 
   const newOrg = {
     id: cryptoRandomId(), name: fields.name, relationship: fields.relationship,
@@ -3803,18 +4443,22 @@ async function handleCreateOrganization(request, env, origin) {
       nda: sanitizeOrgDoc(body.docs && body.docs.nda),
       selfAssessment: sanitizeOrgDoc(body.docs && body.docs.selfAssessment)
     },
-    genericDocs: Array.isArray(body.genericDocs) ? body.genericDocs.map(sanitizeOrgDoc).filter(Boolean) : []
+    genericDocs: Array.isArray(body.genericDocs) ? body.genericDocs.map(sanitizeOrgDoc).filter(Boolean) : [],
+    selfId: assignment.selfId || '',
+    selfUnassigned: !!assignment.selfUnassigned
   };
+  if (assignment.selfIds) newOrg.selfIds = assignment.selfIds;
 
   const result = await mutateJsonArrayFile(env, ORGANIZATIONS_FILE_PATH, function (items) {
     items.push(newOrg);
     return { items: items };
   });
   if (!result.ok) return json({ message: result.message }, 500, origin);
-  return json(sanitizeOrg(newOrg), 201, origin);
+  const fresh = describeSelves(await readOrgItems(env));
+  return json(presentOrg(newOrg, scope, fresh), 201, origin);
 }
 
-async function handleUpdateOrganization(request, env, origin, id) {
+async function handleUpdateOrganization(request, env, origin, id, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateOrgFields(body, origin);
@@ -3823,9 +4467,15 @@ async function handleUpdateOrganization(request, env, origin, id) {
   if (await orgNameTaken(env, fields.name, id)) {
     return json({ message: 'An organization with that name already exists.' }, 409, origin);
   }
-  if (fields.relationship === 'Self' && await selfOrgExists(env, id)) {
-    return json({ message: 'A Self organization already exists â€” edit it instead of creating another.' }, 409, origin);
+  const described = describeSelves(await readOrgItems(env));
+  const existing = described.orgs.find(function (o) { return o.id === id; });
+  if (!existing || !orgVisibleToScope(existing, scope, described)) return json({ message: 'Not found.' }, 404, origin);
+  if (!scope.unrestricted && (existing.relationship === 'Self' || fields.relationship === 'Self')) {
+    return json({ message: 'Not found.' }, 404, origin);
   }
+  const assignment = orgSelfAssignment(body, fields, scope, described, existing);
+  if (assignment.error) return json({ message: assignment.errorBody || 'Not found.' }, assignment.error.status || 400, origin);
+  const previousCustomerSelf = existing.relationship === 'Customer' ? customerOrgSelfId(existing, described) : '';
 
   let saved = null;
   const result = await mutateJsonArrayFile(env, ORGANIZATIONS_FILE_PATH, function (items) {
@@ -3841,6 +4491,18 @@ async function handleUpdateOrganization(request, env, origin, id) {
     target.purchasingEmail = fields.purchasingEmail;
     target.paymentTerms = fields.paymentTerms;
     target.contacts = fields.contacts;
+    if (fields.relationship === 'Customer') {
+      target.selfId = assignment.selfId || '';
+      target.selfUnassigned = !!assignment.selfUnassigned;
+      delete target.selfIds;
+    } else if (fields.relationship === 'Supplier') {
+      target.selfIds = assignment.selfIds || [];
+      target.selfUnassigned = !!assignment.selfUnassigned;
+      delete target.selfId;
+    } else {
+      delete target.selfIds;
+      target.selfUnassigned = false;
+    }
     if (body.logo !== undefined) {
       target.logo = sanitizeOrgDoc(body.logo);
     }
@@ -3860,10 +4522,39 @@ async function handleUpdateOrganization(request, env, origin, id) {
 
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
-  return json(sanitizeOrg(saved), 200, origin);
+  if (fields.relationship === 'Customer') {
+    const nextSelf = assignment.selfUnassigned ? '' : (assignment.selfId || '');
+    if (nextSelf !== previousCustomerSelf || (existing.name || '') !== fields.name) {
+      await restampForCustomerOrg(env, fields.name, previousCustomerSelf, nextSelf, !!assignment.selfUnassigned);
+      if ((existing.name || '').trim().toLowerCase() !== fields.name.trim().toLowerCase()) {
+        await restampForCustomerOrg(env, existing.name, previousCustomerSelf, '', true);
+      }
+    }
+  }
+  const fresh = describeSelves(await readOrgItems(env));
+  return json(presentOrg(saved, scope, fresh), 200, origin);
 }
 
-async function handleDeleteOrganization(env, origin, id) {
+async function handleDeleteOrganization(env, origin, id, scope) {
+  const described = describeSelves(await readOrgItems(env));
+  const existing = described.orgs.find(function (o) { return o.id === id; });
+  if (!existing || !orgVisibleToScope(existing, scope, described)) return json({ message: 'Not found.' }, 404, origin);
+  if (!scope.unrestricted && existing.relationship === 'Self') return json({ message: 'Not found.' }, 404, origin);
+  if (!scope.unrestricted && existing.relationship === 'Supplier') {
+    const remaining = supplierOrgSelfIds(existing, described).filter(function (sid) { return sid !== scope.selfId; });
+    if (remaining.length) {
+      const result = await mutateJsonArrayFile(env, ORGANIZATIONS_FILE_PATH, function (items) {
+        const target = items.find(function (o) { return o.id === id; });
+        if (!target) return null;
+        target.selfIds = remaining;
+        target.selfUnassigned = false;
+        return { items: items };
+      }, { requireFound: true });
+      if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
+      if (!result.ok) return json({ message: result.message }, 500, origin);
+      return json({ ok: true }, 200, origin);
+    }
+  }
   const result = await mutateJsonArrayFile(env, ORGANIZATIONS_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -3923,9 +4614,9 @@ function scopeParts(parts, accessLevel, organization) {
   return parts;
 }
 
-async function handleListParts(env, origin, accessLevel, organization) {
+async function handleListParts(env, origin, scope) {
   const state = await readJsonArrayFile(env, PARTS_FILE_PATH);
-  const parts = scopeParts(state.items.map(sanitizePart), accessLevel, organization);
+  const parts = scopeParts(await presentList(env, state.items, scope, sanitizePart), scope.accessLevel, scope.organization);
   return json({ parts: parts }, 200, origin);
 }
 
@@ -3956,10 +4647,9 @@ function validatePartFields(body, origin) {
   };
 }
 
-async function partNumberTaken(env, partNumber, excludeId) {
-  const lower = partNumber.toLowerCase();
-  const state = await readJsonArrayFile(env, PARTS_FILE_PATH);
-  return state.items.some(function (p) { return p.partNumber && p.partNumber.toLowerCase() === lower && p.id !== excludeId; });
+async function partNumberTaken(env, partNumber, excludeId, selfId) {
+  const sid = selfId || (excludeId ? await selfIdOfStoredRecord(env, PARTS_FILE_PATH, excludeId) : '');
+  return valueTakenInSelf(env, PARTS_FILE_PATH, 'partNumber', partNumber, excludeId, sid);
 }
 
 // Attachments are accepted as-is from the client (already-uploaded file
@@ -3967,12 +4657,15 @@ async function partNumberTaken(env, partNumber, excludeId) {
 // then sends back {path, filename, mimeType, size} for each here), same as
 // organization docs. sanitizeOrgDocList keeps this to a known, safe shape
 // and caps it at PART_ATTACHMENTS_MAX regardless of what the client sends.
-async function handleCreatePart(request, env, origin) {
+async function handleCreatePart(request, env, origin, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validatePartFields(body, origin);
   if (fields.error) return fields.error;
-  if (await partNumberTaken(env, fields.partNumber, null)) return json({ message: 'A part with that Part Number already exists.' }, 409, origin);
+  if (await partNumberTaken(env, fields.partNumber, null, assignedSelf.selfId)) return json({ message: 'A part with that Part Number already exists.' }, 409, origin);
 
   const newPart = {
     id: cryptoRandomId(), partNumber: fields.partNumber, customerPartNumber: fields.customerPartNumber,
@@ -3983,6 +4676,7 @@ async function handleCreatePart(request, env, origin) {
   };
 
   const result = await mutateJsonArrayFile(env, PARTS_FILE_PATH, function (items) {
+    if (newPart && !newPart.selfId) newPart.selfId = assignedSelf.selfId;
     items.push(newPart);
     return { items: items };
   });
@@ -3990,7 +4684,9 @@ async function handleCreatePart(request, env, origin) {
   return json(sanitizePart(newPart), 201, origin);
 }
 
-async function handleUpdatePart(request, env, origin, id) {
+async function handleUpdatePart(request, env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, PARTS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validatePartFields(body, origin);
@@ -4034,7 +4730,9 @@ async function handleUpdatePart(request, env, origin, id) {
   return json(sanitizePart(saved), 200, origin);
 }
 
-async function handleDeletePart(env, origin, id) {
+async function handleDeletePart(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, PARTS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, PARTS_FILE_PATH, function (items) {
     const idx = items.findIndex(function (p) { return p.id === id; });
     if (idx === -1) return null;
@@ -4096,26 +4794,35 @@ function sanitizeApqpRecord(o) {
 // only by Part Number - so scoping a Supplier/Customer login means first
 // looking up which Part Numbers their organization is tied to in the Parts
 // master list, then keeping only the APQP records for those parts.
-async function handleListApqp(env, origin, accessLevel, organization) {
+async function handleListApqp(env, origin, scope) {
   const state = await readJsonArrayFile(env, APQP_FILE_PATH);
-  let records = state.items.map(sanitizeApqpRecord);
+  let records = await presentList(env, state.items, scope, sanitizeApqpRecord);
+  const accessLevel = scope.accessLevel;
+  const organization = scope.organization;
   if (accessLevel === 'supplier' || accessLevel === 'customer') {
     const partsState = await readJsonArrayFile(env, PARTS_FILE_PATH);
-    const visibleParts = scopeParts(partsState.items.map(sanitizePart), accessLevel, organization);
+    const visibleParts = scopeParts(await presentList(env, partsState.items, scope, sanitizePart), accessLevel, organization);
     const visiblePartNumbers = new Set(visibleParts.map(function (p) { return (p.partNumber || '').toLowerCase(); }));
     records = records.filter(function (r) { return visiblePartNumbers.has((r.partNumber || '').toLowerCase()); });
   }
   return json({ apqpRecords: records }, 200, origin);
 }
 
-async function handleCreateApqp(request, env, origin, username) {
+async function handleCreateApqp(request, env, origin, username, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const partNumber = (body.partNumber || '').toString().trim();
   if (!partNumber) return json({ message: 'Select a Part.' }, 400, origin);
 
   const partsState = await readJsonArrayFile(env, PARTS_FILE_PATH);
-  const part = partsState.items.find(function (p) { return (p.partNumber || '').toLowerCase() === partNumber.toLowerCase(); });
+  const part = partsState.items.find(function (p) {
+    if ((p.partNumber || '').toLowerCase() !== partNumber.toLowerCase()) return false;
+    if (p.selfId) return p.selfId === assignedSelf.selfId;
+    return !p.selfUnassigned;
+  });
 
   const newRecord = {
     id: cryptoRandomId(),
@@ -4127,9 +4834,14 @@ async function handleCreateApqp(request, env, origin, username) {
   };
 
   const result = await mutateJsonArrayFile(env, APQP_FILE_PATH, function (items) {
-    if (items.some(function (r) { return (r.partNumber || '').toLowerCase() === partNumber.toLowerCase(); })) {
+    if (items.some(function (r) {
+      if ((r.partNumber || '').toLowerCase() !== partNumber.toLowerCase()) return false;
+      if (r.selfId) return r.selfId === assignedSelf.selfId;
+      return !r.selfUnassigned;
+    })) {
       return { items: items, meta: { duplicate: true } };
     }
+    if (newRecord && !newRecord.selfId) newRecord.selfId = assignedSelf.selfId;
     items.push(newRecord);
     return { items: items, meta: { duplicate: false } };
   });
@@ -4138,7 +4850,9 @@ async function handleCreateApqp(request, env, origin, username) {
   return json(sanitizeApqpRecord(newRecord), 201, origin);
 }
 
-async function handleDeleteApqp(env, origin, id) {
+async function handleDeleteApqp(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, APQP_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, APQP_FILE_PATH, function (items) {
     const idx = items.findIndex(function (r) { return r.id === id; });
     if (idx === -1) return null;
@@ -4150,7 +4864,9 @@ async function handleDeleteApqp(env, origin, id) {
   return json({ ok: true }, 200, origin);
 }
 
-async function handleUpdateApqpItemFiles(request, env, origin, id, itemKey) {
+async function handleUpdateApqpItemFiles(request, env, origin, id, itemKey, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, APQP_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   if (APQP_ITEM_KEYS.indexOf(itemKey) === -1) return json({ message: 'Unknown APQP item.' }, 400, origin);
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
@@ -4171,7 +4887,9 @@ async function handleUpdateApqpItemFiles(request, env, origin, id, itemKey) {
   return json(sanitizeApqpRecord(savedRecord), 200, origin);
 }
 
-async function handleAddApqpComment(request, env, origin, id, itemKey, username) {
+async function handleAddApqpComment(request, env, origin, id, itemKey, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, APQP_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   if (APQP_ITEM_KEYS.indexOf(itemKey) === -1) return json({ message: 'Unknown APQP item.' }, 400, origin);
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
@@ -4215,9 +4933,17 @@ function sanitizePdirIndexEntry(e) {
 // used by Parts / APQP. A Supplier sees parts listing them; a Customer sees
 // parts they buy. Used to scope PDIR list, get-by-id, and file access so a
 // Supplier never sees another supplier's PDIR even on a shared part.
-async function resolveVisiblePartNumbers(env, accessLevel, organization) {
+async function resolveVisiblePartNumbers(env, accessLevel, organization, scope) {
   const partsState = await readJsonArrayFile(env, PARTS_FILE_PATH);
-  const visibleParts = scopeParts(partsState.items.map(sanitizePart), accessLevel, organization);
+  let items = partsState.items;
+  if (scope && scope.selfChecked && !scope.unrestricted) {
+    const kept = [];
+    for (let i = 0; i < items.length; i++) {
+      if (await recordInSelfScope(env, items[i], scope)) kept.push(items[i]);
+    }
+    items = kept;
+  }
+  const visibleParts = scopeParts(items.map(sanitizePart), accessLevel, organization);
   return new Set(visibleParts.map(function (p) { return (p.partNumber || '').toLowerCase(); }));
 }
 
@@ -4324,14 +5050,14 @@ async function pdirTitleExistsInStorageIgnoringCase(env, title) {
   return false;
 }
 
-async function createSupplierOwnedPdirIndex(env, title, organization, shipmentNumber, partNumber) {
+async function createSupplierOwnedPdirIndex(env, title, organization, shipmentNumber, partNumber, selfId) {
   let saved = null;
   let denied = false;
   const result = await mutateJsonArrayFile(env, PDIR_INDEX_FILE_PATH, function (items) {
     const target = items.find(function (e) { return (e.title || '').toLowerCase() === title.toLowerCase(); });
     if (target) {
       const tagged = (target.organization || '').toString().trim();
-      if (!tagged || tagged !== organization) {
+      if (!tagged || tagged !== organization || (selfId && target.selfId && target.selfId !== selfId)) {
         denied = true;
         return { items: items };
       }
@@ -4344,6 +5070,7 @@ async function createSupplierOwnedPdirIndex(env, title, organization, shipmentNu
       shipmentNumber: (shipmentNumber || '').toString().trim(),
       organization: organization,
       partNumber: (partNumber || '').toString().trim(),
+      selfId: selfId || '',
       updatedAt: new Date().toISOString()
     };
     items.push(saved);
@@ -4387,7 +5114,9 @@ async function listPdirTitlesFromStorage(env) {
 // supplier. A Customer is scoped through Part Numbers they buy (Rev2.1).
 // Staff see all index rows (storage-only titles still appear for staff via
 // the Portal folder listing).
-async function handleListPdirIndex(env, origin, accessLevel, organization) {
+async function handleListPdirIndex(env, origin, scope) {
+  const accessLevel = scope.accessLevel;
+  const organization = scope.organization;
   const state = await readJsonArrayFile(env, PDIR_INDEX_FILE_PATH);
   const byTitle = {};
   state.items.forEach(function (e) {
@@ -4395,7 +5124,7 @@ async function handleListPdirIndex(env, origin, accessLevel, organization) {
   });
 
   if (accessLevel === 'supplier' || accessLevel === 'customer') {
-    const visiblePartNumbers = organization ? await resolveVisiblePartNumbers(env, accessLevel, organization) : new Set();
+    const visiblePartNumbers = organization ? await resolveVisiblePartNumbers(env, accessLevel, organization, scope) : new Set();
     const storageTitles = await listPdirTitlesFromStorage(env);
     const storageByLower = {};
     storageTitles.forEach(function (t) {
@@ -4409,6 +5138,8 @@ async function handleListPdirIndex(env, origin, accessLevel, organization) {
       const title = raw ? raw.title : storageByLower[titles[i]];
       if (!title) continue;
       const meta = await resolvePdirVisibilityMeta(env, title, raw);
+      const selfRecord = raw || { partNumber: meta.partNumber || '', title: title };
+      if (!(await recordInSelfScope(env, selfRecord, scope))) continue;
       if (!pdirVisibleToCaller(meta, accessLevel, organization, visiblePartNumbers)) continue;
       entries.push(sanitizePdirIndexEntry({
         id: meta.id || '',
@@ -4423,15 +5154,19 @@ async function handleListPdirIndex(env, origin, accessLevel, organization) {
     return json({ pdirIndex: entries }, 200, origin);
   }
 
-  return json({ pdirIndex: state.items.map(sanitizePdirIndexEntry) }, 200, origin);
+  const visible = await presentList(env, state.items, scope, sanitizePdirIndexEntry);
+  return json({ pdirIndex: visible }, 200, origin);
 }
 
-async function handleGetPdirIndexEntry(env, origin, title, accessLevel, organization) {
+async function handleGetPdirIndexEntry(env, origin, title, scope) {
+  const accessLevel = scope.accessLevel;
+  const organization = scope.organization;
   const wanted = (title || '').toString().trim();
   if (!wanted) return json({ message: 'Not found.' }, 404, origin);
   const entry = await resolvePdirIndexEntry(env, wanted);
+  if (entry && !(await recordInSelfScope(env, entry, scope))) return json({ message: 'Not found.' }, 404, origin);
   if (accessLevel === 'supplier' || accessLevel === 'customer') {
-    const visiblePartNumbers = organization ? await resolveVisiblePartNumbers(env, accessLevel, organization) : new Set();
+    const visiblePartNumbers = organization ? await resolveVisiblePartNumbers(env, accessLevel, organization, scope) : new Set();
     const meta = await resolvePdirVisibilityMeta(env, wanted, entry);
     if (!pdirVisibleToCaller(meta, accessLevel, organization, visiblePartNumbers)) {
       return json({ message: 'Not found.' }, 404, origin);
@@ -4454,11 +5189,13 @@ async function handleGetPdirIndexEntry(env, origin, title, accessLevel, organiza
 // record. Called by the Form Filler right after it saves a draft or a
 // finished PDF, so the index always reflects whatever's actually stored
 // without PDIR needing to become a full JSON-array-of-records module itself.
-async function handleUpsertPdirIndexEntry(request, env, origin) {
+async function handleUpsertPdirIndexEntry(request, env, origin, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const title = (body.title || '').toString().trim();
   if (!title) return json({ message: 'A title is required.' }, 400, origin);
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
   const fields = {
     title: title,
     shipmentNumber: (body.shipmentNumber || '').toString().trim(),
@@ -4468,17 +5205,24 @@ async function handleUpsertPdirIndexEntry(request, env, origin) {
   };
 
   let saved = null;
+  let denied = false;
   const result = await mutateJsonArrayFile(env, PDIR_INDEX_FILE_PATH, function (items) {
     const existing = items.find(function (e) { return (e.title || '').toLowerCase() === title.toLowerCase(); });
     if (existing) {
+      if (scope && scope.selfChecked && !scope.unrestricted) {
+        const sid = existing.selfId || '';
+        if (sid && sid !== scope.selfId) { denied = true; return { items: items }; }
+        if (!sid && existing.selfUnassigned) { denied = true; return { items: items }; }
+      }
       Object.assign(existing, fields);
       saved = existing;
     } else {
-      saved = Object.assign({ id: cryptoRandomId() }, fields);
+      saved = Object.assign({ id: cryptoRandomId(), selfId: assignedSelf.selfId }, fields);
       items.push(saved);
     }
     return { items: items };
   });
+  if (denied) return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   return json(sanitizePdirIndexEntry(saved), 200, origin);
 }
@@ -4488,18 +5232,21 @@ async function handleUpsertPdirIndexEntry(request, env, origin) {
 // org and a part they supply. If anything already exists, they cannot POST
 // a claiming row — untagged Dessimate-started PDIRs stay staff-write until
 // Dessimate sets the org tag; a tagged title they own can be updated.
-async function handleSupplierUpsertPdirIndexEntry(request, env, origin, organization) {
+async function handleSupplierUpsertPdirIndexEntry(request, env, origin, organization, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const title = (body.title || '').toString().trim();
   if (!title) return json({ message: 'A title is required.' }, 400, origin);
   if (!organization) return json({ message: 'Your account isn\'t linked to a Supplier organization.' }, 403, origin);
 
-  const visiblePartNumbers = await resolveVisiblePartNumbers(env, 'supplier', organization);
+  const visiblePartNumbers = await resolveVisiblePartNumbers(env, 'supplier', organization, scope);
   const inspect = await inspectPdirTitle(env, title);
 
   if (inspect.exists) {
     const meta = await resolvePdirVisibilityMeta(env, title, inspect.entry);
+    if (inspect.entry && !(await recordInSelfScope(env, inspect.entry, scope))) {
+      return json({ message: 'Not found.' }, 404, origin);
+    }
     if (!pdirVisibleToCaller(meta, 'supplier', organization, visiblePartNumbers)) {
       return json({ message: 'Not found.' }, 404, origin);
     }
@@ -4512,7 +5259,7 @@ async function handleSupplierUpsertPdirIndexEntry(request, env, origin, organiza
     if (!visiblePartNumbers.has(pn.toLowerCase())) {
       return json({ message: 'Not found.' }, 404, origin);
     }
-    const created = await createSupplierOwnedPdirIndex(env, title, organization, body.shipmentNumber || '', pn);
+    const created = await createSupplierOwnedPdirIndex(env, title, organization, body.shipmentNumber || '', pn, scope && scope.selfId);
     if (!created.ok) {
       return json({ message: created.denied ? 'Not found.' : created.message }, created.denied ? 404 : 500, origin);
     }
@@ -4561,7 +5308,7 @@ async function resolvePdirIndexOrganization(env, title) {
 // Kept as a thin wrapper so existing customer-scoping comments still point
 // at a named helper. Same set resolveVisiblePartNumbers already computes.
 async function resolveCustomerVisiblePartNumbers(env, organization) {
-  return resolveVisiblePartNumbers(env, 'customer', organization);
+  return resolveVisiblePartNumbers(env, 'customer', organization, scope);
 }
 
 function decodePdirTitleFromContentsPath(decoded) {
@@ -4604,7 +5351,7 @@ async function readPdirDraftDecisionState(env, title) {
 // create the draft — that writes the index tag; PDF and pdir_docs are
 // refused until the draft exists so a write cannot skip the visibility
 // check. Untagged existing titles stay staff-write.
-async function handleSupplierPdirContentsPut(request, env, origin, ghPath, organization) {
+async function handleSupplierPdirContentsPut(request, env, origin, ghPath, organization, scope) {
   let decoded;
   try { decoded = ghPath.split('/').map(decodeURIComponent).join('/'); } catch (e) {
     return json({ message: 'Not accessible with your account.' }, 403, origin);
@@ -4613,7 +5360,7 @@ async function handleSupplierPdirContentsPut(request, env, origin, ghPath, organ
   if (!title) return json({ message: 'Your account has read-only access.' }, 403, origin);
   if (!organization) return json({ message: 'Your account isn\'t linked to a Supplier organization.' }, 403, origin);
 
-  const visiblePartNumbers = await resolveVisiblePartNumbers(env, 'supplier', organization);
+  const visiblePartNumbers = await resolveVisiblePartNumbers(env, 'supplier', organization, scope);
   const inspect = await inspectPdirTitle(env, title);
   const isDraftPath = /^pdir_drafts\/.+\.json$/.test(decoded);
 
@@ -4762,7 +5509,7 @@ async function handleSupplierPdirDraftPut(request, env, origin, ghPath, organiza
 // (Rev2.1). Everything else in storage (other organizations' PDIRs,
 // drawings, invoices, org/user documents...) is refused, even though this
 // proxy has no path allowlist of its own.
-async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organization) {
+async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organization, scope) {
   if ((accessLevel !== 'supplier' && accessLevel !== 'customer') || !organization) return false;
   let decoded;
   try { decoded = ghPath.split('/').map(decodeURIComponent).join('/'); } catch (e) { return false; }
@@ -4772,7 +5519,7 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
   if (m) {
     const title = m[1];
     const entry = await resolvePdirIndexEntry(env, title);
-    const visiblePartNumbers = await resolveVisiblePartNumbers(env, accessLevel, organization);
+    const visiblePartNumbers = await resolveVisiblePartNumbers(env, accessLevel, organization, scope);
     const meta = await resolvePdirVisibilityMeta(env, title, entry);
     return pdirVisibleToCaller(meta, accessLevel, organization, visiblePartNumbers);
   }
@@ -5007,9 +5754,11 @@ function sanitizeCustomerPo(o) {
   };
 }
 
-async function handleListCustomerPos(env, origin, accessLevel, organization) {
+async function handleListCustomerPos(env, origin, scope) {
+  const accessLevel = scope.accessLevel;
+  const organization = scope.organization;
   const state = await readJsonArrayFile(env, CUSTOMER_POS_FILE_PATH);
-  let pos = state.items.map(sanitizeCustomerPo);
+  let pos = await presentList(env, state.items, scope, sanitizeCustomerPo);
   // A Customer login sees only their own POs. A Customer PO is Dessimate's
   // commercial agreement with one specific customer - a Supplier login has
   // no business relationship to it at all, so it sees none of these.
@@ -5044,15 +5793,19 @@ function validateCustomerPoFields(body, origin) {
   };
 }
 
-async function handleCreateCustomerPo(request, env, origin) {
+async function handleCreateCustomerPo(request, env, origin, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validateCustomerPoFields(body, origin);
   if (fields.error) return fields.error;
 
   const newPo = Object.assign({ id: cryptoRandomId(), createdAt: new Date().toISOString(), title: cleanTitle(body.title), attachments: sanitizeOrgDocList(body.attachments) }, fields);
 
   const result = await mutateJsonArrayFile(env, CUSTOMER_POS_FILE_PATH, function (items) {
+    if (newPo && !newPo.selfId) newPo.selfId = assignedSelf.selfId;
     items.push(newPo);
     return { items: items };
   });
@@ -5060,7 +5813,9 @@ async function handleCreateCustomerPo(request, env, origin) {
   return json(sanitizeCustomerPo(newPo), 201, origin);
 }
 
-async function handleUpdateCustomerPo(request, env, origin, id) {
+async function handleUpdateCustomerPo(request, env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_POS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateCustomerPoFields(body, origin);
@@ -5089,7 +5844,9 @@ async function handleUpdateCustomerPo(request, env, origin, id) {
   return json(sanitizeCustomerPo(saved), 200, origin);
 }
 
-async function handleDeleteCustomerPo(env, origin, id) {
+async function handleDeleteCustomerPo(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_POS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, CUSTOMER_POS_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -5171,60 +5928,56 @@ async function assignDessimatePoNumbers(env) {
 // Shipment Number that parses as "<this year>-<seq>", bumps the matching
 // counter past it so the system never later hands out a number that
 // collides with (or precedes) one someone typed in by hand.
-async function reserveDessimatePoNumbers(env, clientPoNumber, clientShipmentNumber) {
+async function reserveDessimatePoNumbers(env, clientPoNumber, clientShipmentNumber, selfId) {
   const nowYear = new Date().getUTCFullYear() % 100;
-  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
-    if (obj.shipmentYear !== nowYear) { obj.shipmentYear = nowYear; obj.nextShipmentSeq = 1; }
+  const meta = await mutateCounterBucket(env, selfId, function (bucket) {
+    if (bucket.shipmentYear !== nowYear) { bucket.shipmentYear = nowYear; bucket.nextShipmentSeq = 1; }
 
     let poNumber;
     if (clientPoNumber) {
       poNumber = /^\d+$/.test(clientPoNumber) ? Number(clientPoNumber) : clientPoNumber;
-      if (typeof poNumber === 'number' && poNumber >= obj.nextDessimatePoNumber) obj.nextDessimatePoNumber = poNumber + 1;
+      if (typeof poNumber === 'number' && poNumber >= bucket.nextDessimatePoNumber) bucket.nextDessimatePoNumber = poNumber + 1;
     } else {
-      poNumber = obj.nextDessimatePoNumber;
-      obj.nextDessimatePoNumber = poNumber + 1;
+      poNumber = bucket.nextDessimatePoNumber;
+      bucket.nextDessimatePoNumber = poNumber + 1;
     }
 
     let shipmentNumber;
     if (clientShipmentNumber) {
       shipmentNumber = clientShipmentNumber;
       const m = /^(\d{2})-(\d+)$/.exec(clientShipmentNumber);
-      if (m && Number(m[1]) === obj.shipmentYear) {
+      if (m && Number(m[1]) === bucket.shipmentYear) {
         const seq = Number(m[2]);
-        if (seq >= obj.nextShipmentSeq) obj.nextShipmentSeq = seq + 1;
+        if (seq >= bucket.nextShipmentSeq) bucket.nextShipmentSeq = seq + 1;
       }
     } else {
-      shipmentNumber = pad2(obj.shipmentYear) + '-' + pad3(obj.nextShipmentSeq);
-      obj.nextShipmentSeq = obj.nextShipmentSeq + 1;
+      shipmentNumber = pad2(bucket.shipmentYear) + '-' + pad3(bucket.nextShipmentSeq);
+      bucket.nextShipmentSeq = bucket.nextShipmentSeq + 1;
     }
 
-    return { obj: obj, meta: { poNumber: poNumber, shipmentNumber: shipmentNumber } };
+    return { poNumber: poNumber, shipmentNumber: shipmentNumber };
   });
-  if (!result.ok) throw new Error(result.message);
-  return result.meta;
+  return meta;
 }
 
 // Non-mutating preview of what the "Use System Number" button would assign -
 // reads data/counters.json but never writes it, so looking doesn't cost a
 // number the way actually creating the PO would.
-async function handlePeekDessimatePoNumbers(env, origin) {
+async function handlePeekDessimatePoNumbers(env, origin, scope) {
   const nowYear = new Date().getUTCFullYear() % 100;
-  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
-  const obj = state.obj;
-  const year = obj.shipmentYear === nowYear ? obj.shipmentYear : nowYear;
-  const seq = obj.shipmentYear === nowYear ? obj.nextShipmentSeq : 1;
-  return json({ poNumber: obj.nextDessimatePoNumber, shipmentNumber: pad2(year) + '-' + pad3(seq) }, 200, origin);
+  const bucket = await readCounterBucket(env, scopeCounterSelfId(scope));
+  const year = bucket.shipmentYear === nowYear ? bucket.shipmentYear : nowYear;
+  const seq = bucket.shipmentYear === nowYear ? bucket.nextShipmentSeq : 1;
+  return json({ poNumber: bucket.nextDessimatePoNumber, shipmentNumber: pad2(year) + '-' + pad3(seq) }, 200, origin);
 }
 
-async function dessimatePoNumberTaken(env, poNumber, excludeId) {
-  const state = await readJsonArrayFile(env, DESSIMATE_POS_FILE_PATH);
-  const target = String(poNumber).toLowerCase();
-  return state.items.some(function (o) { return o.id !== excludeId && String(o.poNumber).toLowerCase() === target; });
+async function dessimatePoNumberTaken(env, poNumber, excludeId, selfId) {
+  const sid = selfId || (excludeId ? await selfIdOfStoredRecord(env, DESSIMATE_POS_FILE_PATH, excludeId) : '');
+  return valueTakenInSelf(env, DESSIMATE_POS_FILE_PATH, 'poNumber', poNumber, excludeId, sid);
 }
-async function dessimateShipmentNumberTaken(env, shipmentNumber, excludeId) {
-  const state = await readJsonArrayFile(env, DESSIMATE_POS_FILE_PATH);
-  const target = String(shipmentNumber).toLowerCase();
-  return state.items.some(function (o) { return o.id !== excludeId && String(o.shipmentNumber).toLowerCase() === target; });
+async function dessimateShipmentNumberTaken(env, shipmentNumber, excludeId, selfId) {
+  const sid = selfId || (excludeId ? await selfIdOfStoredRecord(env, DESSIMATE_POS_FILE_PATH, excludeId) : '');
+  return valueTakenInSelf(env, DESSIMATE_POS_FILE_PATH, 'shipmentNumber', shipmentNumber, excludeId, sid);
 }
 
 function sanitizeDessimatePoLine(l) {
@@ -5364,9 +6117,9 @@ function scopeDessimatePos(pos, accessLevel, organization) {
   return pos;
 }
 
-async function handleListDessimatePos(env, origin, accessLevel, organization) {
+async function handleListDessimatePos(env, origin, scope) {
   const state = await readJsonArrayFile(env, DESSIMATE_POS_FILE_PATH);
-  const pos = scopeDessimatePos(state.items.map(sanitizeDessimatePo), accessLevel, organization);
+  const pos = scopeDessimatePos(await presentList(env, state.items, scope, sanitizeDessimatePo), scope.accessLevel, scope.organization);
   return json({ dessimatePos: pos }, 200, origin);
 }
 
@@ -5403,9 +6156,12 @@ function validateDessimatePoFields(body, origin) {
   };
 }
 
-async function handleCreateDessimatePo(request, env, origin) {
+async function handleCreateDessimatePo(request, env, origin, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validateDessimatePoFields(body, origin);
   if (fields.error) return fields.error;
 
@@ -5415,20 +6171,21 @@ async function handleCreateDessimatePo(request, env, origin) {
   // reserveDessimatePoNumbers so the system never later collides with it.
   const clientPoNumber = (body.poNumber !== undefined && body.poNumber !== null) ? String(body.poNumber).trim() : '';
   const clientShipmentNumber = (body.shipmentNumber !== undefined && body.shipmentNumber !== null) ? String(body.shipmentNumber).trim() : '';
-  if (clientPoNumber && await dessimatePoNumberTaken(env, clientPoNumber, null)) {
+  if (clientPoNumber && await dessimatePoNumberTaken(env, clientPoNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That PO Number is already in use.' }, 409, origin);
   }
-  if (clientShipmentNumber && await dessimateShipmentNumberTaken(env, clientShipmentNumber, null)) {
+  if (clientShipmentNumber && await dessimateShipmentNumberTaken(env, clientShipmentNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That Shipment Number is already in use.' }, 409, origin);
   }
 
-  const numbers = await reserveDessimatePoNumbers(env, clientPoNumber, clientShipmentNumber);
+  const numbers = await reserveDessimatePoNumbers(env, clientPoNumber, clientShipmentNumber, assignedSelf.selfId);
   const newPo = Object.assign(
     { id: cryptoRandomId(), createdAt: new Date().toISOString(), poNumber: numbers.poNumber, shipmentNumber: numbers.shipmentNumber, title: cleanTitle(body.title), attachments: sanitizeDessimatePoAttachments(body.attachments) },
     fields
   );
 
   const result = await mutateJsonArrayFile(env, DESSIMATE_POS_FILE_PATH, function (items) {
+    if (newPo && !newPo.selfId) newPo.selfId = assignedSelf.selfId;
     items.push(newPo);
     syncRelatedPoLinks(items, newPo.id, fields.relatedPoIds);
     return { items: items };
@@ -5437,7 +6194,9 @@ async function handleCreateDessimatePo(request, env, origin) {
   return json(sanitizeDessimatePo(newPo), 201, origin);
 }
 
-async function handleUpdateDessimatePo(request, env, origin, id) {
+async function handleUpdateDessimatePo(request, env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, DESSIMATE_POS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateDessimatePoFields(body, origin);
@@ -5460,7 +6219,9 @@ async function handleUpdateDessimatePo(request, env, origin, id) {
   return json(sanitizeDessimatePo(saved), 200, origin);
 }
 
-async function handleDeleteDessimatePo(env, origin, id) {
+async function handleDeleteDessimatePo(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, DESSIMATE_POS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, DESSIMATE_POS_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -5788,7 +6549,11 @@ async function buildDessimatePoPdf(po, selfOrg, supplierOrg, customerInfo, stamp
   return pdfDoc.save();
 }
 
-async function handleGenerateDessimatePoPdf(env, origin, id, accessLevel, organization) {
+async function handleGenerateDessimatePoPdf(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, DESSIMATE_POS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
+  const accessLevel = scope.accessLevel;
+  const organization = scope.organization;
   const state = await readJsonArrayFile(env, DESSIMATE_POS_FILE_PATH);
   const po = state.items.find(function (o) { return o.id === id; });
   if (!po) return json({ message: 'Not found.' }, 404, origin);
@@ -5879,32 +6644,29 @@ function slugifyOrgName(name) {
 // leave blank for the next 9000-series number, or supply your own (already
 // checked for uniqueness by the caller); a numeric custom value bumps the
 // counter past itself so the system never later hands out a colliding one.
-async function reserveRfqNumber(env, clientRfqNumber) {
-  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+async function reserveRfqNumber(env, clientRfqNumber, selfId) {
+  const meta = await mutateCounterBucket(env, selfId, function (bucket) {
     let rfqNumber;
     if (clientRfqNumber) {
       rfqNumber = /^\d+$/.test(clientRfqNumber) ? Number(clientRfqNumber) : clientRfqNumber;
-      if (typeof rfqNumber === 'number' && rfqNumber >= obj.nextRfqNumber) obj.nextRfqNumber = rfqNumber + 1;
+      if (typeof rfqNumber === 'number' && rfqNumber >= bucket.nextRfqNumber) bucket.nextRfqNumber = rfqNumber + 1;
     } else {
-      rfqNumber = obj.nextRfqNumber;
-      obj.nextRfqNumber = rfqNumber + 1;
+      rfqNumber = bucket.nextRfqNumber;
+      bucket.nextRfqNumber = rfqNumber + 1;
     }
-    return { obj: obj, meta: { rfqNumber: rfqNumber } };
+    return { rfqNumber: rfqNumber };
   });
-  if (!result.ok) throw new Error(result.message);
-  return result.meta.rfqNumber;
+  return meta.rfqNumber;
 }
 
 // Non-mutating preview for the Add-RFQ modal's "Use System Number" button.
-async function handlePeekRfqNumber(env, origin) {
-  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
-  return json({ rfqNumber: state.obj.nextRfqNumber }, 200, origin);
+async function handlePeekRfqNumber(env, origin, scope) {
+  const bucket = await readCounterBucket(env, scopeCounterSelfId(scope));
+  return json({ rfqNumber: bucket.nextRfqNumber }, 200, origin);
 }
 
-async function rfqNumberTaken(env, rfqNumber, excludeId) {
-  const state = await readJsonArrayFile(env, RFQS_FILE_PATH);
-  const target = String(rfqNumber).toLowerCase();
-  return state.items.some(function (o) { return o.id !== excludeId && String(o.rfqNumber).toLowerCase() === target; });
+async function rfqNumberTaken(env, rfqNumber, excludeId, selfId) {
+  return valueTakenInSelf(env, RFQS_FILE_PATH, 'rfqNumber', rfqNumber, excludeId, selfId);
 }
 
 // lineId is the stable join key between an RFQ's own lines and a supplier's
@@ -6106,10 +6868,14 @@ function presentRfqs(items, supplierOrgByUsername, accessLevel, organization) {
   return scopeRfqs(rfqs, accessLevel, organization);
 }
 
-async function handleListRfqs(env, origin, accessLevel, organization) {
+async function handleListRfqs(env, origin, scope) {
   const state = await readJsonArrayFile(env, RFQS_FILE_PATH);
+  const rows = await scopeRecords(env, state.items, scope);
   const supplierOrgByUsername = await readSupplierOrgByUsername(env);
-  const rfqs = presentRfqs(state.items, supplierOrgByUsername, accessLevel, organization);
+  const rfqs = presentRfqs(rows.map(function (r) { return r.item; }), supplierOrgByUsername, scope.accessLevel, scope.organization);
+  const sidById = {};
+  rows.forEach(function (r) { sidById[r.item.id] = r.sid; });
+  rfqs.forEach(function (r) { if (r && sidById[r.id] !== undefined) r.selfId = sidById[r.id]; });
   // serverNow lets the page run its due-date countdown off the server's
   // clock rather than trusting the viewer's own.
   return json({ rfqs: rfqs, serverNow: new Date().toISOString() }, 200, origin);
@@ -6142,16 +6908,19 @@ function validateRfqFields(body) {
   };
 }
 
-async function handleCreateRfq(request, env, origin) {
+async function handleCreateRfq(request, env, origin, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validateRfqFields(body);
 
   const clientRfqNumber = (body.rfqNumber !== undefined && body.rfqNumber !== null) ? String(body.rfqNumber).trim() : '';
-  if (clientRfqNumber && await rfqNumberTaken(env, clientRfqNumber, null)) {
+  if (clientRfqNumber && await rfqNumberTaken(env, clientRfqNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That RFQ Number is already in use.' }, 409, origin);
   }
-  const rfqNumber = await reserveRfqNumber(env, clientRfqNumber);
+  const rfqNumber = await reserveRfqNumber(env, clientRfqNumber, assignedSelf.selfId);
   const newRfq = Object.assign(
     { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, title: cleanTitle(body.title), dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments), supplierQuotes: {} },
     fields
@@ -6160,6 +6929,7 @@ async function handleCreateRfq(request, env, origin) {
   newRfq.supplierDueAt = cleanSupplierDueAt(body.supplierDueAt, newRfq.sharedWithSuppliers);
 
   const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
+    if (newRfq && !newRfq.selfId) newRfq.selfId = assignedSelf.selfId;
     items.push(newRfq);
     return { items: items };
   });
@@ -6167,7 +6937,9 @@ async function handleCreateRfq(request, env, origin) {
   return json(sanitizeRfq(newRfq), 201, origin);
 }
 
-async function handleUpdateRfq(request, env, origin, id) {
+async function handleUpdateRfq(request, env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, RFQS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateRfqFields(body);
@@ -6218,9 +6990,9 @@ async function handleUpdateRfq(request, env, origin, id) {
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   if (typeof newRfqNumber === 'number') {
-    await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
-      if (newRfqNumber >= obj.nextRfqNumber) obj.nextRfqNumber = newRfqNumber + 1;
-      return { obj: obj };
+    await mutateCounterBucket(env, saved.selfId || '', function (bucket) {
+      if (newRfqNumber >= bucket.nextRfqNumber) bucket.nextRfqNumber = newRfqNumber + 1;
+      return {};
     });
   }
   const presented = resolveRfqCommentAudiences(sanitizeRfq(saved), await readSupplierOrgByUsername(env));
@@ -6242,7 +7014,9 @@ async function handleUpdateRfq(request, env, origin, id) {
 // soft delete. dessimateAttachments and any supplierQuotes attachments are
 // left orphaned in R2, same as every other module's delete in this codebase
 // (Organizations/Parts/Dessimate PO documents are never cascade-deleted).
-async function handleDeleteRfq(env, origin, id) {
+async function handleDeleteRfq(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, RFQS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, RFQS_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -6275,7 +7049,9 @@ async function resolveRfqRecord(env, rfqId) {
 // itself uses) rather than through the generic /contents/ proxy, so that
 // proxy's supplier/customer restriction to GET-only never has to be
 // loosened.
-async function handleSubmitRfqQuote(request, env, origin, id, organization, username) {
+async function handleSubmitRfqQuote(request, env, origin, id, organization, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, RFQS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
 
@@ -6355,7 +7131,9 @@ async function handleSubmitRfqQuote(request, env, origin, id, organization, user
 // in that Supplier's private thread. Notes stay open after the quote
 // deadline - only the quote itself locks. Returns the updated record,
 // scoped to the caller (the frontend reads `.comments` off it).
-async function handleAddRfqComment(request, env, origin, id, accessLevel, username) {
+async function handleAddRfqComment(request, env, origin, id, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, RFQS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const text = (body.text || '').toString().trim();
@@ -6398,7 +7176,9 @@ async function handleAddRfqComment(request, env, origin, id, accessLevel, userna
 // organization - never someone else's note, even on an RFQ they can see.
 // Stamps editedAt so the UI can show a "(edited)" marker; there is still no
 // delete route.
-async function handleEditRfqComment(request, env, origin, id, commentId, accessLevel, username) {
+async function handleEditRfqComment(request, env, origin, id, commentId, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, RFQS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const text = (body.text || '').toString().trim();
@@ -6453,29 +7233,27 @@ const CUSTOMER_RFQ_DOC_FOLDER = 'customer_rfq_docs';
 
 // Same voluntary/custom-number pattern as reserveRfqNumber, its own
 // separate 8000-series counter.
-async function reserveCustomerRfqNumber(env, clientRfqNumber) {
-  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+async function reserveCustomerRfqNumber(env, clientRfqNumber, selfId) {
+  const meta = await mutateCounterBucket(env, selfId, function (bucket) {
     let rfqNumber;
     if (clientRfqNumber) {
       rfqNumber = /^\d+$/.test(clientRfqNumber) ? Number(clientRfqNumber) : clientRfqNumber;
-      if (typeof rfqNumber === 'number' && rfqNumber >= obj.nextCustomerRfqNumber) obj.nextCustomerRfqNumber = rfqNumber + 1;
+      if (typeof rfqNumber === 'number' && rfqNumber >= bucket.nextCustomerRfqNumber) bucket.nextCustomerRfqNumber = rfqNumber + 1;
     } else {
-      rfqNumber = obj.nextCustomerRfqNumber;
-      obj.nextCustomerRfqNumber = rfqNumber + 1;
+      rfqNumber = bucket.nextCustomerRfqNumber;
+      bucket.nextCustomerRfqNumber = rfqNumber + 1;
     }
-    return { obj: obj, meta: { rfqNumber: rfqNumber } };
+    return { rfqNumber: rfqNumber };
   });
-  if (!result.ok) throw new Error(result.message);
-  return result.meta.rfqNumber;
+  return meta.rfqNumber;
 }
-async function handlePeekCustomerRfqNumber(env, origin) {
-  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
-  return json({ rfqNumber: state.obj.nextCustomerRfqNumber }, 200, origin);
+async function handlePeekCustomerRfqNumber(env, origin, scope) {
+  const bucket = await readCounterBucket(env, scopeCounterSelfId(scope));
+  return json({ rfqNumber: bucket.nextCustomerRfqNumber }, 200, origin);
 }
-async function customerRfqNumberTaken(env, rfqNumber, excludeId) {
-  const state = await readJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH);
-  const target = String(rfqNumber).toLowerCase();
-  return state.items.some(function (o) { return o.id !== excludeId && String(o.rfqNumber).toLowerCase() === target; });
+async function customerRfqNumberTaken(env, rfqNumber, excludeId, selfId) {
+  const sid = selfId || (excludeId ? await selfIdOfStoredRecord(env, CUSTOMER_RFQS_FILE_PATH, excludeId) : '');
+  return valueTakenInSelf(env, CUSTOMER_RFQS_FILE_PATH, 'rfqNumber', rfqNumber, excludeId, sid);
 }
 
 // Same lineId-as-stable-join-key reasoning as sanitizeRfqLine - the
@@ -6599,10 +7377,14 @@ function presentCustomerRfqs(items, customerOrgByUsername, accessLevel, organiza
   return scopeCustomerRfqs(rfqs, accessLevel, organization);
 }
 
-async function handleListCustomerRfqs(env, origin, accessLevel, organization) {
+async function handleListCustomerRfqs(env, origin, scope) {
   const state = await readJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH);
+  const rows = await scopeRecords(env, state.items, scope);
   const customerOrgByUsername = await readCustomerOrgByUsername(env);
-  const rfqs = presentCustomerRfqs(state.items, customerOrgByUsername, accessLevel, organization);
+  const rfqs = presentCustomerRfqs(rows.map(function (r) { return r.item; }), customerOrgByUsername, scope.accessLevel, scope.organization);
+  const sidById = {};
+  rows.forEach(function (r) { sidById[r.item.id] = r.sid; });
+  rfqs.forEach(function (r) { if (r && sidById[r.id] !== undefined) r.selfId = sidById[r.id]; });
   return json({ customerRfqs: rfqs, serverNow: new Date().toISOString() }, 200, origin);
 }
 
@@ -6629,16 +7411,19 @@ function validateCustomerRfqFields(body) {
   };
 }
 
-async function handleCreateCustomerRfq(request, env, origin) {
+async function handleCreateCustomerRfq(request, env, origin, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validateCustomerRfqFields(body);
 
   const clientRfqNumber = (body.rfqNumber !== undefined && body.rfqNumber !== null) ? String(body.rfqNumber).trim() : '';
-  if (clientRfqNumber && await customerRfqNumberTaken(env, clientRfqNumber, null)) {
+  if (clientRfqNumber && await customerRfqNumberTaken(env, clientRfqNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That RFQ Number is already in use.' }, 409, origin);
   }
-  const rfqNumber = await reserveCustomerRfqNumber(env, clientRfqNumber);
+  const rfqNumber = await reserveCustomerRfqNumber(env, clientRfqNumber, assignedSelf.selfId);
   const newRfq = Object.assign(
     { id: cryptoRandomId(), createdAt: new Date().toISOString(), rfqNumber: rfqNumber, title: cleanTitle(body.title), dessimateAttachments: sanitizeOrgDocList(body.dessimateAttachments) },
     fields
@@ -6647,6 +7432,7 @@ async function handleCreateCustomerRfq(request, env, origin) {
   newRfq.customerDueAt = cleanSupplierDueAt(body.customerDueAt, newRfq.sharedWithCustomers);
 
   const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
+    if (newRfq && !newRfq.selfId) newRfq.selfId = assignedSelf.selfId;
     items.push(newRfq);
     return { items: items };
   });
@@ -6654,7 +7440,9 @@ async function handleCreateCustomerRfq(request, env, origin) {
   return json(sanitizeCustomerRfq(newRfq), 201, origin);
 }
 
-async function handleUpdateCustomerRfq(request, env, origin, id) {
+async function handleUpdateCustomerRfq(request, env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_RFQS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateCustomerRfqFields(body);
@@ -6697,9 +7485,9 @@ async function handleUpdateCustomerRfq(request, env, origin, id) {
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   if (typeof newRfqNumber === 'number') {
-    await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
-      if (newRfqNumber >= obj.nextCustomerRfqNumber) obj.nextCustomerRfqNumber = newRfqNumber + 1;
-      return { obj: obj };
+    await mutateCounterBucket(env, saved.selfId || '', function (bucket) {
+      if (newRfqNumber >= bucket.nextCustomerRfqNumber) bucket.nextCustomerRfqNumber = newRfqNumber + 1;
+      return {};
     });
   }
   const presented = resolveCustomerRfqCommentAudiences(sanitizeCustomerRfq(saved), await readCustomerOrgByUsername(env));
@@ -6717,7 +7505,9 @@ async function handleUpdateCustomerRfq(request, env, origin, id) {
 
 // Hard delete, same precedent as the original RFQ module (see its own
 // module comment for why).
-async function handleDeleteCustomerRfq(env, origin, id) {
+async function handleDeleteCustomerRfq(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_RFQS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, CUSTOMER_RFQS_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -6735,7 +7525,9 @@ async function handleDeleteCustomerRfq(env, origin, id) {
 // any Customer RFQ; a Customer can comment only on one shared with their
 // own organization. Returns the full updated record (the frontend reads
 // `.comments` off it).
-async function handleAddCustomerRfqComment(request, env, origin, id, accessLevel, username) {
+async function handleAddCustomerRfqComment(request, env, origin, id, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_RFQS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const text = (body.text || '').toString().trim();
@@ -6776,7 +7568,9 @@ async function handleAddCustomerRfqComment(request, env, origin, id, accessLevel
 // handleEditRfqComment: Team Member+ can edit any comment on any Customer
 // RFQ; a Customer can edit only their OWN comment, and only on a Customer
 // RFQ shared with their own organization.
-async function handleEditCustomerRfqComment(request, env, origin, id, commentId, accessLevel, username) {
+async function handleEditCustomerRfqComment(request, env, origin, id, commentId, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_RFQS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const text = (body.text || '').toString().trim();
@@ -6827,7 +7621,9 @@ async function resolveCustomerRfqRecord(env, rfqId) {
 // own comment for the full reasoning, unchanged here). Body:
 // { lines: [{lineId,price,toolingCost}], attachments: [...], notes,
 // submit: boolean }.
-async function handleUpdateCustomerRfqQuote(request, env, origin, id, username) {
+async function handleUpdateCustomerRfqQuote(request, env, origin, id, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_RFQS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const linesIn = Array.isArray(body.lines) ? body.lines : [];
@@ -6958,10 +7754,11 @@ async function handleCloneRfqsToCustomerRfqs(env, origin) {
       quoteAttachments.push(await cloneOrgDocToCustomerRfq(env, dessimateQuoteIn.attachments[j], oldQuoteDocPrefix, newQuoteDocPrefix));
     }
 
-    const rfqNumber = await reserveCustomerRfqNumber(env, '');
+    const rfqNumber = await reserveCustomerRfqNumber(env, '', raw.selfId || '');
     cloned.push({
       id: newId,
       sourceRfqId: raw.id,
+      selfId: raw.selfId || '',
       rfqNumber: rfqNumber,
       rfqDate: raw.rfqDate || '',
       notes: raw.notes || '',
@@ -7019,9 +7816,9 @@ async function handleRenumberCustomerRfqsTo8000Series(env, origin) {
   if (!result.ok) return json({ message: result.message }, 500, origin);
 
   const nextNumber = 8000 + ordered.length;
-  await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
-    obj.nextCustomerRfqNumber = nextNumber;
-    return { obj: obj };
+  await mutateCounterBucket(env, '', function (bucket) {
+    bucket.nextCustomerRfqNumber = nextNumber;
+    return {};
   });
   return json({ ok: true, renumberedCount: ordered.length, nextNumber: nextNumber }, 200, origin);
 }
@@ -7047,36 +7844,34 @@ const CR_DOC_FOLDER = 'change_request_docs';
 // Number/PO Number/Shipment Number) a voluntary custom value is accepted
 // and bumps the counter past it if it parses as "CR-<digits>", so the
 // system never later hands out a colliding number.
-async function reserveCrNumber(env, clientCrNumber) {
-  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+async function reserveCrNumber(env, clientCrNumber, selfId) {
+  const meta = await mutateCounterBucket(env, selfId, function (bucket) {
     let crNumber;
     if (clientCrNumber) {
       crNumber = clientCrNumber;
       const m = /^CR-(\d+)$/i.exec(clientCrNumber);
       if (m) {
         const seq = Number(m[1]);
-        if (seq >= obj.nextCrNumber) obj.nextCrNumber = seq + 1;
+        if (seq >= bucket.nextCrNumber) bucket.nextCrNumber = seq + 1;
       }
     } else {
-      crNumber = 'CR-' + pad3(obj.nextCrNumber);
-      obj.nextCrNumber = obj.nextCrNumber + 1;
+      crNumber = 'CR-' + pad3(bucket.nextCrNumber);
+      bucket.nextCrNumber = bucket.nextCrNumber + 1;
     }
-    return { obj: obj, meta: { crNumber: crNumber } };
+    return { crNumber: crNumber };
   });
-  if (!result.ok) throw new Error(result.message);
-  return result.meta.crNumber;
+  return meta.crNumber;
 }
 
 // Non-mutating preview for the Add-CR modal's "Use System Number" button.
-async function handlePeekCrNumber(env, origin) {
-  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
-  return json({ crNumber: 'CR-' + pad3(state.obj.nextCrNumber) }, 200, origin);
+async function handlePeekCrNumber(env, origin, scope) {
+  const bucket = await readCounterBucket(env, scopeCounterSelfId(scope));
+  return json({ crNumber: 'CR-' + pad3(bucket.nextCrNumber) }, 200, origin);
 }
 
-async function crNumberTaken(env, crNumber, excludeId) {
-  const state = await readJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH);
-  const target = String(crNumber).toLowerCase();
-  return state.items.some(function (o) { return o.id !== excludeId && String(o.crNumber).toLowerCase() === target; });
+async function crNumberTaken(env, crNumber, excludeId, selfId) {
+  const sid = selfId || (excludeId ? await selfIdOfStoredRecord(env, CHANGE_REQUESTS_FILE_PATH, excludeId) : '');
+  return valueTakenInSelf(env, CHANGE_REQUESTS_FILE_PATH, 'crNumber', crNumber, excludeId, sid);
 }
 
 // CR's Attachments section - same shape as sanitizeOrgDoc, plus a short
@@ -7181,15 +7976,18 @@ function scopeChangeRequests(items, accessLevel, organization) {
   return items;
 }
 
-async function handleListChangeRequests(env, origin, accessLevel, organization) {
+async function handleListChangeRequests(env, origin, scope) {
   const state = await readJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH);
-  const items = scopeChangeRequests(state.items.map(sanitizeChangeRequest), accessLevel, organization);
+  const items = scopeChangeRequests(await presentList(env, state.items, scope, sanitizeChangeRequest), scope.accessLevel, scope.organization);
   return json({ changeRequests: items }, 200, origin);
 }
 
-async function handleCreateChangeRequest(request, env, origin, accessLevel, username) {
+async function handleCreateChangeRequest(request, env, origin, accessLevel, username, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const isSupplier = accessLevel === 'supplier';
   const fields = validateChangeRequestFields(body, isSupplier);
 
@@ -7203,10 +8001,10 @@ async function handleCreateChangeRequest(request, env, origin, accessLevel, user
   }
 
   const clientCrNumber = (body.crNumber !== undefined && body.crNumber !== null) ? String(body.crNumber).trim() : '';
-  if (clientCrNumber && await crNumberTaken(env, clientCrNumber, null)) {
+  if (clientCrNumber && await crNumberTaken(env, clientCrNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That Change Request Number is already in use.' }, 409, origin);
   }
-  const crNumber = await reserveCrNumber(env, clientCrNumber);
+  const crNumber = await reserveCrNumber(env, clientCrNumber, assignedSelf.selfId);
 
   const newCr = Object.assign(
     { id: cryptoRandomId(), createdAt: new Date().toISOString(), createdBy: username || '', crNumber: crNumber, supplierOrg: supplierOrg },
@@ -7214,6 +8012,7 @@ async function handleCreateChangeRequest(request, env, origin, accessLevel, user
   );
 
   const result = await mutateJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH, function (items) {
+    if (newCr && !newCr.selfId) newCr.selfId = assignedSelf.selfId;
     items.push(newCr);
     return { items: items };
   });
@@ -7221,7 +8020,9 @@ async function handleCreateChangeRequest(request, env, origin, accessLevel, user
   return json(sanitizeChangeRequest(newCr), 201, origin);
 }
 
-async function handleUpdateChangeRequest(request, env, origin, id, accessLevel, username) {
+async function handleUpdateChangeRequest(request, env, origin, id, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CHANGE_REQUESTS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const isSupplier = accessLevel === 'supplier';
@@ -7264,7 +8065,9 @@ async function handleUpdateChangeRequest(request, env, origin, id, accessLevel, 
   return json(sanitizeChangeRequest(saved), 200, origin);
 }
 
-async function handleDeleteChangeRequest(env, origin, id) {
+async function handleDeleteChangeRequest(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CHANGE_REQUESTS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -7514,7 +8317,11 @@ async function buildCrPdf(cr, currentConditionDoc, newConditionDoc) {
   return pdfDoc.save();
 }
 
-async function handleGetChangeRequestPdf(env, origin, id, accessLevel, organization) {
+async function handleGetChangeRequestPdf(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CHANGE_REQUESTS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
+  const accessLevel = scope.accessLevel;
+  const organization = scope.organization;
   const raw = await resolveChangeRequestRecord(env, id);
   if (!raw) return json({ message: 'Not found.' }, 404, origin);
   let clean = sanitizeChangeRequest(raw);
@@ -7563,35 +8370,33 @@ const SCR_APPROVAL_DEPARTMENTS = ['supplyChainManagement', 'supplierQuality', 'e
 
 // SCR Number is formatted "SCR-###" when system-assigned - same voluntary/
 // custom-value pattern as reserveCrNumber.
-async function reserveScrNumber(env, clientScrNumber) {
-  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+async function reserveScrNumber(env, clientScrNumber, selfId) {
+  const meta = await mutateCounterBucket(env, selfId, function (bucket) {
     let scrNumber;
     if (clientScrNumber) {
       scrNumber = clientScrNumber;
       const m = /^SCR-(\d+)$/i.exec(clientScrNumber);
       if (m) {
         const seq = Number(m[1]);
-        if (seq >= obj.nextScrNumber) obj.nextScrNumber = seq + 1;
+        if (seq >= bucket.nextScrNumber) bucket.nextScrNumber = seq + 1;
       }
     } else {
-      scrNumber = 'SCR-' + pad3(obj.nextScrNumber);
-      obj.nextScrNumber = obj.nextScrNumber + 1;
+      scrNumber = 'SCR-' + pad3(bucket.nextScrNumber);
+      bucket.nextScrNumber = bucket.nextScrNumber + 1;
     }
-    return { obj: obj, meta: { scrNumber: scrNumber } };
+    return { scrNumber: scrNumber };
   });
-  if (!result.ok) throw new Error(result.message);
-  return result.meta.scrNumber;
+  return meta.scrNumber;
 }
 
-async function handlePeekScrNumber(env, origin) {
-  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
-  return json({ scrNumber: 'SCR-' + pad3(state.obj.nextScrNumber) }, 200, origin);
+async function handlePeekScrNumber(env, origin, scope) {
+  const bucket = await readCounterBucket(env, scopeCounterSelfId(scope));
+  return json({ scrNumber: 'SCR-' + pad3(bucket.nextScrNumber) }, 200, origin);
 }
 
-async function scrNumberTaken(env, scrNumber, excludeId) {
-  const state = await readJsonArrayFile(env, SCRS_FILE_PATH);
-  const target = String(scrNumber).toLowerCase();
-  return state.items.some(function (o) { return o.id !== excludeId && String(o.scrNumber).toLowerCase() === target; });
+async function scrNumberTaken(env, scrNumber, excludeId, selfId) {
+  const sid = selfId || (excludeId ? await selfIdOfStoredRecord(env, SCRS_FILE_PATH, excludeId) : '');
+  return valueTakenInSelf(env, SCRS_FILE_PATH, 'scrNumber', scrNumber, excludeId, sid);
 }
 
 // SCR's Attachments section - same shape as sanitizeOrgDoc, plus a short
@@ -7762,23 +8567,26 @@ function scopeScrs(items, accessLevel, organization) {
   return [];
 }
 
-async function handleListScrs(env, origin, accessLevel, organization) {
+async function handleListScrs(env, origin, scope) {
   const state = await readJsonArrayFile(env, SCRS_FILE_PATH);
-  const items = scopeScrs(state.items.map(sanitizeScr), accessLevel, organization);
+  const items = scopeScrs(await presentList(env, state.items, scope, sanitizeScr), scope.accessLevel, scope.organization);
   return json({ scrs: items }, 200, origin);
 }
 
-async function handleCreateScr(request, env, origin, username) {
+async function handleCreateScr(request, env, origin, username, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validateScrFields(body);
   if (!fields.supplierOrg) return json({ message: 'Supplier is required.' }, 400, origin);
 
   const clientScrNumber = (body.scrNumber !== undefined && body.scrNumber !== null) ? String(body.scrNumber).trim() : '';
-  if (clientScrNumber && await scrNumberTaken(env, clientScrNumber, null)) {
+  if (clientScrNumber && await scrNumberTaken(env, clientScrNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That SCR Number is already in use.' }, 409, origin);
   }
-  const scrNumber = await reserveScrNumber(env, clientScrNumber);
+  const scrNumber = await reserveScrNumber(env, clientScrNumber, assignedSelf.selfId);
 
   const newScr = Object.assign(
     { id: cryptoRandomId(), createdAt: new Date().toISOString(), createdBy: username || '', scrNumber: scrNumber },
@@ -7786,6 +8594,7 @@ async function handleCreateScr(request, env, origin, username) {
   );
 
   const result = await mutateJsonArrayFile(env, SCRS_FILE_PATH, function (items) {
+    if (newScr && !newScr.selfId) newScr.selfId = assignedSelf.selfId;
     items.push(newScr);
     return { items: items };
   });
@@ -7793,7 +8602,9 @@ async function handleCreateScr(request, env, origin, username) {
   return json(sanitizeScr(newScr), 201, origin);
 }
 
-async function handleUpdateScr(request, env, origin, id) {
+async function handleUpdateScr(request, env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, SCRS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateScrFields(body);
@@ -7823,7 +8634,9 @@ async function handleUpdateScr(request, env, origin, id) {
   return json(sanitizeScr(saved), 200, origin);
 }
 
-async function handleDeleteScr(env, origin, id) {
+async function handleDeleteScr(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, SCRS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, SCRS_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -7867,35 +8680,33 @@ const DMR_PHOTOS_MAX = 4;
 // DMR Number is formatted "DMR-####" (4 digits, matching the template's
 // "DMR-0000" placeholder) - same voluntary/custom-value auto-numbering as
 // CR Number/SCR Number.
-async function reserveDmrNumber(env, clientDmrNumber) {
-  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+async function reserveDmrNumber(env, clientDmrNumber, selfId) {
+  const meta = await mutateCounterBucket(env, selfId, function (bucket) {
     let dmrNumber;
     if (clientDmrNumber) {
       dmrNumber = clientDmrNumber;
       const m = /^DMR-(\d+)$/i.exec(clientDmrNumber);
       if (m) {
         const seq = Number(m[1]);
-        if (seq >= obj.nextDmrNumber) obj.nextDmrNumber = seq + 1;
+        if (seq >= bucket.nextDmrNumber) bucket.nextDmrNumber = seq + 1;
       }
     } else {
-      dmrNumber = 'DMR-' + pad4(obj.nextDmrNumber);
-      obj.nextDmrNumber = obj.nextDmrNumber + 1;
+      dmrNumber = 'DMR-' + pad4(bucket.nextDmrNumber);
+      bucket.nextDmrNumber = bucket.nextDmrNumber + 1;
     }
-    return { obj: obj, meta: { dmrNumber: dmrNumber } };
+    return { dmrNumber: dmrNumber };
   });
-  if (!result.ok) throw new Error(result.message);
-  return result.meta.dmrNumber;
+  return meta.dmrNumber;
 }
 
-async function handlePeekDmrNumber(env, origin) {
-  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
-  return json({ dmrNumber: 'DMR-' + pad4(state.obj.nextDmrNumber) }, 200, origin);
+async function handlePeekDmrNumber(env, origin, scope) {
+  const bucket = await readCounterBucket(env, scopeCounterSelfId(scope));
+  return json({ dmrNumber: 'DMR-' + pad4(bucket.nextDmrNumber) }, 200, origin);
 }
 
-async function dmrNumberTaken(env, dmrNumber, excludeId) {
-  const state = await readJsonArrayFile(env, DMRS_FILE_PATH);
-  const target = String(dmrNumber).toLowerCase();
-  return state.items.some(function (o) { return o.id !== excludeId && String(o.dmrNumber).toLowerCase() === target; });
+async function dmrNumberTaken(env, dmrNumber, excludeId, selfId) {
+  const sid = selfId || (excludeId ? await selfIdOfStoredRecord(env, DMRS_FILE_PATH, excludeId) : '');
+  return valueTakenInSelf(env, DMRS_FILE_PATH, 'dmrNumber', dmrNumber, excludeId, sid);
 }
 
 // A Photographic Evidence slot - same shape as sanitizeOrgDoc plus a
@@ -8068,27 +8879,30 @@ function scopeDmrs(items, accessLevel, organization) {
   return items;
 }
 
-async function handleListDmrs(env, origin, accessLevel, organization) {
+async function handleListDmrs(env, origin, scope) {
   const state = await readJsonArrayFile(env, DMRS_FILE_PATH);
-  const items = scopeDmrs(state.items.map(sanitizeDmr), accessLevel, organization);
+  const items = scopeDmrs(await presentList(env, state.items, scope, sanitizeDmr), scope.accessLevel, scope.organization);
   return json({ dmrs: items }, 200, origin);
 }
 
 // Staff-only - a Supplier never creates a DMR, only responds to one (see
 // the module comment above).
-async function handleCreateDmr(request, env, origin, username) {
+async function handleCreateDmr(request, env, origin, username, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validateDmrFields(body, false);
 
   const supplierOrg = (body.supplierOrg || '').toString().trim();
   if (!supplierOrg) return json({ message: 'Supplier is required.' }, 400, origin);
 
   const clientDmrNumber = (body.dmrNumber !== undefined && body.dmrNumber !== null) ? String(body.dmrNumber).trim() : '';
-  if (clientDmrNumber && await dmrNumberTaken(env, clientDmrNumber, null)) {
+  if (clientDmrNumber && await dmrNumberTaken(env, clientDmrNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That DMR Number is already in use.' }, 409, origin);
   }
-  const dmrNumber = await reserveDmrNumber(env, clientDmrNumber);
+  const dmrNumber = await reserveDmrNumber(env, clientDmrNumber, assignedSelf.selfId);
 
   const newDmr = Object.assign(
     { id: cryptoRandomId(), createdAt: new Date().toISOString(), createdBy: username || '', dmrNumber: dmrNumber, supplierOrg: supplierOrg },
@@ -8096,6 +8910,7 @@ async function handleCreateDmr(request, env, origin, username) {
   );
 
   const result = await mutateJsonArrayFile(env, DMRS_FILE_PATH, function (items) {
+    if (newDmr && !newDmr.selfId) newDmr.selfId = assignedSelf.selfId;
     items.push(newDmr);
     return { items: items };
   });
@@ -8103,7 +8918,9 @@ async function handleCreateDmr(request, env, origin, username) {
   return json(sanitizeDmr(newDmr), 201, origin);
 }
 
-async function handleUpdateDmr(request, env, origin, id, accessLevel, username) {
+async function handleUpdateDmr(request, env, origin, id, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, DMRS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const isSupplier = accessLevel === 'supplier';
@@ -8146,7 +8963,9 @@ async function handleUpdateDmr(request, env, origin, id, accessLevel, username) 
   return json(sanitizeDmr(saved), 200, origin);
 }
 
-async function handleDeleteDmr(env, origin, id) {
+async function handleDeleteDmr(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, DMRS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, DMRS_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -8425,7 +9244,11 @@ async function buildDmrPdf(dmr, photoDocs) {
   return pdfDoc.save();
 }
 
-async function handleGetDmrPdf(env, origin, id, accessLevel, organization) {
+async function handleGetDmrPdf(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, DMRS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
+  const accessLevel = scope.accessLevel;
+  const organization = scope.organization;
   const raw = await resolveDmrRecord(env, id);
   if (!raw) return json({ message: 'Not found.' }, 404, origin);
   let clean = sanitizeDmr(raw);
@@ -8473,10 +9296,9 @@ const CUSTOMER_DMRS_FILE_PATH = 'data/customer_dmrs.json';
 const CUSTOMER_DMR_DOC_FOLDER = 'customer_dmr_docs';
 const CUSTOMER_DMR_PHOTOS_MAX = 4;
 
-async function customerDmrNumberTaken(env, dmrNumber, excludeId) {
-  const state = await readJsonArrayFile(env, CUSTOMER_DMRS_FILE_PATH);
-  const target = String(dmrNumber).toLowerCase();
-  return state.items.some(function (o) { return o.id !== excludeId && String(o.dmrNumber).toLowerCase() === target; });
+async function customerDmrNumberTaken(env, dmrNumber, excludeId, selfId) {
+  const sid = selfId || (excludeId ? await selfIdOfStoredRecord(env, CUSTOMER_DMRS_FILE_PATH, excludeId) : '');
+  return valueTakenInSelf(env, CUSTOMER_DMRS_FILE_PATH, 'dmrNumber', dmrNumber, excludeId, sid);
 }
 
 function sanitizeCustomerDmrPhoto(d) {
@@ -8660,23 +9482,26 @@ function scopeCustomerDmrs(items, accessLevel, organization) {
   return items;
 }
 
-async function handleListCustomerDmrs(env, origin, accessLevel, organization) {
+async function handleListCustomerDmrs(env, origin, scope) {
   const state = await readJsonArrayFile(env, CUSTOMER_DMRS_FILE_PATH);
-  const items = scopeCustomerDmrs(state.items.map(sanitizeCustomerDmr), accessLevel, organization);
+  const items = scopeCustomerDmrs(await presentList(env, state.items, scope, sanitizeCustomerDmr), scope.accessLevel, scope.organization);
   return json({ customerDmrs: items }, 200, origin);
 }
 
 // Staff-only - a Customer never creates a Customer DMR, only reviews/closes
 // one (see the module comment above).
-async function handleCreateCustomerDmr(request, env, origin, username) {
+async function handleCreateCustomerDmr(request, env, origin, username, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validateCustomerDmrFields(body, false);
   if (!fields.customerOrg) return json({ message: 'Customer Organization is required.' }, 400, origin);
 
   const dmrNumber = (body.dmrNumber || '').toString().trim();
   if (!dmrNumber) return json({ message: 'DMR Number is required.' }, 400, origin);
-  if (await customerDmrNumberTaken(env, dmrNumber, null)) {
+  if (await customerDmrNumberTaken(env, dmrNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That DMR Number is already in use.' }, 409, origin);
   }
 
@@ -8686,6 +9511,7 @@ async function handleCreateCustomerDmr(request, env, origin, username) {
   );
 
   const result = await mutateJsonArrayFile(env, CUSTOMER_DMRS_FILE_PATH, function (items) {
+    if (newDmr && !newDmr.selfId) newDmr.selfId = assignedSelf.selfId;
     items.push(newDmr);
     return { items: items };
   });
@@ -8693,7 +9519,9 @@ async function handleCreateCustomerDmr(request, env, origin, username) {
   return json(sanitizeCustomerDmr(newDmr), 201, origin);
 }
 
-async function handleUpdateCustomerDmr(request, env, origin, id, accessLevel, username) {
+async function handleUpdateCustomerDmr(request, env, origin, id, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_DMRS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const isCustomer = accessLevel === 'customer';
@@ -8732,7 +9560,9 @@ async function handleUpdateCustomerDmr(request, env, origin, id, accessLevel, us
   return json(sanitizeCustomerDmr(saved), 200, origin);
 }
 
-async function handleDeleteCustomerDmr(env, origin, id) {
+async function handleDeleteCustomerDmr(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_DMRS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, CUSTOMER_DMRS_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -8749,7 +9579,9 @@ async function handleDeleteCustomerDmr(env, origin, id) {
 // only on one naming their own organization. Appends and returns the full
 // updated record; there is no edit/delete route, by design (see the
 // module comment above).
-async function handleAddCustomerDmrComment(request, env, origin, id, accessLevel, username) {
+async function handleAddCustomerDmrComment(request, env, origin, id, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_DMRS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const text = (body.text || '').toString().trim();
@@ -9079,7 +9911,11 @@ async function buildCustomerDmrPdf(dmr, photoDocs) {
   return pdfDoc.save();
 }
 
-async function handleGetCustomerDmrPdf(env, origin, id, accessLevel, organization) {
+async function handleGetCustomerDmrPdf(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_DMRS_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
+  const accessLevel = scope.accessLevel;
+  const organization = scope.organization;
   const raw = await resolveCustomerDmrRecord(env, id);
   if (!raw) return json({ message: 'Not found.' }, 404, origin);
   let clean = sanitizeCustomerDmr(raw);
@@ -9162,33 +9998,31 @@ const OPEN_ISSUE_PRIORITY_ERROR = 'Priority must be A, B, C, or blank.';
 
 // Open Issue # is formatted "OI-####" (4 digits), same voluntary/custom-
 // value auto-numbering as CR/SCR/DMR Number.
-async function reserveOpenIssueNumber(env, clientIssueNumber) {
-  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+async function reserveOpenIssueNumber(env, clientIssueNumber, selfId) {
+  const meta = await mutateCounterBucket(env, selfId, function (bucket) {
     let issueNumber;
     if (clientIssueNumber) {
       issueNumber = clientIssueNumber;
       const m = /^OI-(\d+)$/i.exec(clientIssueNumber);
       if (m) {
         const seq = Number(m[1]);
-        if (seq >= obj.nextOpenIssueNumber) obj.nextOpenIssueNumber = seq + 1;
+        if (seq >= bucket.nextOpenIssueNumber) bucket.nextOpenIssueNumber = seq + 1;
       }
     } else {
-      issueNumber = 'OI-' + pad4(obj.nextOpenIssueNumber);
-      obj.nextOpenIssueNumber = obj.nextOpenIssueNumber + 1;
+      issueNumber = 'OI-' + pad4(bucket.nextOpenIssueNumber);
+      bucket.nextOpenIssueNumber = bucket.nextOpenIssueNumber + 1;
     }
-    return { obj: obj, meta: { issueNumber: issueNumber } };
+    return { issueNumber: issueNumber };
   });
-  if (!result.ok) throw new Error(result.message);
-  return result.meta.issueNumber;
+  return meta.issueNumber;
 }
-async function handlePeekOpenIssueNumber(env, origin) {
-  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
-  return json({ issueNumber: 'OI-' + pad4(state.obj.nextOpenIssueNumber) }, 200, origin);
+async function handlePeekOpenIssueNumber(env, origin, scope) {
+  const bucket = await readCounterBucket(env, scopeCounterSelfId(scope));
+  return json({ issueNumber: 'OI-' + pad4(bucket.nextOpenIssueNumber) }, 200, origin);
 }
-async function openIssueNumberTaken(env, issueNumber, excludeId) {
-  const state = await readJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH);
-  const target = String(issueNumber).toLowerCase();
-  return state.items.some(function (o) { return o.id !== excludeId && String(o.issueNumber).toLowerCase() === target; });
+async function openIssueNumberTaken(env, issueNumber, excludeId, selfId) {
+  const sid = selfId || (excludeId ? await selfIdOfStoredRecord(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, excludeId) : '');
+  return valueTakenInSelf(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, 'issueNumber', issueNumber, excludeId, sid);
 }
 
 function sanitizeOpenIssuePicture(d) {
@@ -9303,15 +10137,18 @@ function scopeCustomerOpenIssues(items, accessLevel, organization) {
   return items;
 }
 
-async function handleListCustomerOpenIssues(env, origin, accessLevel, organization) {
+async function handleListCustomerOpenIssues(env, origin, scope) {
   const state = await readJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH);
-  const items = scopeCustomerOpenIssues(state.items.map(sanitizeCustomerOpenIssue), accessLevel, organization);
+  const items = scopeCustomerOpenIssues(await presentList(env, state.items, scope, sanitizeCustomerOpenIssue), scope.accessLevel, scope.organization);
   return json({ openIssues: items }, 200, origin);
 }
 
-async function handleCreateCustomerOpenIssue(request, env, origin, username) {
+async function handleCreateCustomerOpenIssue(request, env, origin, username, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validateCustomerOpenIssueFields(body);
   if (!fields.customerOrg) return json({ message: 'Customer Organization is required.' }, 400, origin);
   const priority = parseOpenIssuePriority(body.priority);
@@ -9319,10 +10156,10 @@ async function handleCreateCustomerOpenIssue(request, env, origin, username) {
   fields.priority = priority;
 
   const clientIssueNumber = (body.issueNumber || '').toString().trim();
-  if (clientIssueNumber && await openIssueNumberTaken(env, clientIssueNumber, null)) {
+  if (clientIssueNumber && await openIssueNumberTaken(env, clientIssueNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That Issue Number is already in use.' }, 409, origin);
   }
-  const issueNumber = await reserveOpenIssueNumber(env, clientIssueNumber);
+  const issueNumber = await reserveOpenIssueNumber(env, clientIssueNumber, assignedSelf.selfId);
 
   const newIssue = Object.assign(
     { id: cryptoRandomId(), createdAt: new Date().toISOString(), createdBy: username || '', issueNumber: issueNumber, comments: [] },
@@ -9330,6 +10167,7 @@ async function handleCreateCustomerOpenIssue(request, env, origin, username) {
   );
 
   const result = await mutateJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, function (items) {
+    if (newIssue && !newIssue.selfId) newIssue.selfId = assignedSelf.selfId;
     items.push(newIssue);
     return { items: items };
   });
@@ -9337,7 +10175,9 @@ async function handleCreateCustomerOpenIssue(request, env, origin, username) {
   return json(sanitizeCustomerOpenIssue(newIssue), 201, origin);
 }
 
-async function handleUpdateCustomerOpenIssue(request, env, origin, id) {
+async function handleUpdateCustomerOpenIssue(request, env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateCustomerOpenIssueFields(body);
@@ -9374,7 +10214,9 @@ async function handleUpdateCustomerOpenIssue(request, env, origin, id) {
   return json(sanitizeCustomerOpenIssue(saved), 200, origin);
 }
 
-async function handleDeleteCustomerOpenIssue(env, origin, id) {
+async function handleDeleteCustomerOpenIssue(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -9390,7 +10232,9 @@ async function handleDeleteCustomerOpenIssue(env, origin, id) {
 // handleEditOpenIssueComment below; there is still no delete route).
 // Team Member+ can comment on any issue; a Customer can comment only on
 // one naming their own organization. Returns the full updated record.
-async function handleAddOpenIssueComment(request, env, origin, id, accessLevel, username) {
+async function handleAddOpenIssueComment(request, env, origin, id, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const text = (body.text || '').toString().trim();
@@ -9427,7 +10271,9 @@ async function handleAddOpenIssueComment(request, env, origin, id, accessLevel, 
 // organization - never someone else's note, even on their own org's
 // issue. Stamps editedAt so the UI can show a "(edited)" marker; there is
 // still no delete route.
-async function handleEditOpenIssueComment(request, env, origin, id, commentId, accessLevel, username) {
+async function handleEditOpenIssueComment(request, env, origin, id, commentId, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, CUSTOMER_OPEN_ISSUES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const text = (body.text || '').toString().trim();
@@ -9504,29 +10350,27 @@ const SUPPLIER_OPEN_ISSUE_DOC_FOLDER = 'supplier_open_issue_docs';
 // own counter fully independent from every other numbering series in this
 // app. Same voluntary/custom-value pattern as reserveCustomerRfqNumber: a
 // client-supplied numeric value bumps the counter past itself.
-async function reserveSupplierOpenIssueNumber(env, clientIssueNumber) {
-  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+async function reserveSupplierOpenIssueNumber(env, clientIssueNumber, selfId) {
+  const meta = await mutateCounterBucket(env, selfId, function (bucket) {
     let issueNumber;
     if (clientIssueNumber) {
       issueNumber = /^\d+$/.test(clientIssueNumber) ? Number(clientIssueNumber) : clientIssueNumber;
-      if (typeof issueNumber === 'number' && issueNumber >= obj.nextSupplierOpenIssueNumber) obj.nextSupplierOpenIssueNumber = issueNumber + 1;
+      if (typeof issueNumber === 'number' && issueNumber >= bucket.nextSupplierOpenIssueNumber) bucket.nextSupplierOpenIssueNumber = issueNumber + 1;
     } else {
-      issueNumber = obj.nextSupplierOpenIssueNumber;
-      obj.nextSupplierOpenIssueNumber = issueNumber + 1;
+      issueNumber = bucket.nextSupplierOpenIssueNumber;
+      bucket.nextSupplierOpenIssueNumber = issueNumber + 1;
     }
-    return { obj: obj, meta: { issueNumber: issueNumber } };
+    return { issueNumber: issueNumber };
   });
-  if (!result.ok) throw new Error(result.message);
-  return result.meta.issueNumber;
+  return meta.issueNumber;
 }
-async function handlePeekSupplierOpenIssueNumber(env, origin) {
-  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
-  return json({ issueNumber: state.obj.nextSupplierOpenIssueNumber }, 200, origin);
+async function handlePeekSupplierOpenIssueNumber(env, origin, scope) {
+  const bucket = await readCounterBucket(env, scopeCounterSelfId(scope));
+  return json({ issueNumber: bucket.nextSupplierOpenIssueNumber }, 200, origin);
 }
-async function supplierOpenIssueNumberTaken(env, issueNumber, excludeId) {
-  const state = await readJsonArrayFile(env, SUPPLIER_OPEN_ISSUES_FILE_PATH);
-  const target = String(issueNumber).toLowerCase();
-  return state.items.some(function (o) { return o.id !== excludeId && String(o.issueNumber).toLowerCase() === target; });
+async function supplierOpenIssueNumberTaken(env, issueNumber, excludeId, selfId) {
+  const sid = selfId || (excludeId ? await selfIdOfStoredRecord(env, SUPPLIER_OPEN_ISSUES_FILE_PATH, excludeId) : '');
+  return valueTakenInSelf(env, SUPPLIER_OPEN_ISSUES_FILE_PATH, 'issueNumber', issueNumber, excludeId, sid);
 }
 
 // Reuses sanitizeOpenIssuePicture/sanitizeOpenIssueAttachment(s)/
@@ -9593,15 +10437,18 @@ function scopeSupplierOpenIssues(items, accessLevel, organization) {
   return items;
 }
 
-async function handleListSupplierOpenIssues(env, origin, accessLevel, organization) {
+async function handleListSupplierOpenIssues(env, origin, scope) {
   const state = await readJsonArrayFile(env, SUPPLIER_OPEN_ISSUES_FILE_PATH);
-  const items = scopeSupplierOpenIssues(state.items.map(sanitizeSupplierOpenIssue), accessLevel, organization);
+  const items = scopeSupplierOpenIssues(await presentList(env, state.items, scope, sanitizeSupplierOpenIssue), scope.accessLevel, scope.organization);
   return json({ openIssues: items }, 200, origin);
 }
 
-async function handleCreateSupplierOpenIssue(request, env, origin, username, accessLevel) {
+async function handleCreateSupplierOpenIssue(request, env, origin, username, accessLevel, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validateSupplierOpenIssueFields(body);
   const isSupplier = accessLevel === 'supplier';
   if (isSupplier) {
@@ -9618,10 +10465,10 @@ async function handleCreateSupplierOpenIssue(request, env, origin, username, acc
   // A Supplier cannot pick the number (that would let them claim or skip
   // ahead in the series). Blank means auto-assign, which is all they get.
   const clientIssueNumber = isSupplier ? '' : (body.issueNumber || '').toString().trim();
-  if (clientIssueNumber && await supplierOpenIssueNumberTaken(env, clientIssueNumber, null)) {
+  if (clientIssueNumber && await supplierOpenIssueNumberTaken(env, clientIssueNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That Issue Number is already in use.' }, 409, origin);
   }
-  const issueNumber = await reserveSupplierOpenIssueNumber(env, clientIssueNumber);
+  const issueNumber = await reserveSupplierOpenIssueNumber(env, clientIssueNumber, assignedSelf.selfId);
 
   const newIssue = Object.assign(
     { id: cryptoRandomId(), createdAt: new Date().toISOString(), createdBy: username || '', issueNumber: issueNumber, comments: [] },
@@ -9629,6 +10476,7 @@ async function handleCreateSupplierOpenIssue(request, env, origin, username, acc
   );
 
   const result = await mutateJsonArrayFile(env, SUPPLIER_OPEN_ISSUES_FILE_PATH, function (items) {
+    if (newIssue && !newIssue.selfId) newIssue.selfId = assignedSelf.selfId;
     items.push(newIssue);
     return { items: items };
   });
@@ -9636,7 +10484,9 @@ async function handleCreateSupplierOpenIssue(request, env, origin, username, acc
   return json(sanitizeSupplierOpenIssue(newIssue), 201, origin);
 }
 
-async function handleUpdateSupplierOpenIssue(request, env, origin, id, accessLevel, username) {
+async function handleUpdateSupplierOpenIssue(request, env, origin, id, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, SUPPLIER_OPEN_ISSUES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateSupplierOpenIssueFields(body);
@@ -9684,7 +10534,9 @@ async function handleUpdateSupplierOpenIssue(request, env, origin, id, accessLev
   return json(sanitizeSupplierOpenIssue(saved), 200, origin);
 }
 
-async function handleDeleteSupplierOpenIssue(env, origin, id) {
+async function handleDeleteSupplierOpenIssue(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, SUPPLIER_OPEN_ISSUES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, SUPPLIER_OPEN_ISSUES_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -9701,7 +10553,9 @@ async function handleDeleteSupplierOpenIssue(env, origin, id) {
 // issue; a Supplier can comment only on one assigned to their own
 // organization. Returns the full updated record. Reuses the generic
 // sanitizeOpenIssueComment(s) defined above for Customer Open Issues.
-async function handleAddSupplierOpenIssueComment(request, env, origin, id, accessLevel, username) {
+async function handleAddSupplierOpenIssueComment(request, env, origin, id, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, SUPPLIER_OPEN_ISSUES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const text = (body.text || '').toString().trim();
@@ -9736,7 +10590,9 @@ async function handleAddSupplierOpenIssueComment(request, env, origin, id, acces
 // comment on any issue; a Supplier can edit only their OWN comment (matched
 // by authorUsername), and only on an issue assigned to their own
 // organization - never someone else's note, even on their own org's issue.
-async function handleEditSupplierOpenIssueComment(request, env, origin, id, commentId, accessLevel, username) {
+async function handleEditSupplierOpenIssueComment(request, env, origin, id, commentId, accessLevel, username, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, SUPPLIER_OPEN_ISSUES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const text = (body.text || '').toString().trim();
@@ -10150,7 +11006,9 @@ async function buildEightDPdf(meta, report, picture) {
   return await pdfDoc.save();
 }
 
-async function handleGenerateOpenIssue8d(env, origin, id, kind) {
+async function handleGenerateOpenIssue8d(env, origin, id, kind, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, kind === 'supplier' ? SUPPLIER_OPEN_ISSUES_FILE_PATH : CUSTOMER_OPEN_ISSUES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   if (!env.ANTHROPIC_API_KEY) {
     return json({ message: '8D reports need an Anthropic API key on the server. Set ANTHROPIC_API_KEY from your Anthropic account at console.anthropic.com, then deploy the worker.' }, 503, origin);
   }
@@ -10265,9 +11123,11 @@ function sanitizeSupplierInvoice(o) {
   };
 }
 
-async function handleListSupplierInvoices(env, origin, accessLevel, organization) {
+async function handleListSupplierInvoices(env, origin, scope) {
+  const accessLevel = scope.accessLevel;
+  const organization = scope.organization;
   const state = await readJsonArrayFile(env, SUPPLIER_INVOICES_FILE_PATH);
-  let invoices = state.items.map(sanitizeSupplierInvoice);
+  let invoices = await presentList(env, state.items, scope, sanitizeSupplierInvoice);
   // A Supplier login sees only invoices they themselves submitted. What
   // Dessimate pays a Supplier has no bearing on a Customer login, so a
   // Customer sees none of these.
@@ -10301,15 +11161,19 @@ function validateSupplierInvoiceFields(body, origin) {
   };
 }
 
-async function handleCreateSupplierInvoice(request, env, origin) {
+async function handleCreateSupplierInvoice(request, env, origin, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validateSupplierInvoiceFields(body, origin);
   if (fields.error) return fields.error;
 
   const newInv = Object.assign({ id: cryptoRandomId(), createdAt: new Date().toISOString(), title: cleanTitle(body.title), sourcePdf: sanitizeOrgDoc(body.sourcePdf) }, fields);
 
   const result = await mutateJsonArrayFile(env, SUPPLIER_INVOICES_FILE_PATH, function (items) {
+    if (newInv && !newInv.selfId) newInv.selfId = assignedSelf.selfId;
     items.push(newInv);
     return { items: items };
   });
@@ -10317,7 +11181,9 @@ async function handleCreateSupplierInvoice(request, env, origin) {
   return json(sanitizeSupplierInvoice(newInv), 201, origin);
 }
 
-async function handleUpdateSupplierInvoice(request, env, origin, id) {
+async function handleUpdateSupplierInvoice(request, env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, SUPPLIER_INVOICES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateSupplierInvoiceFields(body, origin);
@@ -10339,7 +11205,9 @@ async function handleUpdateSupplierInvoice(request, env, origin, id) {
   return json(sanitizeSupplierInvoice(saved), 200, origin);
 }
 
-async function handleDeleteSupplierInvoice(env, origin, id) {
+async function handleDeleteSupplierInvoice(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, SUPPLIER_INVOICES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const result = await mutateJsonArrayFile(env, SUPPLIER_INVOICES_FILE_PATH, function (items) {
     const idx = items.findIndex(function (o) { return o.id === id; });
     if (idx === -1) return null;
@@ -10387,33 +11255,32 @@ async function resolveDessimateInvoiceOwner(env, invoiceId) {
   return inv.customer || '';
 }
 
-async function assignDessimateInvoiceNumber(env) {
-  return reserveDessimateInvoiceNumber(env, '');
+async function assignDessimateInvoiceNumber(env, selfId) {
+  return reserveDessimateInvoiceNumber(env, '', selfId);
 }
 
 // Rev2: Invoice Number is voluntary/optional, same pattern as the Dessimate
 // PO's PO Number/Shipment Number - see reserveDessimatePoNumbers.
-async function reserveDessimateInvoiceNumber(env, clientInvoiceNumber) {
-  const result = await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
+async function reserveDessimateInvoiceNumber(env, clientInvoiceNumber, selfId) {
+  const meta = await mutateCounterBucket(env, selfId, function (bucket) {
     let invoiceNumber;
     if (clientInvoiceNumber) {
       invoiceNumber = /^\d+$/.test(clientInvoiceNumber) ? Number(clientInvoiceNumber) : clientInvoiceNumber;
-      if (typeof invoiceNumber === 'number' && invoiceNumber >= obj.nextDessimateInvoiceNumber) obj.nextDessimateInvoiceNumber = invoiceNumber + 1;
+      if (typeof invoiceNumber === 'number' && invoiceNumber >= bucket.nextDessimateInvoiceNumber) bucket.nextDessimateInvoiceNumber = invoiceNumber + 1;
     } else {
-      invoiceNumber = obj.nextDessimateInvoiceNumber;
-      obj.nextDessimateInvoiceNumber = invoiceNumber + 1;
+      invoiceNumber = bucket.nextDessimateInvoiceNumber;
+      bucket.nextDessimateInvoiceNumber = invoiceNumber + 1;
     }
-    return { obj: obj, meta: { invoiceNumber: invoiceNumber } };
+    return { invoiceNumber: invoiceNumber };
   });
-  if (!result.ok) throw new Error(result.message);
-  return result.meta.invoiceNumber;
+  return meta.invoiceNumber;
 }
 
 // Non-mutating preview for the Add-Dessimate-Invoice modal's "Use System
 // Number" button - see handlePeekDessimatePoNumbers.
-async function handlePeekDessimateInvoiceNumber(env, origin) {
-  const state = await readJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS);
-  return json({ invoiceNumber: state.obj.nextDessimateInvoiceNumber }, 200, origin);
+async function handlePeekDessimateInvoiceNumber(env, origin, scope) {
+  const bucket = await readCounterBucket(env, scopeCounterSelfId(scope));
+  return json({ invoiceNumber: bucket.nextDessimateInvoiceNumber }, 200, origin);
 }
 
 // Rev2.11: a deleted invoice's number no longer stays permanently reserved -
@@ -10422,10 +11289,9 @@ async function handlePeekDessimateInvoiceNumber(env, origin) {
 // reuse the numbers"). This reversed the original Rev2.4 design (see the
 // comment on handleListDeletedDessimateInvoices below, now stale) which
 // deliberately never reused a deleted invoice's number.
-async function dessimateInvoiceNumberTaken(env, invoiceNumber, excludeId) {
-  const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
-  const target = String(invoiceNumber).toLowerCase();
-  return state.items.some(function (o) { return !o.deleted && o.id !== excludeId && String(o.invoiceNumber).toLowerCase() === target; });
+async function dessimateInvoiceNumberTaken(env, invoiceNumber, excludeId, selfId) {
+  const sid = selfId || (excludeId ? await selfIdOfStoredRecord(env, DESSIMATE_INVOICES_FILE_PATH, excludeId) : '');
+  return valueTakenInSelf(env, DESSIMATE_INVOICES_FILE_PATH, 'invoiceNumber', invoiceNumber, excludeId, sid, function (row) { return !row.deleted; });
 }
 
 function sanitizeDessimateInvoiceLine(l) {
@@ -10532,10 +11398,10 @@ function scopeDessimateInvoices(invoices, accessLevel, organization) {
   return invoices;
 }
 
-async function handleListDessimateInvoices(env, origin, accessLevel, organization) {
+async function handleListDessimateInvoices(env, origin, scope) {
   const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
   const visible = state.items.filter(function (o) { return !o.deleted; });
-  const invoices = scopeDessimateInvoices(visible.map(sanitizeDessimateInvoice), accessLevel, organization);
+  const invoices = scopeDessimateInvoices(await presentList(env, visible, scope, sanitizeDessimateInvoice), scope.accessLevel, scope.organization);
   return json({ dessimateInvoices: invoices }, 200, origin);
 }
 
@@ -10569,23 +11435,27 @@ function validateDessimateInvoiceFields(body, origin) {
   };
 }
 
-async function handleCreateDessimateInvoice(request, env, origin) {
+async function handleCreateDessimateInvoice(request, env, origin, scope) {
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
+  const assignedSelf = await selfIdForNewRecord(env, scope, body);
+  if (assignedSelf.error) return json({ message: assignedSelf.status === 404 ? 'Not found.' : assignedSelf.error }, assignedSelf.status || 400, origin);
+
   const fields = validateDessimateInvoiceFields(body, origin);
   if (fields.error) return fields.error;
 
   const clientInvoiceNumber = (body.invoiceNumber !== undefined && body.invoiceNumber !== null) ? String(body.invoiceNumber).trim() : '';
-  if (clientInvoiceNumber && await dessimateInvoiceNumberTaken(env, clientInvoiceNumber, null)) {
+  if (clientInvoiceNumber && await dessimateInvoiceNumberTaken(env, clientInvoiceNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That Invoice Number is already in use.' }, 409, origin);
   }
-  const invoiceNumber = await reserveDessimateInvoiceNumber(env, clientInvoiceNumber);
+  const invoiceNumber = await reserveDessimateInvoiceNumber(env, clientInvoiceNumber, assignedSelf.selfId);
   const newInv = Object.assign(
     { id: cryptoRandomId(), createdAt: new Date().toISOString(), invoiceNumber: invoiceNumber, title: cleanTitle(body.title), deleted: false, deletedAt: null },
     fields
   );
 
   const result = await mutateJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH, function (items) {
+    if (newInv && !newInv.selfId) newInv.selfId = assignedSelf.selfId;
     items.push(newInv);
     return { items: items };
   });
@@ -10593,7 +11463,9 @@ async function handleCreateDessimateInvoice(request, env, origin) {
   return json(sanitizeDessimateInvoice(newInv), 201, origin);
 }
 
-async function handleUpdateDessimateInvoice(request, env, origin, id) {
+async function handleUpdateDessimateInvoice(request, env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, DESSIMATE_INVOICES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let body;
   try { body = await request.json(); } catch (e) { return json({ message: 'Invalid request body.' }, 400, origin); }
   const fields = validateDessimateInvoiceFields(body, origin);
@@ -10629,15 +11501,17 @@ async function handleUpdateDessimateInvoice(request, env, origin, id) {
   if (result === 'not-found') return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   if (typeof newInvoiceNumber === 'number') {
-    await mutateJsonObjectFile(env, COUNTERS_FILE_PATH, DEFAULT_COUNTERS, function (obj) {
-      if (newInvoiceNumber >= obj.nextDessimateInvoiceNumber) obj.nextDessimateInvoiceNumber = newInvoiceNumber + 1;
-      return { obj: obj };
+    await mutateCounterBucket(env, saved.selfId || '', function (bucket) {
+      if (newInvoiceNumber >= bucket.nextDessimateInvoiceNumber) bucket.nextDessimateInvoiceNumber = newInvoiceNumber + 1;
+      return {};
     });
   }
   return json(sanitizeDessimateInvoice(saved), 200, origin);
 }
 
-async function handleDeleteDessimateInvoice(env, origin, id) {
+async function handleDeleteDessimateInvoice(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, DESSIMATE_INVOICES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   let saved = null;
   const result = await mutateJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
@@ -10660,13 +11534,15 @@ async function handleDeleteDessimateInvoice(env, origin, id) {
 // so by the time someone comes back to restore one, that number may already
 // have been reused by a newer invoice; handleRestoreDessimateInvoice below
 // checks for that and blocks the restore rather than creating a duplicate.)
-async function handleListDeletedDessimateInvoices(env, origin) {
+async function handleListDeletedDessimateInvoices(env, origin, scope) {
   const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
-  const deleted = state.items.filter(function (o) { return o.deleted; }).map(sanitizeDessimateInvoice);
+  const deleted = await presentList(env, state.items.filter(function (o) { return o.deleted; }), scope, sanitizeDessimateInvoice);
   return json({ dessimateInvoices: deleted }, 200, origin);
 }
 
-async function handleRestoreDessimateInvoice(env, origin, id) {
+async function handleRestoreDessimateInvoice(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, DESSIMATE_INVOICES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
   const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
   const existing = state.items.find(function (o) { return o.id === id; });
   if (!existing) return json({ message: 'Not found.' }, 404, origin);
@@ -10926,7 +11802,11 @@ async function buildDessimateInvoicePdf(inv, selfOrg, customerOrg) {
   return pdfDoc.save();
 }
 
-async function handleGenerateDessimateInvoicePdf(env, origin, id, accessLevel, organization) {
+async function handleGenerateDessimateInvoicePdf(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, DESSIMATE_INVOICES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
+  const accessLevel = scope.accessLevel;
+  const organization = scope.organization;
   const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
   const inv = state.items.find(function (o) { return o.id === id; });
   if (!inv) return json({ message: 'Not found.' }, 404, origin);
@@ -11109,7 +11989,11 @@ async function buildPackingSlipPdf(inv, selfOrg, customerOrg, partsByNumber) {
   return pdfDoc.save();
 }
 
-async function handleGenerateDessimatePackingSlipPdf(env, origin, id, accessLevel, organization) {
+async function handleGenerateDessimatePackingSlipPdf(env, origin, id, scope) {
+  const selfDenied = await denyIfOutOfSelf(env, DESSIMATE_INVOICES_FILE_PATH, id, scope, origin);
+  if (selfDenied) return selfDenied;
+  const accessLevel = scope.accessLevel;
+  const organization = scope.organization;
   const state = await readJsonArrayFile(env, DESSIMATE_INVOICES_FILE_PATH);
   const inv = state.items.find(function (o) { return o.id === id; });
   if (!inv) return json({ message: 'Not found.' }, 404, origin);
@@ -11198,8 +12082,30 @@ async function writeJsonArrayFile(env, path, items, sha) {
 async function mutateJsonArrayFile(env, path, mutateFn, opts) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const state = await readJsonArrayFile(env, path);
+    if (opts && opts.selfScope && opts.recordId) {
+      const existing = (state.items || []).find(function (item) { return item && item.id === opts.recordId; });
+      if (!existing || !(await recordInSelfScope(env, existing, opts.selfScope))) {
+        return (opts.requireFound) ? 'not-found' : { ok: false, message: 'Not found.' };
+      }
+    }
+    const beforeIds = {};
+    (state.items || []).forEach(function (item) { if (item && item.id) beforeIds[item.id] = true; });
     const outcome = mutateFn(state.items.slice());
     if (!outcome) return (opts && opts.requireFound) ? 'not-found' : { ok: false, message: 'Not found.' };
+    if (opts && opts.stampSelfId) {
+      (outcome.items || []).forEach(function (item) {
+        if (!item || !item.id || beforeIds[item.id]) return;
+        if (!item.selfId && !item.selfUnassigned) item.selfId = opts.stampSelfId;
+      });
+    }
+    if (opts && opts.selfScope && opts.recordId && !opts.selfScope.unrestricted) {
+      const original = (state.items || []).find(function (item) { return item && item.id === opts.recordId; });
+      const target = (outcome.items || []).find(function (item) { return item && item.id === opts.recordId; });
+      if (original && target) {
+        target.selfId = original.selfId || '';
+        target.selfUnassigned = !!original.selfUnassigned;
+      }
+    }
     const res = await writeJsonArrayFile(env, path, outcome.items, state.sha);
     if (res.ok) return { ok: true, items: outcome.items, meta: outcome.meta };
     if (res.conflict && attempt === 0) continue; // someone else wrote in between - retry once
@@ -11525,10 +12431,8 @@ async function requireAuthWithScope(request, env) {
   const auth = await requireAuth(request, env);
   if (!auth.ok) return auth;
   const accessLevel = await resolveAccessLevel(env, auth.username);
-  const organization = (accessLevel === 'supplier' || accessLevel === 'customer')
-    ? await resolveUserOrganization(env, auth.username)
-    : '';
-  return { ok: true, username: auth.username, accessLevel: accessLevel, organization: organization };
+  const scope = await buildSelfScope(env, auth.username, accessLevel);
+  return Object.assign({ ok: true, username: auth.username, impersonatedBy: auth.impersonatedBy || null }, scope);
 }
 
 // Wraps requireAuth with an accessLevel check. allowedLevels is an array of
@@ -11540,7 +12444,8 @@ async function requireRole(request, env, allowedLevels) {
   if (!level || allowedLevels.indexOf(level) === -1) {
     return { ok: false, status: 403, message: 'You donâ€™t have access to this.' };
   }
-  return { ok: true, username: auth.username, accessLevel: level };
+  const scope = await buildSelfScope(env, auth.username, level);
+  return Object.assign({ ok: true, username: auth.username, impersonatedBy: auth.impersonatedBy || null }, scope);
 }
 
 // Session token shape: base64url(JSON payload) + "." + base64url(HMAC-SHA256 signature)

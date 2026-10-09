@@ -244,6 +244,7 @@
           <th data-sort-key="organization">Organization</th>
           <th data-sort-key="relationship">Relationship</th>
           <th data-sort-key="accessLevel">Access</th>
+          <th data-sort-key="selfId">Self</th>
           <th data-sort-key="role">Role</th>
           <th data-sort-key="email">Email</th>
           <th data-sort-key="phone">Phone</th>
@@ -388,6 +389,10 @@
         </label>
       </div>
 
+      <label id="selfField" style="display:none;">Self
+        <select id="f_selfId"></select>
+      </label>
+
       <div class="stampBlock">
         <label style="margin-bottom:6px;">Approver Stamp <span style="font-weight:400;">(used on generated Dessimate POs, if this person approves them)</span></label>
         <span class="docStatus" id="stampStatus">No file attached</span>
@@ -439,7 +444,7 @@
   // Same Worker as the rest of the Portal — see pdir_portal_part2.js for the
   // fuller explanation. EDIT WORKER_BASE_URL below to match the other pages
   // if you ever redeploy the Worker under a different URL.
-  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var WORKER_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8787' : 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
   // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
   // worker/README.md) instead of hand-typed here - this fills it in once
@@ -903,6 +908,7 @@
       }
       var data = await res.json();
       lastUsers = Array.isArray(data.users) ? data.users : [];
+      await loadOrgsForDropdown();
       loadingEl.style.display = 'none';
       renderImportBar();
       renderTable();
@@ -1024,6 +1030,7 @@
         '<td>' + escapeHtml(u.organization) + '</td>' +
         '<td class="relBadge">' + escapeHtml(u.relationship) + '</td>' +
         '<td>' + accessHtml + '</td>' +
+        '<td>' + escapeHtml(u.accessLevel === 'super_admin' ? 'All' : (u.selfUnassigned || !u.selfId ? 'Unassigned' : (selfName(u.selfId) || 'Unassigned'))) + '</td>' +
         '<td>' + escapeHtml(u.role) + '</td>' +
         '<td>' + escapeHtml(u.email) + '</td>' +
         '<td>' + escapeHtml(u.phone) + '</td>' +
@@ -1198,15 +1205,45 @@
   // Access Level only applies to Dessimate Team members (super_admin/admin/
   // team_member) - a Supplier/Customer contact's access level is implicit
   // from their relationship (supplier/customer), enforced server-side.
+  function selfChoices(){
+    return lastOrgs.filter(function(o){ return o.relationship === 'Self'; });
+  }
+  function selfName(id){
+    var match = selfChoices().filter(function(o){ return o.id === id; })[0];
+    return match ? match.name : '';
+  }
+  function updateSelfField(selectedId){
+    var rel = document.getElementById('f_relationship').value;
+    var access = document.getElementById('f_accessLevel').value;
+    var field = document.getElementById('selfField');
+    var selectEl = document.getElementById('f_selfId');
+    if (rel === 'Dessimate Team member' && access === 'super_admin') {
+      field.style.display = 'none';
+      return;
+    }
+    field.style.display = '';
+    var html = rel === 'Customer' ? '<option value="">Unassigned</option>' : '';
+    html += selfChoices().map(function(o){
+      return '<option value="' + escapeHtml(o.id) + '">' + escapeHtml(o.name) + '</option>';
+    }).join('');
+    selectEl.innerHTML = html;
+    if (selectedId && selfName(selectedId)) selectEl.value = selectedId;
+    else if (rel !== 'Customer') {
+      var home = selfChoices().filter(function(o){ return (o.name || '').toLowerCase() === 'dessimate'; })[0] || selfChoices()[0];
+      if (home) selectEl.value = home.id;
+    }
+  }
   function updateAccessLevelVisibility(){
     var rel = document.getElementById('f_relationship').value;
     document.getElementById('accessLevelBlock').classList.toggle('show', rel === 'Dessimate Team member');
+    updateSelfField(document.getElementById('f_selfId').value);
   }
   document.getElementById('f_relationship').addEventListener('change', function(){
     updateLoginBlockVisibility();
     updateAccessLevelVisibility();
     updateOrganizationFieldMode('');
   });
+  document.getElementById('f_accessLevel').addEventListener('change', function(){ updateSelfField(''); });
   document.getElementById('f_giveLogin').addEventListener('change', updateLoginBlockVisibility);
   document.getElementById('f_passwordLoginDisabled').addEventListener('change', updatePasswordlessVisibility);
   document.getElementById('f_username').addEventListener('input', updatePasswordlessVisibility);
@@ -1289,7 +1326,7 @@
     document.getElementById('passwordLabel').firstChild.textContent = 'Password ';
     document.getElementById('mfaBlock').style.display = 'none';
     document.getElementById('userModalOverlay').classList.add('open');
-    loadOrgsForDropdown().then(function(){ updateOrganizationFieldMode(''); });
+    loadOrgsForDropdown().then(function(){ updateOrganizationFieldMode(''); updateSelfField(''); });
   }
   function openEditModal(id){
     var u = lastUsers.find(function(x){ return x.id === id; });
@@ -1334,7 +1371,7 @@
       document.getElementById('mfaBlock').style.display = 'none';
     }
     document.getElementById('userModalOverlay').classList.add('open');
-    loadOrgsForDropdown().then(function(){ updateOrganizationFieldMode(u.organization || ''); });
+    loadOrgsForDropdown().then(function(){ updateOrganizationFieldMode(u.organization || ''); updateSelfField(u.selfUnassigned ? '' : (u.selfId || '')); });
   }
   function closeModal(){
     document.getElementById('userModalOverlay').classList.remove('open');
@@ -1386,6 +1423,9 @@
       accessLevel: accessLevel, isDemo: isDemo,
       passwordLoginDisabled: passwordLoginDisabled
     };
+    if (!(relationship === 'Dessimate Team member' && accessLevel === 'super_admin')) {
+      body.selfId = document.getElementById('f_selfId').value;
+    }
     if (password) body.password = password;
 
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';

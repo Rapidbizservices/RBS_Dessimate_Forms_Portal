@@ -293,7 +293,7 @@
   // EDIT WORKER_BASE_URL below once after you deploy the Worker (see
   // worker/README.md) — it must match the same value used in
   // PDIR_Form_Filler.html.
-  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var WORKER_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8787' : 'https://roberto.dessimate.workers.dev';
   var GH_PDF_FOLDER = 'pdirs';
   var GH_DRAFT_FOLDER = 'pdir_drafts';
   // A Supporting Document's saved "path" (from the draft JSON's "docs"

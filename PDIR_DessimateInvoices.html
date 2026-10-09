@@ -500,7 +500,7 @@
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
-  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var WORKER_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8787' : 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
   // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
   // worker/README.md) instead of hand-typed here - this fills it in once
@@ -536,7 +536,7 @@
     if (!session) { currentAccessLevel = null; return; }
     try {
       var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
-      if (res.ok) { var data = await res.json(); currentAccessLevel = data.accessLevel || 'team_member'; }
+      if (res.ok) { var data = await res.json(); currentAccessLevel = data.accessLevel || 'team_member'; if (data.homeSelfId) window.__dscmHomeSelfId = data.homeSelfId; }
     } catch (e) { console.error('Could not resolve access level', e); }
   }
   function applyAccessLevelUI(){
@@ -1040,7 +1040,20 @@
       lastPdirIndex = Array.isArray(pdirData.pdirIndex) ? pdirData.pdirIndex : [];
     } catch (e) { console.error('Could not load PDIR index', e); lastPdirIndex = []; }
   }
-  function selfOrg(){ return lastOrgs.find(function(o){ return o.relationship === 'Self'; }) || null; }
+  function selfOrg(forRecord){
+    var selves = lastOrgs.filter(function(o){ return o.relationship === 'Self'; });
+    var want = forRecord && forRecord.selfId;
+    if (want) {
+      var match = selves.filter(function(o){ return o.id === want; })[0];
+      if (match) return match;
+    }
+    if (window.__dscmHomeSelfId) {
+      var home = selves.filter(function(o){ return o.id === window.__dscmHomeSelfId; })[0];
+      if (home) return home;
+    }
+    var named = selves.filter(function(o){ return (o.name || '').toLowerCase() === 'dessimate'; })[0];
+    return named || selves[0] || null;
+  }
   function customerOrgOptions(currentValue){
     var matching = lastOrgs.filter(function(o){ return o.relationship === 'Customer'; });
     var html = '<option value="">— Select Customer —</option>' + matching.map(function(o){
@@ -1444,8 +1457,8 @@
     document.getElementById('f_shipmentNumber').innerHTML = shipmentNumberOptions(inv.shipmentNumber || '');
     document.getElementById('f_paymentTerms').innerHTML = paymentTermsOptions(inv.paymentTerms || '');
     var custOrg = lastOrgs.find(function(o){ return o.name === inv.customer; });
-    document.getElementById('f_fromAddressSelect').innerHTML = orgAddressOptions(selfOrg());
-    document.getElementById('f_fromAddress').value = inv.fromAddress || addressLines(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
+    document.getElementById('f_fromAddressSelect').innerHTML = orgAddressOptions(selfOrg(inv));
+    document.getElementById('f_fromAddress').value = inv.fromAddress || addressLines(selfOrg(inv) && selfOrg(inv).addresses && selfOrg(inv).addresses[0]);
     document.getElementById('f_shipToSelect').innerHTML = orgAddressOptions(custOrg);
     document.getElementById('f_shipTo').value = inv.shipTo || '';
     document.getElementById('f_currency').value = inv.currency || '';
@@ -1481,7 +1494,7 @@
     var custOrg = lastOrgs.find(function(o){ return o.name === src.customer; });
     document.getElementById('f_shipToSelect').innerHTML = orgAddressOptions(custOrg);
     document.getElementById('f_shipTo').value = src.shipTo || '';
-    document.getElementById('f_fromAddress').value = src.fromAddress || addressLines(selfOrg() && selfOrg().addresses && selfOrg().addresses[0]);
+    document.getElementById('f_fromAddress').value = src.fromAddress || addressLines(selfOrg(src) && selfOrg(src).addresses && selfOrg(src).addresses[0]);
     document.getElementById('f_currency').value = src.currency || '';
     document.getElementById('f_incoterms').value = src.incoterms || '';
     document.getElementById('f_notes').value = src.notes || '';

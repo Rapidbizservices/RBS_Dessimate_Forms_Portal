@@ -572,7 +572,7 @@
 <script>
 (function(){
   // ---- Backend (staff/customer login + GitHub proxy) --------------------------------
-  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var WORKER_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8787' : 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
   (function stampAppVersion(){
     fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){
@@ -610,6 +610,7 @@
         var data = await res.json();
         currentAccessLevel = data.accessLevel || 'team_member';
         currentOrganization = data.organization || '';
+        if (data.homeSelfId) window.__dscmHomeSelfId = data.homeSelfId;
       }
     } catch (e) { console.error('Could not resolve access level', e); }
   }
@@ -969,7 +970,20 @@
   // data itself - only on whether the picker is interactive at all
   // (applyRoleUIForModal doesn't sweep buttons, so canManageAll() is
   // checked explicitly here to disable it for a read-only Customer view).
-  function selfOrg(){ return lastOrgs.find(function(o){ return o.relationship === 'Self'; }); }
+  function selfOrg(forRecord){
+    var selves = lastOrgs.filter(function(o){ return o.relationship === 'Self'; });
+    var want = forRecord && forRecord.selfId;
+    if (want) {
+      var match = selves.filter(function(o){ return o.id === want; })[0];
+      if (match) return match;
+    }
+    if (window.__dscmHomeSelfId) {
+      var home = selves.filter(function(o){ return o.id === window.__dscmHomeSelfId; })[0];
+      if (home) return home;
+    }
+    var named = selves.filter(function(o){ return (o.name || '').toLowerCase() === 'dessimate'; })[0];
+    return named || selves[0] || null;
+  }
   function orgByName(name){ return lastOrgs.find(function(o){ return o.name === name; }); }
   function activeOrgContacts(org){
     return (org && Array.isArray(org.contacts) ? org.contacts : []).filter(function(c){ return c.status !== 'inactive' && c.name; });
@@ -989,7 +1003,7 @@
     var listEl = document.getElementById('f_championResponsible_list');
 
     var groups = [];
-    var self = selfOrg();
+    var self = selfOrg(editingId && lastIssues.filter(function(x){ return x.id === editingId; })[0]);
     if (self) groups.push({ label: self.name || 'Dessimate', names: activeOrgContacts(self).map(function(c){ return c.name; }) });
     var customerOrgName = document.getElementById('f_customerOrg').value;
     if (customerOrgName) {

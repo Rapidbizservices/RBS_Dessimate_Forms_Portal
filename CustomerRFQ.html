@@ -606,7 +606,7 @@
 <script>
 (function(){
   // ---- Backend (staff login + file proxy) ------------------------------------
-  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var WORKER_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8787' : 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
   var RFQ_DOC_FOLDER = 'customer_rfq_docs';
   var RFQ_DESSIMATE_QUOTE_DOC_FOLDER = 'customer_rfq_dessimate_quote_docs';

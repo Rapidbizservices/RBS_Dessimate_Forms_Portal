@@ -565,7 +565,7 @@
 <script>
 (function(){
   // ---- Backend (staff/supplier login + GitHub proxy) --------------------------------
-  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var WORKER_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8787' : 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
   (function stampAppVersion(){
     fetch(WORKER_BASE_URL + '/app-config').then(function(r){ return r.ok ? r.json() : null; }).then(function(cfg){

@@ -478,7 +478,7 @@
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
-  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var WORKER_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8787' : 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
   // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
   // worker/README.md) instead of hand-typed here - this fills it in once
@@ -514,7 +514,7 @@
     if (!session) { currentAccessLevel = null; return; }
     try {
       var res = await fetch(WORKER_BASE_URL + '/me', { headers: { Authorization: 'Bearer ' + session.token } });
-      if (res.ok) { var data = await res.json(); currentAccessLevel = data.accessLevel || 'team_member'; }
+      if (res.ok) { var data = await res.json(); currentAccessLevel = data.accessLevel || 'team_member'; if (data.homeSelfId) window.__dscmHomeSelfId = data.homeSelfId; }
     } catch (e) { console.error('Could not resolve access level', e); }
   }
   function applyAccessLevelUI(){
@@ -904,7 +904,20 @@
     return Array.prototype.slice.call(document.querySelectorAll('#f_customerPoRefs_list input[type=checkbox]:checked'))
       .map(function(el){ return el.value; });
   }
-  function selfOrg(){ return lastOrgs.find(function(o){ return o.relationship === 'Self'; }) || null; }
+  function selfOrg(forRecord){
+    var selves = lastOrgs.filter(function(o){ return o.relationship === 'Self'; });
+    var want = forRecord && forRecord.selfId;
+    if (want) {
+      var match = selves.filter(function(o){ return o.id === want; })[0];
+      if (match) return match;
+    }
+    if (window.__dscmHomeSelfId) {
+      var home = selves.filter(function(o){ return o.id === window.__dscmHomeSelfId; })[0];
+      if (home) return home;
+    }
+    var named = selves.filter(function(o){ return (o.name || '').toLowerCase() === 'dessimate'; })[0];
+    return named || selves[0] || null;
+  }
   function paymentTermsOptions(currentValue){
     var terms = (selfOrg() && selfOrg().paymentTerms) || [];
     var html = '<option value="">— Select —</option>' + terms.map(function(t){
@@ -1478,7 +1491,7 @@
   function shipToChoices(cpo){
     var choices = [];
     if (cpo.shipTo) choices.push({ label: 'Customer ship-to' + (cpo.customer ? ' (' + cpo.customer + ')' : ''), value: cpo.shipTo });
-    var self = selfOrg();
+    var self = selfOrg(cpo);
     ((self && self.addresses) || []).forEach(function(a){
       var text = [a.line1, a.line2].filter(Boolean).join('\n');
       if (text) choices.push({ label: (self.name || 'Dessimate') + (a.label ? ' - ' + a.label : ''), value: text });

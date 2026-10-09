@@ -428,7 +428,7 @@
   // account), and this page gets back a short-lived session token that's
   // sent instead. EDIT WORKER_BASE_URL below once after you deploy the
   // Worker (see worker/README.md).
-  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var WORKER_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8787' : 'https://roberto.dessimate.workers.dev';
   var GH_PDF_FOLDER = 'pdirs';
   var GH_DRAFT_FOLDER = 'pdir_drafts';
   var GH_DOC_FOLDER = 'pdir_docs';

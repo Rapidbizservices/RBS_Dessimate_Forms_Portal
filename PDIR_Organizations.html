@@ -310,12 +310,16 @@
         <label>Organization Name
           <input type="text" id="f_name" required>
         </label>
-        <label>Relationship with Dessimate
+        <label>Relationship
           <select id="f_relationship" required>
             <option value="Supplier">Supplier</option>
             <option value="Customer">Customer</option>
-            <option value="Self">Self (Dessimate)</option>
+            <option value="Self">Self</option>
           </select>
+        </label>
+        <label id="selfAssignBlock" style="display:none;">Self
+          <select id="f_selfId"></select>
+          <div id="f_selfChecks" style="display:none; margin-top:6px;"></div>
         </label>
       </div>
       <div class="modalGrid">
@@ -441,7 +445,7 @@
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
-  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var WORKER_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8787' : 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
   var ORG_DOC_FOLDER = 'org_docs';
   // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
@@ -767,6 +771,52 @@
     return '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener">' + escapeHtml(url) + '</a>';
   }
 
+  var isSuperAdmin = false;
+  async function resolveSelfRole(){
+    try {
+      var res = await apiFetch('me');
+      if (!res.ok) return;
+      var data = await res.json();
+      isSuperAdmin = data.accessLevel === 'super_admin';
+      if (data.homeSelfId) window.__dscmHomeSelfId = data.homeSelfId;
+    } catch (e) {}
+  }
+  function applyOrgRoleUi(){
+    var sel = document.getElementById('f_relationship');
+    Array.prototype.forEach.call(sel.options, function(opt){
+      if (opt.value === 'Self') opt.hidden = !isSuperAdmin;
+    });
+    if (!isSuperAdmin && sel.value === 'Self') sel.value = 'Supplier';
+  }
+  function selfOrgChoices(){
+    return lastOrgs.filter(function(o){ return o.relationship === 'Self'; });
+  }
+  function updateSelfAssignMode(selectedId, selectedIds){
+    var rel = document.getElementById('f_relationship').value;
+    var block = document.getElementById('selfAssignBlock');
+    var selectEl = document.getElementById('f_selfId');
+    var checks = document.getElementById('f_selfChecks');
+    if (!isSuperAdmin || rel === 'Self') { block.style.display = 'none'; return; }
+    block.style.display = '';
+    var selves = selfOrgChoices();
+    if (rel === 'Supplier') {
+      selectEl.style.display = 'none';
+      checks.style.display = '';
+      var picked = selectedIds || [];
+      checks.innerHTML = selves.map(function(o){
+        var on = picked.indexOf(o.id) !== -1;
+        return '<label style="display:block; font-weight:400;"><input type="checkbox" data-self-check value="' + escapeHtml(o.id) + '"' + (on ? ' checked' : '') + '> ' + escapeHtml(o.name) + '</label>';
+      }).join('') || '<span>Create a Self organization first.</span>';
+    } else {
+      checks.style.display = 'none';
+      selectEl.style.display = '';
+      selectEl.innerHTML = '<option value="">Unassigned</option>' + selves.map(function(o){
+        return '<option value="' + escapeHtml(o.id) + '">' + escapeHtml(o.name) + '</option>';
+      }).join('');
+      selectEl.value = selectedId || '';
+    }
+  }
+
   async function loadOrgs(){
     var loadingEl = document.getElementById('loadingState');
     var errorEl = document.getElementById('errorState');
@@ -781,6 +831,8 @@
       }
       var data = await res.json();
       lastOrgs = Array.isArray(data.organizations) ? data.organizations : [];
+      await resolveSelfRole();
+      applyOrgRoleUi();
       loadingEl.style.display = 'none';
       renderTable();
     } catch (err) {
@@ -795,10 +847,11 @@
     var tableEl = document.getElementById('orgTable');
     var bodyEl = document.getElementById('orgTableBody');
     var emptyEl = document.getElementById('emptyState');
-    if (!lastOrgs.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
+    var visibleOrgs = lastOrgs.filter(function(o){ return isSuperAdmin || o.relationship !== 'Self'; });
+    if (!visibleOrgs.length) { emptyEl.style.display = 'block'; tableEl.style.display = 'none'; return; }
     emptyEl.style.display = 'none'; tableEl.style.display = 'table';
 
-    var defaultOrder = lastOrgs.slice().sort(function(a, b){ return (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()); });
+    var defaultOrder = visibleOrgs.slice().sort(function(a, b){ return (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()); });
     var sorted = window.SortableTable.sortItems(defaultOrder, orgSortState, function(o, key){ return o[key]; });
     window.SortableTable.updateSortIndicators(document.getElementById('orgTableHead'), orgSortState);
 
@@ -1042,6 +1095,10 @@
   function updateSelfSectionVisibility(){
     var isSelf = document.getElementById('f_relationship').value === 'Self';
     document.getElementById('selfSection').classList.toggle('show', isSelf);
+    updateSelfAssignMode(
+      document.getElementById('f_selfId').value,
+      Array.prototype.map.call(document.querySelectorAll('[data-self-check]:checked'), function(el){ return el.value; })
+    );
   }
   document.getElementById('f_relationship').addEventListener('change', updateSelfSectionVisibility);
 
@@ -1185,6 +1242,7 @@
     document.getElementById('modalSub').textContent = 'Update this organization\'s details.';
     document.getElementById('f_name').value = o.name || '';
     document.getElementById('f_relationship').value = o.relationship || 'Supplier';
+    updateSelfAssignMode(o.selfUnassigned ? '' : (o.selfId || ''), o.selfIds || []);
     document.getElementById('f_phone').value = o.phone || '';
     document.getElementById('f_website').value = o.website || '';
     document.getElementById('f_salesEmail').value = o.salesEmail || '';
@@ -1218,6 +1276,12 @@
         .filter(function(c){ return c.name.trim() || c.email.trim() || c.phone.trim(); })
         .map(function(c){ return { id: c.id, name: c.name.trim(), email: c.email.trim(), phone: c.phone.trim(), status: c.status }; })
     };
+    if (isSuperAdmin && baseFields.relationship === 'Customer') {
+      baseFields.selfId = document.getElementById('f_selfId').value;
+    }
+    if (isSuperAdmin && baseFields.relationship === 'Supplier') {
+      baseFields.selfIds = Array.prototype.map.call(document.querySelectorAll('[data-self-check]:checked'), function(el){ return el.value; });
+    }
     if (!baseFields.name) { errEl.textContent = 'Organization name is required.'; return; }
 
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';

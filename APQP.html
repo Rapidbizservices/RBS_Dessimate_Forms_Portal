@@ -340,7 +340,7 @@
 <script>
 (function(){
   // ---- Backend (staff login + GitHub proxy) --------------------------------
-  var WORKER_BASE_URL = 'https://roberto.dessimate.workers.dev';
+  var WORKER_BASE_URL = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8787' : 'https://roberto.dessimate.workers.dev';
   var SESSION_KEY = 'dessimate_session';
   // Rev2.2: the "DSCM vX.X" stamp is now a stored backend field (see
   // worker/README.md) instead of hand-typed here - this fills it in once
