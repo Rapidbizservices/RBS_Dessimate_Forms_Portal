@@ -1139,11 +1139,16 @@ A Supplier can fill in everything about the request itself (part numbers,
 phase, product/process type, before/after reference images, details and
 purpose of the change, their own sign-off) but never the internal
 **Approval** section — that's Team Member+ only, silently stripped from a
-Supplier's save even if present in the request. Team Member and up can see
-and manage every Change Request; a Supplier sees only ones naming their own
-organization (in either direction — they may be the one requesting the
-change, or the one Dessimate is requesting it of); a Customer login has no
-role here at all.
+Supplier's save even if present in the request. They also cannot delete a
+CR or change its CR Number. Team Member and up see every Change Request in
+their own self (a super admin sees every self). A Supplier sees a CR in
+their own self when its supplier is their organization, or when one of its
+part numbers is a part they supply — the same parts list as the Parts
+page, exact part number, and that list never includes another supplier's
+name. A CR that matches neither is hidden, and opening it directly is a
+404. A new CR they create is forced onto their organization and their
+self; saving one Dessimate started does not let them reassign it. A
+Customer login has no role here at all.
 
 The **Contact** dropdown (Rev2.20) next to Supplier Contact Name is a
 pick-and-autofill quick-fill sourced from the selected Supplier's own

@@ -309,22 +309,35 @@
  *   PUT    /customer-rfqs/<id>/comments/<commentId>
  *                                       - team_member or above can edit any comment; a Customer can
  *                                        edit only their own - see handleEditCustomerRfqComment.
- *   GET    /change-requests            - any signed-in user; scoped by role (team_member or above
- *                                        sees every CR; a Supplier login sees only CRs where it's
- *                                        the named supplierOrg, in either direction).
- *   POST   /change-requests            - team_member or above, OR supplier; creates a CR. A
- *                                        Supplier's supplierOrg is always forced to their own
- *                                        resolved organization server-side, and any Approval-section
- *                                        fields in the body are silently ignored (Team Member+ only).
+ *   GET    /change-requests            - any signed-in user; scoped by role and self. team_member
+ *                                        or above sees every CR in their own self; super_admin sees
+ *                                        every self. A Supplier sees only CRs in their own self that
+ *                                        name their organization (supplierOrg) OR list a part they
+ *                                        supply (same parts scope as /parts — exact part number,
+ *                                        their name only). A Customer sees none. Out-of-self rows
+ *                                        are omitted.
+ *   POST   /change-requests            - team_member or above, OR supplier. A Supplier's new CR is
+ *                                        forced onto their organization and their self; a different
+ *                                        supplierOrg or selfId in the body is ignored. Their CR
+ *                                        Number is ignored and auto-assigned. Part numbers must be
+ *                                        ones they supply. Approval-section fields are stripped.
  *   GET    /change-requests/peek-number - team_member or above required; preview of the next
- *                                        auto-assigned CR Number (does not consume it).
- *   GET    /change-requests/<id>/pdf   - same read access as the record itself; renders the
- *                                        Dessimate_Change_Request(CR).xlsx layout as a PDF.
- *   PUT    /change-requests/<id>       - team_member or above, OR the owning Supplier; same
- *                                        Approval-section stripping as POST. A Supplier can only
- *                                        edit a CR where they're already the supplierOrg.
- *   DELETE /change-requests/<id>       - team_member or above required (a Supplier can create/edit
- *                                        their own CR, but never delete one - see module comment).
+ *                                        auto-assigned CR Number (does not consume it). A Supplier
+ *                                        never sets the number.
+ *   GET    /change-requests/<id>/pdf   - same read access as the record itself (self, then the
+ *                                        Supplier org-or-part rule). Out of scope is 404, same as
+ *                                        a missing id. Renders the Dessimate_Change_Request(CR).xlsx
+ *                                        layout as a PDF.
+ *   PUT    /change-requests/<id>       - team_member or above, OR a Supplier who can already see
+ *                                        that CR (their supplierOrg, OR a part they supply), and
+ *                                        only inside their self. Approval fields are stripped. A
+ *                                        Supplier cannot change supplierOrg or the CR Number, and
+ *                                        cannot add a part they do not supply (parts already on the
+ *                                        CR may stay). Another supplier's CR, another self, or a
+ *                                        miss is 404.
+ *   DELETE /change-requests/<id>       - team_member or above, and only inside their self
+ *                                        (super_admin any self). A Supplier cannot delete. Out of
+ *                                        scope is 404.
  *   GET    /scrs                       - any signed-in user; scoped (team_member or above sees every
  *                                        SCR; a Customer login sees only SCRs explicitly shared with
  *                                        its org; a Supplier login sees none at all - zero access).
@@ -434,7 +447,13 @@
  *                                        cannot be changed. PUT of pdirs/<title>.pdf is
  *                                        allowed only before a Dessimate decision; after
  *                                        that, 403. A Supplier may also PUT
- *                                        supplier_open_issue_docs/<issueId>/... when that
+ *                                        change_request_docs/<crId>/... when that CR is already
+ *                                        in their self and visible to them (their supplierOrg, or
+ *                                        a part they supply). Save creates the CR first, then
+ *                                        uploads images and attachments. A missing CR, another
+ *                                        supplier's, or another self's is 404. GET of those files
+ *                                        uses the same rule and the same 404. A Supplier may also
+ *                                        PUT supplier_open_issue_docs/<issueId>/... when that
  *                                        issue is already assigned to their organization
  *                                        (the picture and attachments saved with the issue).
  *                                        A missing issue, or another supplier's, is 404.
@@ -2057,8 +2076,11 @@ export default {
         // a brand-new title by writing the draft first. Untagged titles
         // and titles that already have files/index they do not own are
         // refused — never another org's files. A Supplier may also PUT
-        // supplier_open_issue_docs for an issue already assigned to their
-        // org (picture and attachments). A miss there is 404.
+        // change_request_docs/<crId>/... for a CR they can already see
+        // (their org, or a part they supply, in their self). A miss is 404.
+        // A Supplier may also PUT supplier_open_issue_docs for an issue
+        // already assigned to their org (picture and attachments). A miss
+        // there is 404.
         if (auth.accessLevel === 'customer') {
           if (request.method !== 'GET') {
             return json({ message: 'Your account has read-only access.' }, 403, origin);
@@ -2067,9 +2089,17 @@ export default {
           if (!allowed) return json({ message: 'Not accessible with your account.' }, 403, origin);
         } else if (auth.accessLevel === 'supplier') {
           if (request.method === 'GET') {
+            const crDocs = await changeRequestDocsAccess(env, ghPath, auth.organization, auth);
+            if (crDocs) {
+              if (!crDocs.ok) return json({ message: crDocs.message }, crDocs.status, origin);
+              return await proxyContents(request, env, origin, ghPath);
+            }
             const allowed = await isContentsPathAllowedForExternal(env, ghPath, auth.accessLevel, auth.organization);
             if (!allowed) return json({ message: 'Not accessible with your account.' }, 403, origin);
           } else if (request.method === 'PUT') {
+            const crDocs = await changeRequestDocsAccess(env, ghPath, auth.organization, auth);
+            if (crDocs && crDocs.ok) return await proxyContents(request, env, origin, ghPath);
+            if (crDocs && crDocs.status) return json({ message: crDocs.message }, crDocs.status, origin);
             const issueDocs = await supplierOpenIssueDocsPutAccess(env, ghPath, auth.organization);
             if (issueDocs && issueDocs.ok) return await proxyContents(request, env, origin, ghPath);
             if (issueDocs && issueDocs.status) return json({ message: issueDocs.message }, issueDocs.status, origin);
@@ -5612,13 +5642,13 @@ async function isContentsPathAllowedForExternal(env, ghPath, accessLevel, organi
       const owner = await resolveSupplierInvoiceOwner(env, supplierInvoiceDocsMatch[1]);
       return owner !== null && owner === organization;
     }
-    // A Supplier can read the images/attachments on their own Change
-    // Request (change_request_docs) - same ownership check
-    // scopeChangeRequests already uses for the list itself.
+    // A Supplier can read the images/attachments on a Change Request they
+    // can see (change_request_docs) - same org-or-part rule as
+    // scopeChangeRequests, and the same self boundary.
     const crDocsMatch = /^change_request_docs\/([^/]+)\/.+$/.exec(decoded);
     if (crDocsMatch) {
       const cr = await resolveChangeRequestRecord(env, crDocsMatch[1]);
-      return !!cr && cr.supplierOrg === organization;
+      return changeRequestVisibleToCaller(env, cr, organization, scope);
     }
     // A Supplier can read the photos on their own Discrepant Material
     // Report (dmr_docs) - same ownership check scopeDmrs already uses.
@@ -7853,18 +7883,19 @@ async function handleRenumberCustomerRfqsTo8000Series(env, origin) {
 
 // ---- Change Requests (Rev2.16) - "CR" module: a change either a Supplier
 // is requesting of Dessimate, or Dessimate is requesting of a Supplier.
-// Unlike every other Production Module (Dessimate PO/Invoice/Parts), a
-// Supplier can create/edit their own CR directly - the product brief is
-// explicit: "Each supplier should be able to see only their name in their
-// dropdown when they initiate the change request." A Supplier's own write
-// is still narrowly trusted: supplierOrg is always forced to their own
-// resolved organization server-side (never taken from the client), and the
-// Approval section (Team Member+ only - the internal review/sign-off) is
-// silently stripped from a Supplier's payload even if present - same
-// "never trust the client for a privileged field" pattern as RFQ's
-// rfqNumber/supplierQuotes. Delete stays Team Member+ only (route-gated,
-// not in this handler) - a Supplier managing their own CR shouldn't be
-// able to erase one Dessimate raised against them.
+// A Supplier can create a CR and can finish one Dessimate already started.
+// supplierOrg is the owner field: a Supplier-created CR is forced onto
+// their organization and their self, and a later save cannot move it to
+// another supplier. Visibility is wider than that owner field, and only
+// inside the caller's self: the CR's supplierOrg equals their organization,
+// OR at least one partNumbers entry is a part they supply. "A part they
+// supply" is resolveVisiblePartNumbers / scopeParts — exact part number,
+// this self, and the parts payload never includes other suppliers' names.
+// An empty org and an empty part list match nothing. A shared part can
+// make a CR tagged to another supplier visible; that does not let them
+// reassign supplierOrg or attach a part they do not supply (parts already
+// stored on the CR may stay). Approval stays Team Member+ only. Delete
+// stays Team Member+ only — a Supplier cannot erase a CR Dessimate raised.
 const CHANGE_REQUESTS_FILE_PATH = 'data/change_requests.json';
 const CR_DOC_FOLDER = 'change_request_docs';
 
@@ -7990,15 +8021,68 @@ function validateChangeRequestFields(body, isSupplier) {
   return fields;
 }
 
-// Team Member+ sees every CR; a Supplier sees only ones where they're the
-// named supplierOrg (regardless of direction - a Supplier can be either the
-// requester or the target of a Dessimate-initiated CR, and needs to see
-// either). A Customer login has no role in this module at all (never
-// mentioned in the brief - "Dessimate team... all... Suppliers... only
-// their related CRs") and sees nothing, same as RFQ's Supplier-side data.
-function scopeChangeRequests(items, accessLevel, organization) {
+function crPartKey(pn) {
+  return (pn || '').toString().trim().toLowerCase();
+}
+
+// Ownership rule for a Supplier, after self scope has already been applied.
+// supplierOrg is the stored owner. Access is granted when that owner is
+// this supplier, or when any listed part number is one they supply. Both
+// checks are exact (no substring, no empty string). Callers must pass the
+// part-number set from resolveVisiblePartNumbers so another self's parts
+// and other suppliers' names never enter the match.
+function changeRequestVisibleToSupplier(cr, organization, suppliedPartNumbers) {
+  if (!cr || !organization) return false;
+  if ((cr.supplierOrg || '') === organization) return true;
+  const set = suppliedPartNumbers || new Set();
+  const parts = Array.isArray(cr.partNumbers) ? cr.partNumbers : [];
+  for (let i = 0; i < parts.length; i++) {
+    const key = crPartKey(parts[i]);
+    if (key && set.has(key)) return true;
+  }
+  return false;
+}
+
+// A Supplier may keep part numbers already stored on a CR they can edit
+// (Dessimate may have listed one they do not supply) and may add only
+// parts they supply. They cannot introduce any other part number.
+function supplierPartNumbersAllowed(requested, existing, suppliedPartNumbers) {
+  const set = suppliedPartNumbers || new Set();
+  const kept = {};
+  const prior = Array.isArray(existing) ? existing : [];
+  for (let i = 0; i < prior.length; i++) {
+    const key = crPartKey(prior[i]);
+    if (key) kept[key] = true;
+  }
+  const list = Array.isArray(requested) ? requested : [];
+  for (let j = 0; j < list.length; j++) {
+    const key = crPartKey(list[j]);
+    if (!key) continue;
+    if (set.has(key) || kept[key]) continue;
+    return false;
+  }
+  return true;
+}
+
+// Self check plus the org-or-part rule. Used by file access, where the
+// caller has a raw record rather than a list already passed through
+// presentList. Out of self is not visible — same 404 the record routes use.
+async function changeRequestVisibleToCaller(env, cr, organization, scope) {
+  if (!cr || !organization) return false;
+  if (scope && scope.selfChecked && !scope.unrestricted) {
+    if (!(await recordInSelfScope(env, cr, scope))) return false;
+  }
+  const supplied = await resolveVisiblePartNumbers(env, 'supplier', organization, scope);
+  return changeRequestVisibleToSupplier(cr, organization, supplied);
+}
+
+// Team Member+ sees every CR already limited to their self by presentList
+// (super_admin is unrestricted and sees every self). A Supplier sees a CR
+// in that same self-scoped list only when supplierOrg is theirs OR a part
+// on it is one they supply. A Customer has no role here and sees nothing.
+function scopeChangeRequests(items, accessLevel, organization, suppliedPartNumbers) {
   if (accessLevel === 'supplier') {
-    return items.filter(function (o) { return organization && o.supplierOrg === organization; });
+    return items.filter(function (o) { return changeRequestVisibleToSupplier(o, organization, suppliedPartNumbers); });
   }
   if (accessLevel === 'customer') return [];
   return items;
@@ -8006,7 +8090,12 @@ function scopeChangeRequests(items, accessLevel, organization) {
 
 async function handleListChangeRequests(env, origin, scope) {
   const state = await readJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH);
-  const items = scopeChangeRequests(await presentList(env, state.items, scope, sanitizeChangeRequest), scope.accessLevel, scope.organization);
+  const presented = await presentList(env, state.items, scope, sanitizeChangeRequest);
+  let supplied = null;
+  if (scope.accessLevel === 'supplier') {
+    supplied = await resolveVisiblePartNumbers(env, 'supplier', scope.organization, scope);
+  }
+  const items = scopeChangeRequests(presented, scope.accessLevel, scope.organization, supplied);
   return json({ changeRequests: items }, 200, origin);
 }
 
@@ -8028,7 +8117,16 @@ async function handleCreateChangeRequest(request, env, origin, accessLevel, user
     if (!supplierOrg) return json({ message: 'Supplier is required.' }, 400, origin);
   }
 
-  const clientCrNumber = (body.crNumber !== undefined && body.crNumber !== null) ? String(body.crNumber).trim() : '';
+  if (isSupplier) {
+    const supplied = await resolveVisiblePartNumbers(env, 'supplier', supplierOrg, scope);
+    if (!supplierPartNumbersAllowed(fields.partNumbers, [], supplied)) {
+      return json({ message: 'Each part number must be one your organization supplies.' }, 400, origin);
+    }
+  }
+
+  // A Supplier cannot pick the number (that would let them claim or skip
+  // ahead in the series). Blank means auto-assign, which is all they get.
+  const clientCrNumber = isSupplier ? '' : ((body.crNumber !== undefined && body.crNumber !== null) ? String(body.crNumber).trim() : '');
   if (clientCrNumber && await crNumberTaken(env, clientCrNumber, null, assignedSelf.selfId)) {
     return json({ message: 'That Change Request Number is already in use.' }, 409, origin);
   }
@@ -8057,9 +8155,11 @@ async function handleUpdateChangeRequest(request, env, origin, id, accessLevel, 
   const fields = validateChangeRequestFields(body, isSupplier);
 
   let callerOrg = '';
+  let supplied = null;
   if (isSupplier) {
     callerOrg = await resolveUserOrganization(env, username);
     if (!callerOrg) return json({ message: 'Your account isn’t linked to a Supplier organization.' }, 403, origin);
+    supplied = await resolveVisiblePartNumbers(env, 'supplier', callerOrg, scope);
   }
 
   let newCrNumber; // undefined = leave as-is
@@ -8074,20 +8174,28 @@ async function handleUpdateChangeRequest(request, env, origin, id, accessLevel, 
   }
 
   let saved = null;
+  let partDenied = false;
   const result = await mutateJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH, function (items) {
     const target = items.find(function (o) { return o.id === id; });
     if (!target) return null;
-    if (isSupplier && target.supplierOrg !== callerOrg) return null; // 404s below rather than 403 - don't reveal existence
+    // Same 404 as a missing id — do not leak that another org's or another
+    // self's CR exists. Self was already refused by denyIfOutOfSelf.
+    if (isSupplier && !changeRequestVisibleToSupplier(target, callerOrg, supplied)) return null;
+    if (isSupplier && !supplierPartNumbersAllowed(fields.partNumbers, target.partNumbers, supplied)) {
+      partDenied = true;
+      return null;
+    }
     if (!isSupplier && body.supplierOrg !== undefined) {
       const requestedOrg = (body.supplierOrg || '').toString().trim();
       if (requestedOrg) target.supplierOrg = requestedOrg;
     }
-    Object.assign(target, fields); // approvalStatus/approvedBy* are never in `fields` for a Supplier's edit
+    Object.assign(target, fields); // approvalStatus/approvedBy* are never in `fields` for a Supplier's edit; supplierOrg is not in `fields` either
     if (newCrNumber !== undefined) target.crNumber = newCrNumber;
     saved = target;
     return { items: items };
   }, { requireFound: true });
 
+  if (partDenied) return json({ message: 'Each part number must be one your organization supplies.' }, 400, origin);
   if (result === 'not-found' || !saved) return json({ message: 'Not found.' }, 404, origin);
   if (!result.ok) return json({ message: result.message }, 500, origin);
   return json(sanitizeChangeRequest(saved), 200, origin);
@@ -8113,6 +8221,21 @@ async function handleDeleteChangeRequest(env, origin, id, scope) {
 async function resolveChangeRequestRecord(env, id) {
   const state = await readJsonArrayFile(env, CHANGE_REQUESTS_FILE_PATH);
   return state.items.find(function (o) { return o.id === id; }) || null;
+}
+
+// Supplier GET/PUT of /contents/change_request_docs/<crId>/... — only when
+// the CR exists, is in their self, and they can see it (their supplierOrg,
+// or a part they supply). null means this path is not a CR doc. A miss is
+// 404 so the response does not reveal that another supplier's CR exists.
+async function changeRequestDocsAccess(env, ghPath, organization, scope) {
+  const m = /^change_request_docs\/([^/]+)\/.+$/.exec(ghPath || '');
+  if (!m) return null;
+  if (!organization) return { status: 403, message: 'Your account isn’t linked to a Supplier organization.' };
+  const cr = await resolveChangeRequestRecord(env, m[1]);
+  if (!cr || !(await changeRequestVisibleToCaller(env, cr, organization, scope))) {
+    return { status: 404, message: 'Not found.' };
+  }
+  return { ok: true };
 }
 
 // Single-page rendering of the Dessimate_Change_Request(CR).xlsx template -
@@ -8353,7 +8476,11 @@ async function handleGetChangeRequestPdf(env, origin, id, scope) {
   const raw = await resolveChangeRequestRecord(env, id);
   if (!raw) return json({ message: 'Not found.' }, 404, origin);
   let clean = sanitizeChangeRequest(raw);
-  const scoped = scopeChangeRequests([clean], accessLevel, organization);
+  let supplied = null;
+  if (accessLevel === 'supplier') {
+    supplied = await resolveVisiblePartNumbers(env, 'supplier', organization, scope);
+  }
+  const scoped = scopeChangeRequests([clean], accessLevel, organization, supplied);
   if (!scoped.length) return json({ message: 'Not found.' }, 404, origin);
   clean = scoped[0];
 

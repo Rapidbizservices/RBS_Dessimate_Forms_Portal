@@ -503,10 +503,10 @@
   function setSession(s){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }catch(e){} }
   function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
 
-  // Unlike every other Production Module, a Supplier can create/edit their
-  // own CR here (not just Team Member+) - see worker/README.md. isAdmin is
-  // kept separate since Delete stays Team Member+ only, same as the record
-  // write split on the backend.
+  // A Supplier can create a CR and can finish one Dessimate started for
+  // their organization or for a part they supply. The worker forces a new
+  // CR onto their organization and their self, and will not let them move
+  // supplierOrg or delete. Approval and CR Number stay Team Member+.
   var currentAccessLevel = null;
   var currentOrganization = '';
   function canManageAll(){ return currentAccessLevel === 'team_member' || currentAccessLevel === 'admin' || currentAccessLevel === 'super_admin'; }
@@ -527,7 +527,7 @@
   function applyAccessLevelUI(){
     var addBtn = document.getElementById('addCrBtn');
     if (addBtn) addBtn.style.display = canCreateOrEdit() ? '' : 'none';
-    document.getElementById('toolbarTitle').textContent = isSupplierUser() ? 'Change Requests Involving Your Organization' : 'Change Requests';
+    document.getElementById('toolbarTitle').textContent = isSupplierUser() ? 'Change Requests for Your Organization or Parts' : 'Change Requests';
   }
 
   async function apiFetch(path, opts){
@@ -834,6 +834,8 @@
   }
 
   // ---- Supplier / Parts dropdowns --------------------------------------------
+  // Parts come from GET /parts. That route already limits a Supplier to
+  // parts they supply and returns only their own name on each part.
   var lastOrgs = [];
   var lastParts = [];
   async function loadDropdownData(){
@@ -848,15 +850,16 @@
       lastParts = Array.isArray(partData.parts) ? partData.parts : [];
     } catch (e) { console.error('Could not load parts', e); lastParts = []; }
   }
-  // A Supplier login only ever sees (and can only ever save as) their own
-  // name here - "each supplier should be able to see only their name in
-  // their dropdown" from the brief - enforced both by disabling the select
-  // and, for real safety, server-side (a Supplier's supplierOrg is always
-  // forced to their own resolved organization no matter what's submitted).
+  // A Supplier cannot pick a supplier. Create is locked to their
+  // organization (the worker forces that even if this value is changed).
+  // Edit shows the stored supplierOrg and stays disabled, including when
+  // Dessimate tagged the CR to them or, via a part they supply, to another
+  // organization. The worker ignores a different supplierOrg on save.
   function supplierOrgOptions(currentValue){
     if (isSupplierUser()) {
-      var mine = currentOrganization || currentValue || '';
-      return '<option value="' + escapeHtml(mine) + '" selected>' + escapeHtml(mine || '(your organization)') + '</option>';
+      var shown = currentValue || '';
+      if (!shown) return '<option value="" selected>— Supplier not set —</option>';
+      return '<option value="' + escapeHtml(shown) + '" selected>' + escapeHtml(shown) + '</option>';
     }
     var matching = lastOrgs.filter(function(o){ return o.relationship === 'Supplier'; });
     var html = '<option value="">— Select Supplier —</option>' + matching.map(function(o){
@@ -1305,7 +1308,8 @@
       baseFields.approvedByDate = document.getElementById('f_approvedByDate').value;
       baseFields.approvedByOrg = document.getElementById('f_approvedByOrg').value.trim();
     }
-    if (!baseFields.supplierOrg) throw new Error('Select a Supplier.');
+    if (!isSupplierUser() && !baseFields.supplierOrg) throw new Error('Select a Supplier.');
+    if (isSupplierUser() && !editingId && !baseFields.supplierOrg) throw new Error('Select a Supplier.');
 
     var crId = editingId;
     if (!crId) {
