@@ -1478,6 +1478,38 @@ it still just reads "No" when an issue has no picture. Long text fields
 are truncated (with an ellipsis) past a few hundred characters to keep
 rows readable; the full text is always still on the record itself.
 
+### Weekly Open Issues recap email
+
+Every **Wednesday at 9:30 pm Pacific**, each active Customer user and
+Dessimate staff member (team_member, admin, super_admin) with an email
+address gets their own email, subject *"Open Issues Recap for the week of
+MM/DD/YYYY thru MM/DD/YYYY"* (the Thursday before through that Wednesday).
+It holds a table of every open (not closed) Customer Open Issue that person
+can see - Issue #, Issue Description (the Title if there is no
+description), latest note, who wrote it, and the date it was added. Each
+Issue # links to `PDIR_CustomerOpenIssues.html?issue=<id>`, which opens that
+issue after sign-in (or says it isn't available to that account).
+
+- **Scoping** uses the same path as `GET /customer-open-issues`
+  (`presentList` + `scopeCustomerOpenIssues`): a Customer sees only their own
+  organization's issues, staff only their own self. Each person gets a
+  separate email; nobody sees another recipient.
+- A **Customer with no open issues** gets no email that week; staff always
+  get one. Supplier logins, inactive accounts and accounts with no email
+  are never sent one.
+- **Timing** rides on the existing 15-minute cron: `maybeSendWeeklyOpenIssuesRecap`
+  checks the Pacific clock, so daylight saving needs nothing.
+  `data/open_issues_recap.json` records the week already sent
+  (`lastSentWeek`) and the last run's result (who was sent, skipped, or
+  failed), so it goes out exactly once per week.
+- **On/off:** `OPEN_ISSUES_RECAP_ENABLED` in `wrangler.toml` (`"true"` /
+  `"false"`), then deploy.
+- **Preview:** a super admin's **Email me a recap preview** button on
+  Customer Open Issues (`POST /admin/open-issues-recap/preview?as=<username>`)
+  renders the recap exactly as that user would get it and emails it **only
+  to the super admin**, with "[Preview as ...]" in the subject. It also
+  reports whether that user would actually receive the weekly email.
+
 ## Customer SCRs (SCR)
 
 A separate module from Dessimate CRs above — a Supplier Change Request

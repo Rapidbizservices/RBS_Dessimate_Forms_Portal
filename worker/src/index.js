@@ -1838,6 +1838,15 @@ export default {
         }
       }
 
+      // Weekly Open Issues recap: send the caller a preview of what one
+      // user (?as=<username>, default the caller) would receive. Never
+      // sends to anyone else. See maybeSendWeeklyOpenIssuesRecap.
+      if (url.pathname === '/admin/open-issues-recap/preview' && request.method === 'POST') {
+        const auth = await requireRole(request, env, ['super_admin']);
+        if (!auth.ok) return json({ message: auth.message }, auth.status, origin);
+        return await handleOpenIssuesRecapPreview(request, env, origin, auth);
+      }
+
       if (url.pathname === '/customer-open-issues') {
         if (request.method === 'GET') {
           // Any signed-in user is "ok" here - scopeCustomerOpenIssues
@@ -2129,6 +2138,7 @@ export default {
   // wrangler.toml - a worker deploy is what registers the schedule.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runRfqDueReminderScan(env));
+    ctx.waitUntil(maybeSendWeeklyOpenIssuesRecap(env));
   }
 };
 
@@ -10345,6 +10355,210 @@ function validateCustomerOpenIssueFields(body) {
 
 // Team Member+ sees every issue; a Customer sees only ones naming their
 // own organization. A Supplier login has no role in this module.
+// ---- Weekly Customer Open Issues recap email --------------------------------
+// Every Wednesday at 9:30 pm Pacific, each active Customer user and Dessimate
+// staff member with an email address gets their own recap of the open
+// (not closed) Customer Open Issues they can see - built through the same
+// presentList + scopeCustomerOpenIssues path as GET /customer-open-issues,
+// so a Customer only ever sees their own organization's issues and staff
+// only their own self. A Customer with no open issues gets no email; staff
+// always do. Each issue number links to that issue in DSCM
+// (PDIR_CustomerOpenIssues.html?issue=<id>).
+//
+// Timing rides on the existing 15-minute cron: the scheduled handler checks
+// the Pacific clock (so daylight-saving changes need nothing), and
+// data/open_issues_recap.json records the week already sent so it goes out
+// exactly once. Off unless OPEN_ISSUES_RECAP_ENABLED is "true" in
+// wrangler.toml; POST /admin/open-issues-recap/preview (super_admin) sends
+// the caller a copy of what any one user would receive.
+const OPEN_ISSUES_RECAP_STATE_PATH = 'data/open_issues_recap.json';
+const RECAP_TZ = 'America/Los_Angeles';
+const RECAP_SEND_MINUTE = 21 * 60 + 30; // Wednesday 9:30 pm Pacific
+const RECAP_WINDOW_MINUTES = 60;        // a missed cron tick still sends within the hour
+const RECAP_STAFF_LEVELS = ['team_member', 'admin', 'super_admin'];
+const RECAP_TEXT_MAX = 300;
+
+function recapPacificNow(date) {
+  const parts = {};
+  new Intl.DateTimeFormat('en-US', {
+    timeZone: RECAP_TZ, weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(date).forEach(function (p) { parts[p.type] = p.value; });
+  return {
+    ymd: parts.year + '-' + parts.month + '-' + parts.day,
+    weekday: parts.weekday,
+    minutes: Number(parts.hour) * 60 + Number(parts.minute)
+  };
+}
+function recapAddDays(ymd, days) {
+  const d = new Date(ymd + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function recapMDY(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || '');
+  return m ? m[2] + '/' + m[3] + '/' + m[1] : '';
+}
+function recapPacificDate(iso) {
+  const t = Date.parse(iso || '');
+  return isNaN(t) ? '' : recapMDY(recapPacificNow(new Date(t)).ymd);
+}
+// The recap week ends on the Wednesday it's sent and starts the Thursday before.
+function recapWeekFor(wednesdayYmd) {
+  const start = recapAddDays(wednesdayYmd, -6);
+  return { start: start, end: wednesdayYmd, subject: 'Open Issues Recap for the week of ' + recapMDY(start) + ' thru ' + recapMDY(wednesdayYmd) };
+}
+// The Wednesday a recap sent (or previewed) at this moment would cover:
+// today if it's Wednesday in Pacific time, otherwise the most recent one.
+function recapLatestWednesday(date) {
+  const p = recapPacificNow(date);
+  const back = { Wed: 0, Thu: 1, Fri: 2, Sat: 3, Sun: 4, Mon: 5, Tue: 6 }[p.weekday] || 0;
+  return recapAddDays(p.ymd, -back);
+}
+function recapTruncate(s) {
+  const t = String(s || '').trim();
+  return t.length > RECAP_TEXT_MAX ? t.slice(0, RECAP_TEXT_MAX - 1) + '…' : t;
+}
+
+async function recapUsers(env) {
+  const users = (await readUsersFile(env)).users || [];
+  const out = [];
+  for (let i = 0; i < users.length; i++) {
+    const u = users[i];
+    if (!u || !u.username || u.active === false) continue;
+    const level = await resolveAccessLevel(env, u.username);
+    out.push({ username: u.username, name: (u.name || '').trim() || u.username, email: (u.email || '').trim(), accessLevel: level });
+  }
+  return out;
+}
+function recapIsRecipient(u) {
+  return !!u.email && (u.accessLevel === 'customer' || RECAP_STAFF_LEVELS.indexOf(u.accessLevel) !== -1);
+}
+
+// Open issues this user can see, oldest issue number first, as table rows.
+async function recapRowsFor(env, user, allItems, nameByUsername) {
+  const scope = await buildSelfScope(env, user.username, user.accessLevel);
+  const visible = scopeCustomerOpenIssues(await presentList(env, allItems, scope, sanitizeCustomerOpenIssue), user.accessLevel, scope.organization);
+  return visible
+    .filter(function (o) { return o.status !== 'closed'; })
+    .sort(function (a, b) { return String(a.issueNumber).localeCompare(String(b.issueNumber), undefined, { numeric: true }); })
+    .map(function (o) {
+      const latest = o.comments.length ? o.comments[o.comments.length - 1] : null;
+      return {
+        id: o.id,
+        number: String(o.issueNumber || '').replace(/^OI-/i, ''),
+        description: recapTruncate(o.issueDescription || o.issueTitle),
+        note: latest ? recapTruncate(latest.text) : '',
+        noteBy: latest ? (nameByUsername[(latest.authorUsername || '').toLowerCase()] || latest.authorUsername || '') : '',
+        noteDate: latest ? recapPacificDate(latest.createdAt) : ''
+      };
+    });
+}
+
+function recapHtml(env, user, week, rows) {
+  const base = dscmPagesBaseUrl(env) + '/PDIR_CustomerOpenIssues.html';
+  const cell = 'padding:7px 9px;border:1px solid #d9dde6;vertical-align:top;font-size:13px;';
+  const head = 'padding:7px 9px;border:1px solid #d9dde6;background:#eef1f7;color:#445;font-size:12px;text-align:left;';
+  const body = rows.length
+    ? '<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;max-width:960px;">' +
+      '<tr><th style="' + head + '">Issue #</th><th style="' + head + '">Issue Description</th><th style="' + head + '">Latest Note</th>' +
+      '<th style="' + head + '">Note By</th><th style="' + head + '">Note Date</th></tr>' +
+      rows.map(function (r) {
+        return '<tr>' +
+          '<td style="' + cell + 'white-space:nowrap;"><a href="' + escapeEmailHtml(base + '?issue=' + encodeURIComponent(r.id)) + '" style="color:#2b4ea3;font-weight:bold;">' + escapeEmailHtml(r.number) + '</a></td>' +
+          '<td style="' + cell + '">' + escapeEmailHtml(r.description) + '</td>' +
+          '<td style="' + cell + '">' + (r.note ? escapeEmailHtml(r.note) : '<span style="color:#888;">No notes yet</span>') + '</td>' +
+          '<td style="' + cell + 'white-space:nowrap;">' + escapeEmailHtml(r.noteBy) + '</td>' +
+          '<td style="' + cell + 'white-space:nowrap;">' + escapeEmailHtml(r.noteDate) + '</td>' +
+          '</tr>';
+      }).join('') + '</table>'
+    : '<p>There are no open issues right now.</p>';
+  return '<div style="font-family:Arial,Helvetica,sans-serif;color:#1c1c1f;">' +
+    '<p>Hello ' + escapeEmailHtml(user.name) + ',</p>' +
+    '<p>Here is the weekly recap of open issues in DSCM for ' + escapeEmailHtml(recapMDY(week.start)) + ' thru ' + escapeEmailHtml(recapMDY(week.end)) +
+    '. Click an issue number to open it in DSCM.</p>' + body +
+    '<p style="margin-top:16px;"><a href="' + escapeEmailHtml(base) + '" style="color:#2b4ea3;">View all open issues in DSCM</a></p>' +
+    '<p style="color:#888;font-size:12px;">You are receiving this because you have a DSCM account.</p></div>';
+}
+
+// Builds and sends the recap. With previewTo, renders it as user `asUsername`
+// sees it but sends only to previewTo (and never touches the sent record).
+async function sendOpenIssuesRecap(env, opts) {
+  const now = opts.now || new Date();
+  const week = recapWeekFor(opts.wednesday || recapLatestWednesday(now));
+  const users = await recapUsers(env);
+  const nameByUsername = {};
+  users.forEach(function (u) { nameByUsername[u.username.toLowerCase()] = u.name; });
+  const allItems = (await readJsonArrayFile(env, CUSTOMER_OPEN_ISSUES_FILE_PATH)).items;
+
+  if (opts.previewTo) {
+    const as = users.find(function (u) { return u.username.toLowerCase() === String(opts.asUsername || '').toLowerCase(); });
+    if (!as) return { ok: false, status: 404, message: 'No active user named ' + opts.asUsername + '.' };
+    if (!(as.accessLevel === 'customer' || RECAP_STAFF_LEVELS.indexOf(as.accessLevel) !== -1)) {
+      return { ok: false, status: 400, message: as.username + ' is a ' + as.accessLevel + ' login - the recap only goes to Customer and Dessimate users.' };
+    }
+    const rows = await recapRowsFor(env, as, allItems, nameByUsername);
+    const subject = '[Preview as ' + as.name + '] ' + week.subject;
+    const sent = await sendEmail(env, opts.previewTo, subject, recapHtml(env, as, week, rows));
+    return {
+      ok: !!sent.ok, subject: subject, sentTo: opts.previewTo, issues: rows.length,
+      wouldReceive: as.email ? (as.accessLevel === 'customer' && !rows.length ? 'no (Customer with no open issues)' : 'yes, at ' + as.email) : 'no (no email address on file)'
+    };
+  }
+
+  const result = { week: week.end, sent: [], failed: [], skippedNoIssues: [] };
+  const recipients = users.filter(recapIsRecipient);
+  for (let i = 0; i < recipients.length; i++) {
+    const u = recipients[i];
+    try {
+      const rows = await recapRowsFor(env, u, allItems, nameByUsername);
+      if (u.accessLevel === 'customer' && !rows.length) { result.skippedNoIssues.push(u.username); continue; }
+      const sent = await sendEmail(env, u.email, week.subject, recapHtml(env, u, week, rows));
+      (sent.ok ? result.sent : result.failed).push(u.username);
+    } catch (e) {
+      console.error('open issues recap for ' + u.username + ': ' + (e && e.message ? e.message : String(e)));
+      result.failed.push(u.username);
+    }
+    await new Promise(function (r) { setTimeout(r, 600); }); // stay under Resend's 2 requests/second
+  }
+  return result;
+}
+
+// Called by every cron tick; sends at most once per week.
+async function maybeSendWeeklyOpenIssuesRecap(env, now) {
+  try {
+    if (String(env.OPEN_ISSUES_RECAP_ENABLED || '').toLowerCase() !== 'true') return;
+    now = now || new Date();
+    const p = recapPacificNow(now);
+    if (p.weekday !== 'Wed' || p.minutes < RECAP_SEND_MINUTE || p.minutes >= RECAP_SEND_MINUTE + RECAP_WINDOW_MINUTES) return;
+    // Claim the week before sending, so an overlapping tick can't send twice.
+    const claim = await mutateJsonObjectFile(env, OPEN_ISSUES_RECAP_STATE_PATH, {}, function (obj) {
+      if (obj.lastSentWeek === p.ymd) return { obj: obj, meta: { alreadySent: true } };
+      obj.lastSentWeek = p.ymd;
+      obj.claimedAt = now.toISOString();
+      return { obj: obj, meta: { alreadySent: false } };
+    });
+    if (!claim.ok || claim.meta.alreadySent) return;
+    const result = await sendOpenIssuesRecap(env, { now: now, wednesday: p.ymd });
+    await mutateJsonObjectFile(env, OPEN_ISSUES_RECAP_STATE_PATH, {}, function (obj) {
+      obj.lastResult = Object.assign({ finishedAt: new Date().toISOString() }, result);
+      return { obj: obj };
+    });
+  } catch (e) {
+    console.error('maybeSendWeeklyOpenIssuesRecap: ' + (e && e.message ? e.message : String(e)));
+  }
+}
+
+async function handleOpenIssuesRecapPreview(request, env, origin, auth) {
+  const url = new URL(request.url);
+  const me = ((await readUsersFile(env)).users || []).find(function (u) { return u.username && u.username.toLowerCase() === String(auth.username).toLowerCase(); });
+  if (!me || !me.email) return json({ message: 'Add an email address to your own account first - the preview is sent to you.' }, 400, origin);
+  const result = await sendOpenIssuesRecap(env, { previewTo: me.email, asUsername: url.searchParams.get('as') || auth.username });
+  if (!result.ok && result.status) return json({ message: result.message }, result.status, origin);
+  const state = await readJsonObjectFile(env, OPEN_ISSUES_RECAP_STATE_PATH, {});
+  return json(Object.assign({ enabled: String(env.OPEN_ISSUES_RECAP_ENABLED || '').toLowerCase() === 'true', lastRun: state.obj }, result), result.ok ? 200 : 502, origin);
+}
+
 function scopeCustomerOpenIssues(items, accessLevel, organization) {
   if (accessLevel === 'customer') {
     return items.filter(function (o) { return organization && o.customerOrg === organization; });

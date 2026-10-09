@@ -335,6 +335,7 @@
       <a class="homeBtn" href="PDIR_OpenIssuesHub.html">Open Issues Hub</a>
       <a class="homeBtn" href="Instructions.html">Instructions</a>
       <button type="button" class="excelBtn" id="downloadExcelBtn" style="display:none;">Download Excel</button>
+      <button type="button" class="excelBtn" id="recapPreviewBtn" style="display:none;" title="Email yourself the weekly Open Issues recap exactly as one user would receive it">Email me a recap preview</button>
       <button type="button" class="addBtn" id="addIssueBtn" style="display:none;">Add an Open Issue</button>
     </div>
   </div>
@@ -623,6 +624,8 @@
     var excelBtn = document.getElementById('downloadExcelBtn');
     if (excelBtn) excelBtn.style.display = (canManageAll() || isCustomerUser()) ? '' : 'none';
     document.getElementById('toolbarTitle').textContent = isCustomerUser() ? 'Open Issues Naming Your Organization' : 'Customer Open Issues';
+    // Super admin only - the worker enforces this too.
+    document.getElementById('recapPreviewBtn').style.display = currentAccessLevel === 'super_admin' ? '' : 'none';
   }
 
   async function apiFetch(path, opts){
@@ -2324,6 +2327,43 @@
   });
   // -----------------------------------------------------------------------------
 
-  requireAuthThen(async function(){ await resolveMe(); applyAccessLevelUI(); await loadDropdownData(); await loadIssues(); });
+  // Weekly Open Issues recap preview: renders the recap as one user
+  // (a username you type; blank = yourself) would get it, and emails it
+  // to you only. See maybeSendWeeklyOpenIssuesRecap in the worker.
+  document.getElementById('recapPreviewBtn').addEventListener('click', function(){
+    requireAuthThen(async function(){
+      var as = prompt('Preview the recap as which user? Enter their DSCM username, or leave blank for yourself. The preview is emailed only to you.', '');
+      if (as === null) return;
+      var btn = document.getElementById('recapPreviewBtn');
+      btn.disabled = true;
+      try {
+        var res = await apiFetch('admin/open-issues-recap/preview' + (as.trim() ? '?as=' + encodeURIComponent(as.trim()) : ''), { method: 'POST' });
+        var data = {}; try { data = await res.json(); } catch(e){}
+        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+        alert('Preview sent to ' + data.sentTo + ' (' + data.issues + ' open issue' + (data.issues === 1 ? '' : 's') + ').\n\n' +
+          'Would this user get the weekly email: ' + data.wouldReceive + '.\n' +
+          'Weekly sending is currently ' + (data.enabled ? 'ON' : 'OFF') + '.');
+      } catch (err) {
+        alert('Could not send the preview (' + (err && err.message ? err.message : err) + ').');
+      } finally { btn.disabled = false; }
+    });
+  });
+
+  // A "?issue=<id>" link (the weekly Open Issues recap email's issue
+  // numbers) opens that issue once the list has loaded. The list is
+  // already scoped server-side, so an issue the signed-in account can't
+  // see is simply not found - say so rather than silently showing the list.
+  function openIssueFromQueryString(){
+    var wantedId = new URLSearchParams(window.location.search).get('issue');
+    if (!wantedId) return;
+    history.replaceState(null, '', window.location.pathname);
+    if (lastIssues.some(function(x){ return x.id === wantedId; })) {
+      openEditModal(wantedId);
+    } else {
+      alert('That open issue isn’t available to your account, or it has been removed.');
+    }
+  }
+
+  requireAuthThen(async function(){ await resolveMe(); applyAccessLevelUI(); await loadDropdownData(); await loadIssues(); openIssueFromQueryString(); });
 })();
 </script>
